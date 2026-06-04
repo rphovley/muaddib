@@ -1,0 +1,18 @@
+# Scoped to the worker image build (BuildKit reads <dockerfile>.dockerignore).
+# Context is the repo root, but we only COPY project manifests + muadib/
+# files — so exclude everything heavy/secret to keep the context transfer small.
+**/node_modules
+**/dist
+**/build
+.git
+QuoteThat-Mobile
+premier.lambdas
+premier.leadform
+quote-that-estimate-feature
+**/.env
+**/.env.*
+**/.envrc
+projects/api/src/config/keys
+muadib/non-prod.env
+muadib/.worker-*.env
+muadib/status

@@ -1,0 +1,57 @@
+# Worker image: an isolated, all-commands-enabled Claude Code session.
+# BUILD CONTEXT IS THE REPO ROOT, so project dependencies can be pre-installed:
+#   docker build -f muadib/Dockerfile.worker -t quotethat-worker .
+# Runs inside Docker Desktop's Linux VM — no access to the macOS host beyond the
+# narrow mounts wired in docker-compose.worker.yml.
+FROM node:22-bookworm
+
+# Toolchain: git (clone/push), tmux (attachable session), jq (orchestrate.sh),
+# psql client, ps (hooks/debug), wget (gh repo key).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git tmux jq ca-certificates postgresql-client procps wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# GitHub CLI — muadib opens PRs via `gh` (auto-auths from GITHUB_TOKEN).
+RUN mkdir -p -m 755 /etc/apt/keyrings \
+    && wget -nv -O /etc/apt/keyrings/githubcli-archive-keyring.gpg https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+    && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/*
+
+# Claude Code CLI.
+RUN npm install -g @anthropic-ai/claude-code
+
+RUN useradd -m -s /bin/bash worker
+USER worker
+RUN mkdir -p /home/worker/.claude /home/worker/repo
+
+# --- Pre-install project dependencies (Linux-native, layer-cached) -----------
+# Copy ONLY the manifests, so this layer's cache key is the lockfiles — it
+# rebuilds only when a package-lock.json changes. Deps are installed at the
+# FINAL repo path; at spawn the entrypoint fetches source OVER them (node_modules
+# is gitignored, so checkout leaves it in place). No install/copy on the hot path.
+# Each baked lockfile is stashed under ~/.deps-lock for drift detection.
+WORKDIR /home/worker/repo
+COPY --chown=worker:worker projects/api/package.json          projects/api/package-lock.json          projects/api/
+COPY --chown=worker:worker projects/portal/package.json       projects/portal/package-lock.json       projects/portal/
+COPY --chown=worker:worker projects/homeowner/package.json    projects/homeowner/package-lock.json    projects/homeowner/
+COPY --chown=worker:worker projects/app_install/package.json  projects/app_install/package-lock.json  projects/app_install/
+RUN for p in projects/api projects/portal projects/homeowner projects/app_install; do \
+        echo "== installing deps: $p ==" && npm --prefix "$p" ci \
+        && mkdir -p "/home/worker/.deps-lock/$p" \
+        && cp "$p/package-lock.json" "/home/worker/.deps-lock/$p/package-lock.json" ; \
+    done \
+    && rm -f projects/*/package.json projects/*/package-lock.json
+
+WORKDIR /home/worker
+COPY --chown=worker:worker muadib/claude/settings.json /home/worker/.claude/settings.json
+# Pre-seed onboarding state so claude skips the theme picker / welcome / trust
+# dialog and goes straight to the task. The entrypoint's `claude mcp add` merges
+# mcpServers into this same file at runtime.
+COPY --chown=worker:worker muadib/claude/claude.json /home/worker/.claude.json
+COPY --chown=worker:worker muadib/claude/tmux.conf /home/worker/.tmux.conf
+COPY --chown=worker:worker muadib/worker-entrypoint.sh /home/worker/worker-entrypoint.sh
+
+ENTRYPOINT ["bash", "/home/worker/worker-entrypoint.sh"]

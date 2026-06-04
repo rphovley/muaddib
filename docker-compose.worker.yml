@@ -1,0 +1,82 @@
+# One isolated worker stack. Namespaced per worker via `docker compose -p quotethat-w<N>`.
+# Ports/env come from spawn-worker.sh. Deliberately NO docker.sock mount and no
+# host bind-mounts except the two narrow, intentional ones on `worker`.
+services:
+  # Dev/runtime DB the agent's `npm run dev` talks to. Published to the host
+  # so you can inspect it from your Mac.
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: quotethat
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "${WORKER_DB_PORT:?set WORKER_DB_PORT}:5432"
+    tmpfs:
+      - /var/lib/postgresql # ephemeral; wiped on teardown
+    mem_limit: 1g
+    cpus: 1.0
+
+  # Separate throwaway DB for the integration-test harness (internal only —
+  # not published). See README "Integration-test DB" for how the harness
+  # reaches this instead of doing its own `docker compose up`.
+  db_test:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: quotethat
+      POSTGRES_HOST_AUTH_METHOD: trust
+    tmpfs:
+      - /var/lib/postgresql
+    mem_limit: 1g
+    cpus: 1.0
+
+  worker:
+    build:
+      context: .. # repo root, so the image can pre-install project deps
+      dockerfile: muaddib/Dockerfile.worker
+    depends_on:
+      - db
+      - db_test
+    env_file:
+      - ${WORKER_ENV_FILE:?set WORKER_ENV_FILE} # GCP non-prod secrets + worker vars
+    environment:
+      # Force the app's DB connection to the local sidecar. Names match
+      # config.ts (PG_*). compose `environment` overrides `env_file`, so
+      # even a leaked prod PG_HOST in the GCP bundle CANNOT take effect.
+      PG_HOST: db
+      PG_PORT: "5432"
+      PG_USER: postgres
+      PG_PASSWORD: ""
+      PG_DATABASE: quotethat
+      PG_SSLMODE: disable
+      DATABASE_URL: "postgres://postgres@db:5432/quotethat"
+      # Integration tests target the throwaway test sidecar (no Docker socket).
+      TEST_DB_HOST: db_test
+      TEST_DB_PORT: "5432"
+      TEST_DB_EXTERNAL: "1"
+      # Select the dev profile (dev Firebase SA file, dev URLs, dev company
+      # IDs, dev notify-whitelists). REQUIRED for `npm run dev`: config.ts
+      # throws on boot if ENV isn't dev/development. Tests override to test
+      # mode via test-preload regardless, so this is safe for `npm run check`.
+      ENV: dev
+      WORKER_INDEX: "${WORKER_INDEX:?set WORKER_INDEX}"
+    ports:
+      - "${WORKER_API_PORT:?set WORKER_API_PORT}:8081" # agent's `npm run dev`
+    volumes:
+      # The ONLY host mounts. Both narrow and intentional:
+      #  - status/ : tiny state files the hooks write, host watches (rw)
+      #  - skills  : your personal Claude skills, read-only (no secrets)
+      - ./status:/var/run/agent-status
+      - ${CLAUDE_SKILLS_DIR:?set CLAUDE_SKILLS_DIR}:/home/worker/.claude/skills:ro
+      - ${HOST_TMPDIR:?set HOST_TMPDIR}:${HOST_TMPDIR}:ro
+      - npm-cache:/home/worker/.npm
+    tty: true
+    stdin_open: true
+    mem_limit: 6g
+    cpus: 3.0
+    pids_limit: 2048
+    # NOTE: intentionally no /var/run/docker.sock — that would be root-on-host.
+
+volumes:
+  npm-cache:

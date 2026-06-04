@@ -1,0 +1,25 @@
+{
+    "theme": "dark",
+    "hooks": {
+        "Notification": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "printf 'BLOCKED %s\\n' \"$(date -u +%FT%TZ)\" > /var/run/agent-status/worker-${WORKER_INDEX}.state"
+                    }
+                ]
+            }
+        ],
+        "Stop": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "printf 'IDLE %s\\n' \"$(date -u +%FT%TZ)\" > /var/run/agent-status/worker-${WORKER_INDEX}.state"
+                    }
+                ]
+            }
+        ]
+    }
+}

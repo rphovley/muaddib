@@ -1,0 +1,11 @@
+# Real secret bundle (only the .example is tracked)
+non-prod.env
+
+# Per-worker env files — contain the subscription + GitHub tokens
+.worker-*.env
+
+# Live worker status files
+status/
+
+# Host-mounted screenshot inbox (contents are transient)
+screenshots/
