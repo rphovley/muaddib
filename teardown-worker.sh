@@ -11,6 +11,7 @@ export WORKER_DB_PORT=$((5441 + WORKER))
 export WORKER_ENV_FILE="$FLEET_DIR/.worker-${WORKER}.env"
 export WORKER_INDEX="$WORKER"
 export CLAUDE_SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
+export HOST_TMPDIR="${TMPDIR:-/tmp}"
 
 docker compose -p "$PROJECT" -f "$FLEET_DIR/docker-compose.worker.yml" down -v
 rm -f "$FLEET_DIR/.worker-${WORKER}.env" "$FLEET_DIR/status/worker-${WORKER}.state"

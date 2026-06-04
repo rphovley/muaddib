@@ -1,6 +1,6 @@
 # Worker image: an isolated, all-commands-enabled Claude Code session.
 # BUILD CONTEXT IS THE REPO ROOT, so project dependencies can be pre-installed:
-#   docker build -f muadib/Dockerfile.worker -t quotethat-worker .
+#   docker build -f muaddib/Dockerfile.worker -t quotethat-worker .
 # Runs inside Docker Desktop's Linux VM — no access to the macOS host beyond the
 # narrow mounts wired in docker-compose.worker.yml.
 FROM node:22-bookworm
@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git tmux jq ca-certificates postgresql-client procps wget \
     && rm -rf /var/lib/apt/lists/*
 
-# GitHub CLI — muadib opens PRs via `gh` (auto-auths from GITHUB_TOKEN).
+# GitHub CLI — muaddib opens PRs via `gh` (auto-auths from GITHUB_TOKEN).
 RUN mkdir -p -m 755 /etc/apt/keyrings \
     && wget -nv -O /etc/apt/keyrings/githubcli-archive-keyring.gpg https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
@@ -46,12 +46,12 @@ RUN for p in projects/api projects/portal projects/homeowner projects/app_instal
     && rm -f projects/*/package.json projects/*/package-lock.json
 
 WORKDIR /home/worker
-COPY --chown=worker:worker muadib/claude/settings.json /home/worker/.claude/settings.json
+COPY --chown=worker:worker muaddib/claude/settings.json /home/worker/.claude/settings.json
 # Pre-seed onboarding state so claude skips the theme picker / welcome / trust
 # dialog and goes straight to the task. The entrypoint's `claude mcp add` merges
 # mcpServers into this same file at runtime.
-COPY --chown=worker:worker muadib/claude/claude.json /home/worker/.claude.json
-COPY --chown=worker:worker muadib/claude/tmux.conf /home/worker/.tmux.conf
-COPY --chown=worker:worker muadib/worker-entrypoint.sh /home/worker/worker-entrypoint.sh
+COPY --chown=worker:worker muaddib/claude/claude.json /home/worker/.claude.json
+COPY --chown=worker:worker muaddib/claude/tmux.conf /home/worker/.tmux.conf
+COPY --chown=worker:worker muaddib/worker-entrypoint.sh /home/worker/worker-entrypoint.sh
 
 ENTRYPOINT ["bash", "/home/worker/worker-entrypoint.sh"]
