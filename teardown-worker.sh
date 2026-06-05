@@ -12,8 +12,11 @@ export WORKER_ENV_FILE="$FLEET_DIR/.worker-${WORKER}.env"
 export WORKER_INDEX="$WORKER"
 export CLAUDE_SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
 export HOST_TMPDIR="${TMPDIR:-/tmp}"
+export HOST_DESKTOP="$HOME/Desktop"
 
 docker compose -p "$PROJECT" -f "$FLEET_DIR/docker-compose.worker.yml" down -v
-rm -f "$FLEET_DIR/.worker-${WORKER}.env" "$FLEET_DIR/status/worker-${WORKER}.state"
+rm -f "$FLEET_DIR/.worker-${WORKER}.env" \
+    "$FLEET_DIR/status/worker-${WORKER}.state" \
+    "$FLEET_DIR/status/worker-${WORKER}.preview"
 rm -rf "$FLEET_DIR/status/.skills-${WORKER}"
 echo "✓ tore down ${PROJECT}"

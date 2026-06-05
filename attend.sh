@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 # Single-pane fleet status. Reads the tiny state files the in-container hooks
-# write, and rings the terminal bell when any worker is BLOCKED (waiting on you,
-# e.g. /grill-me or a permission prompt) or WAITING_FOR_INPUT (async grill-me
-# posted questions to Linear — answer them and re-run /muaddib).
+# write, rings the terminal bell, and fires a macOS notification when any worker
+# transitions to DONE, BLOCKED, WAITING_FOR_INPUT, or FAILED.
 set -euo pipefail
 STATUS_DIR="$(cd "$(dirname "$0")" && pwd)/status"
+
+declare -A prev_states
+
+notify() {
+    local title="$1" body="$2"
+    osascript -e "display notification \"$body\" with title \"$title\" sound name \"Glass\"" 2>/dev/null || true
+}
 
 while true; do
     clear
@@ -15,13 +21,29 @@ while true; do
         echo "(no workers running)"
     else
         for f in "${states[@]}"; do
-            state_line="$(cat "$f")"
+            state_line="$(cat "$f" 2>/dev/null || echo "")"
             state_word="$(cut -d' ' -f1 <<<"$state_line")"
             label="$(basename "${f%.state}")"
+            prev="${prev_states[$label]:-}"
+
+            if [ "$state_word" != "$prev" ]; then
+                case "$state_word" in
+                    DONE)              notify "muaddib: $label" "Task complete ✓" ;;
+                    BLOCKED)           notify "muaddib: $label" "Waiting for your input" ;;
+                    WAITING_FOR_INPUT) notify "muaddib: $label" "Questions posted to Linear — needs answers" ;;
+                    FAILED)            notify "muaddib: $label" "Worker failed — check logs" ;;
+                esac
+                prev_states[$label]="$state_word"
+            fi
+
+            preview_file="${STATUS_DIR}/$(basename "${f%.state}").preview"
+            preview_suffix=""
+            [ -f "$preview_file" ] && preview_suffix="  → $(cat "$preview_file")"
+
             if [ "$state_word" = "WAITING_FOR_INPUT" ]; then
-                printf '  %-12s ⏳ %s\n' "$label" "$state_line"
+                printf '  %-12s ⏳ %s%s\n' "$label" "$state_line" "$preview_suffix"
             else
-                printf '  %-12s %s\n' "$label" "$state_line"
+                printf '  %-12s %s%s\n' "$label" "$state_line" "$preview_suffix"
             fi
         done
         if grep -lqE 'BLOCKED|FAILED|WAITING_FOR_INPUT' "${states[@]}" 2>/dev/null; then

@@ -108,13 +108,62 @@ done
 echo
 echo "✓ Worker ${WORKER} up and READY."
 
+PREVIEW_FILE="$FLEET_DIR/status/worker-${WORKER}.preview"
+if [ -f "$PREVIEW_FILE" ]; then
+    echo "  Preview: $(cat "$PREVIEW_FILE")"
+fi
+
 # Background watcher: tear down automatically once the container exits (task
 # done in TASK mode, or the user stops it). Harmless for interactive workers —
 # it just fires when the container is already stopped.
 CID=$(worker_cid)
 ( docker wait "$CID" >/dev/null 2>&1 || true
   echo "→ Worker ${WORKER} container exited — tearing down..."
+  state="$(cut -d' ' -f1 "$FLEET_DIR/status/worker-${WORKER}.state" 2>/dev/null || echo "UNKNOWN")"
+  case "$state" in
+    DONE)    msg="Task complete ✓" ;;
+    FAILED)  msg="Worker failed — check logs" ;;
+    *)       msg="Worker stopped (state: $state)" ;;
+  esac
+  osascript -e "display notification \"$msg\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true
   "$FLEET_DIR/teardown-worker.sh" "$WORKER" 2>/dev/null || true ) &
+disown $!
+
+# Background PR lifecycle watcher: posts the preview URL as a comment when the
+# PR opens, then tears the worker down when the PR is merged or closed.
+# Runs entirely on the host using the GITHUB_TOKEN already in scope.
+(
+    TUNNEL_URL=""
+    for _ in $(seq 1 30); do
+        [ -f "$PREVIEW_FILE" ] && TUNNEL_URL="$(cat "$PREVIEW_FILE")" && break
+        sleep 2
+    done
+    [ -z "$TUNNEL_URL" ] && { echo "→ PR watcher: no preview URL — skipping"; exit 0; }
+
+    # Wait up to 20 min for the agent to open a PR on this branch.
+    PR_URL=""
+    for _ in $(seq 1 240); do
+        PR_URL=$(gh pr list --head "$BRANCH" --json url -q '.[0].url' 2>/dev/null || true)
+        [ -n "$PR_URL" ] && break
+        sleep 5
+    done
+    [ -z "$PR_URL" ] && { echo "→ PR watcher: no PR opened after 20 min — exiting"; exit 0; }
+
+    gh pr comment "$PR_URL" --body "**Preview environment:** $TUNNEL_URL" 2>/dev/null \
+        && echo "→ Posted preview URL to $PR_URL"
+
+    # Poll until the PR is merged or closed, then teardown.
+    while true; do
+        PR_STATE=$(gh pr view "$PR_URL" --json state -q '.state' 2>/dev/null || echo "")
+        case "$PR_STATE" in
+            MERGED|CLOSED)
+                echo "→ PR ${PR_STATE} — tearing down worker ${WORKER}…"
+                "$FLEET_DIR/teardown-worker.sh" "$WORKER" 2>/dev/null || true
+                exit 0 ;;
+        esac
+        sleep 30
+    done
+) &
 disown $!
 
 # Drop straight into the agent's interactive session when we have a terminal.

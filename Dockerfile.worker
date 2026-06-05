@@ -20,6 +20,12 @@ RUN mkdir -p -m 755 /etc/apt/keyrings \
     && apt-get update && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
+# cloudflared — per-worker PR preview tunnels (quick tunnel, no account needed).
+RUN CF_ARCH=$(dpkg --print-architecture) \
+    && wget -nv -O /usr/local/bin/cloudflared \
+       "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CF_ARCH}" \
+    && chmod +x /usr/local/bin/cloudflared
+
 # Claude Code CLI.
 RUN npm install -g @anthropic-ai/claude-code
 
