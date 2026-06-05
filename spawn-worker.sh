@@ -117,12 +117,17 @@ done
 echo
 echo "✓ Worker ${WORKER} up and READY."
 
-# Background watcher: tear down automatically once the container exits (task
-# done in TASK mode, or the user stops it). Harmless for interactive workers —
-# it just fires when the container is already stopped.
+# Background watcher: tear down automatically once the task is done or the
+# container exits. Polls the state file every 5 s — avoids the dead-lock where
+# docker wait blocks forever because worker-entrypoint.sh ends with
+# `tail -f /dev/null` (keeping the container alive for the preview URL).
 CID=$(worker_cid)
-( docker wait "$CID" >/dev/null 2>&1 || true
-  echo "→ Worker ${WORKER} container exited — tearing down..."
+( while docker ps -q --filter "id=$CID" | grep -q .; do
+      state="$(cut -d' ' -f1 "$FLEET_DIR/status/worker-${WORKER}.state" 2>/dev/null || echo "")"
+      if [ "$state" = "DONE" ] || [ "$state" = "FAILED" ]; then break; fi
+      sleep 5
+  done
+  echo "→ Worker ${WORKER} finished — tearing down..."
   state="$(cut -d' ' -f1 "$FLEET_DIR/status/worker-${WORKER}.state" 2>/dev/null || echo "UNKNOWN")"
   case "$state" in
     DONE)    msg="Task complete ✓" ;;
@@ -159,7 +164,15 @@ disown $!
 if [ "${MUADIB_NO_ATTACH:-0}" != "1" ] && [ -t 0 ] && [ -t 1 ]; then
     echo "  Attaching — Ctrl-b then d to detach (worker keeps running)."
     echo "  Re-attach: ./attach.sh ${WORKER}  ·  Monitor: ./attend.sh  ·  Stop: ./teardown-worker.sh ${WORKER}"
-    exec docker exec -it "$(worker_cid)" tmux attach -t "w${WORKER}"
+    docker exec -it "$(worker_cid)" tmux attach -t "w${WORKER}" || true
+    # After detach or task completion, teardown immediately if the task is done.
+    # (The background watcher above handles the no-attach case within ~5 s.)
+    state="$(cut -d' ' -f1 "$FLEET_DIR/status/worker-${WORKER}.state" 2>/dev/null || echo "")"
+    if [ "$state" = "DONE" ] || [ "$state" = "FAILED" ]; then
+        echo "→ Task complete — tearing down worker ${WORKER}..."
+        "$FLEET_DIR/teardown-worker.sh" "$WORKER" 2>/dev/null || true
+    fi
+    exit 0
 fi
 
 cat <<EOF
