@@ -6,7 +6,7 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
-TASK="${*:?usage: npm run run-task <task description>}"
+TASK="${*:-}"
 
 # Pick the lowest worker number not currently running (by compose project label).
 N=1
@@ -15,5 +15,9 @@ while [ "$N" -le 64 ] \
     N=$((N + 1))
 done
 
-echo "→ muaddib-task on worker ${N}: ${TASK}"
+if [ -n "$TASK" ]; then
+    echo "→ muaddib-task on worker ${N}: ${TASK}"
+else
+    echo "→ muaddib-task on worker ${N}: (interactive — no task provided)"
+fi
 exec "$DIR/spawn-worker.sh" "$N" "/muaddib-task ${TASK}"

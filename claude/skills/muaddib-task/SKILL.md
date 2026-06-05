@@ -1,13 +1,24 @@
 ---
 name: muaddib-task
-description: Fleet-safe free-form task executor. Takes a task description and implements it end-to-end without a Linear ticket — reads CLAUDE.md, explores codebase, plans inline, implements, runs /check, commits, and opens a PR. Never calls AskUserQuestion.
+description: Fleet-safe free-form task executor. Takes a task description and implements it end-to-end without a Linear ticket — reads CLAUDE.md, explores codebase, plans inline, implements, runs /check, commits, and opens a PR. Never calls AskUserQuestion in fleet context.
 ---
 
 # Muaddib Task (Free-form)
 
-Fleet-safe, no Linear ticket required. Takes a task description from `$ARGUMENTS` and implements it end-to-end. **Never calls `AskUserQuestion`.** When a decision is ambiguous, make the most reasonable interpretation and document it in the PR body.
+Fleet-safe, no Linear ticket required. Takes a task description from `$ARGUMENTS` and implements it end-to-end. **Never calls `AskUserQuestion` in fleet context (`WORKER_INDEX` is set).** When a decision is ambiguous, make the most reasonable interpretation and document it in the PR body.
 
 Programmatic. **Auto-commits and opens a PR** — this is the documented exception to the user's usual "I handle my own commits" rule, scoped to fleet workers only.
+
+## Step 0 — Collect task description (interactive only)
+
+If `WORKER_INDEX` is set and `$ARGUMENTS` is empty, write `BLOCKED` to the state file and stop — a fleet worker must always be given a task.
+
+If `WORKER_INDEX` is unset and `$ARGUMENTS` is empty, call `AskUserQuestion` to gather:
+
+1. **Task** — what needs to be done (free-form description)
+2. **Context / constraints** — any relevant background, scope limits, or things to avoid (optional)
+
+Use the answers as the task description for all subsequent steps. If the user provides a task via `AskUserQuestion`, proceed — do not ask follow-up clarifying questions.
 
 ## Step 1 — Understand the task
 

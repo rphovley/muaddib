@@ -70,6 +70,7 @@ services:
       - ./status:/var/run/agent-status
       - ${CLAUDE_SKILLS_DIR:?set CLAUDE_SKILLS_DIR}:/home/worker/.claude/skills:ro
       - ${HOST_TMPDIR:?set HOST_TMPDIR}:${HOST_TMPDIR}:ro
+      - ${HOST_DESKTOP:?set HOST_DESKTOP}:/home/worker/Desktop:ro
       - npm-cache:/home/worker/.npm
     tty: true
     stdin_open: true

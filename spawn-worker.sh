@@ -69,7 +69,8 @@ mkdir -p "$FLEET_DIR/status" && chmod 777 "$FLEET_DIR/status"
 export WORKER_API_PORT="$API_PORT" WORKER_DB_PORT="$DB_PORT" \
     WORKER_ENV_FILE="$ENV_FILE" WORKER_INDEX="$WORKER" \
     CLAUDE_SKILLS_DIR="$CLAUDE_SKILLS_DIR" \
-    HOST_TMPDIR="${TMPDIR:-/tmp}"
+    HOST_TMPDIR="${TMPDIR:-/tmp}" \
+    HOST_DESKTOP="$HOME/Desktop"
 
 STATE_FILE="$FLEET_DIR/status/worker-${WORKER}.state"
 : >"$STATE_FILE" # clear any stale state from a previous run
