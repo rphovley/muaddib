@@ -36,14 +36,10 @@ while true; do
                 prev_states[$label]="$state_word"
             fi
 
-            preview_file="${STATUS_DIR}/$(basename "${f%.state}").preview"
-            preview_suffix=""
-            [ -f "$preview_file" ] && preview_suffix="  → $(cat "$preview_file")"
-
             if [ "$state_word" = "WAITING_FOR_INPUT" ]; then
-                printf '  %-12s ⏳ %s%s\n' "$label" "$state_line" "$preview_suffix"
+                printf '  %-12s ⏳ %s\n' "$label" "$state_line"
             else
-                printf '  %-12s %s%s\n' "$label" "$state_line" "$preview_suffix"
+                printf '  %-12s %s\n' "$label" "$state_line"
             fi
         done
         if grep -lqE 'BLOCKED|FAILED|WAITING_FOR_INPUT' "${states[@]}" 2>/dev/null; then

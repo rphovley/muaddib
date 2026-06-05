@@ -16,7 +16,6 @@ export HOST_DESKTOP="$HOME/Desktop"
 
 docker compose -p "$PROJECT" -f "$FLEET_DIR/docker-compose.worker.yml" down -v
 rm -f "$FLEET_DIR/.worker-${WORKER}.env" \
-    "$FLEET_DIR/status/worker-${WORKER}.state" \
-    "$FLEET_DIR/status/worker-${WORKER}.preview"
+    "$FLEET_DIR/status/worker-${WORKER}.state"
 rm -rf "$FLEET_DIR/status/.skills-${WORKER}"
 echo "✓ tore down ${PROJECT}"

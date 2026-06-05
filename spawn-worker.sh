@@ -76,7 +76,16 @@ STATE_FILE="$FLEET_DIR/status/worker-${WORKER}.state"
 : >"$STATE_FILE" # clear any stale state from a previous run
 
 echo "→ Spawning ${PROJECT}: API :${API_PORT}  DB :${DB_PORT}  branch ${BRANCH}"
-docker compose -p "$PROJECT" -f docker-compose.worker.yml up -d --build
+
+# Build the shared worker image once if it doesn't exist. All workers share
+# quotethat-worker:latest — nothing worker-specific is baked in. To force a
+# rebuild (e.g. after lockfile changes): `docker rmi quotethat-worker:latest`.
+if ! docker image inspect quotethat-worker:latest >/dev/null 2>&1; then
+    echo "→ Building worker image (first run or image removed)…"
+    docker build -f "$FLEET_DIR/Dockerfile.worker" -t quotethat-worker:latest "$REPO_ROOT"
+fi
+
+docker compose -p "$PROJECT" -f docker-compose.worker.yml up -d
 
 # Wait for the worker to finish provisioning (clone + deps + MCP). If it dies,
 # surface its logs to THIS console instead of reporting a false "up".
@@ -108,11 +117,6 @@ done
 echo
 echo "✓ Worker ${WORKER} up and READY."
 
-PREVIEW_FILE="$FLEET_DIR/status/worker-${WORKER}.preview"
-if [ -f "$PREVIEW_FILE" ]; then
-    echo "  Preview: $(cat "$PREVIEW_FILE")"
-fi
-
 # Background watcher: tear down automatically once the container exits (task
 # done in TASK mode, or the user stops it). Harmless for interactive workers —
 # it just fires when the container is already stopped.
@@ -129,39 +133,22 @@ CID=$(worker_cid)
   "$FLEET_DIR/teardown-worker.sh" "$WORKER" 2>/dev/null || true ) &
 disown $!
 
-# Background PR lifecycle watcher: posts the preview URL as a comment when the
-# PR opens, then tears the worker down when the PR is merged or closed.
-# Runs entirely on the host using the GITHUB_TOKEN already in scope.
+# Background state watcher: send macOS notifications on important state
+# transitions so the user is alerted even when attend.sh isn't running.
 (
-    TUNNEL_URL=""
-    for _ in $(seq 1 30); do
-        [ -f "$PREVIEW_FILE" ] && TUNNEL_URL="$(cat "$PREVIEW_FILE")" && break
-        sleep 2
-    done
-    [ -z "$TUNNEL_URL" ] && { echo "→ PR watcher: no preview URL — skipping"; exit 0; }
-
-    # Wait up to 20 min for the agent to open a PR on this branch.
-    PR_URL=""
-    for _ in $(seq 1 240); do
-        PR_URL=$(gh pr list --head "$BRANCH" --json url -q '.[0].url' 2>/dev/null || true)
-        [ -n "$PR_URL" ] && break
-        sleep 5
-    done
-    [ -z "$PR_URL" ] && { echo "→ PR watcher: no PR opened after 20 min — exiting"; exit 0; }
-
-    gh pr comment "$PR_URL" --body "**Preview environment:** $TUNNEL_URL" 2>/dev/null \
-        && echo "→ Posted preview URL to $PR_URL"
-
-    # Poll until the PR is merged or closed, then teardown.
-    while true; do
-        PR_STATE=$(gh pr view "$PR_URL" --json state -q '.state' 2>/dev/null || echo "")
-        case "$PR_STATE" in
-            MERGED|CLOSED)
-                echo "→ PR ${PR_STATE} — tearing down worker ${WORKER}…"
-                "$FLEET_DIR/teardown-worker.sh" "$WORKER" 2>/dev/null || true
-                exit 0 ;;
-        esac
-        sleep 30
+    _sw_prev=""
+    _sw_state_file="$FLEET_DIR/status/worker-${WORKER}.state"
+    while docker ps -q --filter "label=com.docker.compose.project=${PROJECT}" --filter "name=worker" | grep -q .; do
+        _sw_line="$(cut -d' ' -f1 "$_sw_state_file" 2>/dev/null || echo "")"
+        if [ "$_sw_line" != "$_sw_prev" ] && [ -n "$_sw_line" ]; then
+            case "$_sw_line" in
+                WAITING_FOR_INPUT) osascript -e "display notification \"Questions posted to Linear — needs your answers\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
+                BLOCKED)           osascript -e "display notification \"Waiting for your input\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
+                FAILED)            osascript -e "display notification \"Worker failed — check logs\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
+            esac
+            _sw_prev="$_sw_line"
+        fi
+        sleep 3
     done
 ) &
 disown $!

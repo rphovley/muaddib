@@ -32,6 +32,7 @@ services:
     cpus: 1.0
 
   worker:
+    image: quotethat-worker:latest
     build:
       context: .. # repo root, so the image can pre-install project deps
       dockerfile: muaddib/Dockerfile.worker

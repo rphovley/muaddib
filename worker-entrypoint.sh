@@ -72,27 +72,13 @@ if [ -n "${LINEAR_API_KEY:-}" ]; then
     fi
 fi
 
-# Start a Cloudflare quick tunnel pointing at the API dev port. The tunnel
-# retries automatically once the API process starts. Best-effort — a failure
-# here does not abort provisioning. URL is written to the status dir so
-# attend.sh can display it and spawn-worker.sh can post it to the PR.
-CF_LOG="/tmp/cloudflared.log"
-PREVIEW_FILE="/var/run/agent-status/worker-${WORKER_INDEX}.preview"
-cloudflared tunnel --url "http://localhost:8081" --no-autoupdate \
-    >"$CF_LOG" 2>&1 &
-
-TUNNEL_URL=""
-for _ in $(seq 1 30); do
-    TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "$CF_LOG" | head -1 || true)
-    [ -n "$TUNNEL_URL" ] && break
-    sleep 1
-done
-
-if [ -n "$TUNNEL_URL" ]; then
-    printf '%s\n' "$TUNNEL_URL" >"$PREVIEW_FILE" 2>/dev/null || true
-    echo "→ Preview tunnel: $TUNNEL_URL"
-else
-    echo "⚠ cloudflared did not announce a URL within 30s — preview unavailable"
+# Keep lastOnboardingVersion in sync with whatever version is installed so
+# Claude never shows the theme-picker / welcome screen after a version bump.
+CLAUDE_VER=$(claude --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+if [ -n "$CLAUDE_VER" ]; then
+    jq --arg v "$CLAUDE_VER" '.lastOnboardingVersion = $v' ~/.claude.json > /tmp/claude.json.tmp \
+        && mv /tmp/claude.json.tmp ~/.claude.json
+    echo "→ lastOnboardingVersion patched to $CLAUDE_VER"
 fi
 
 note "READY"
@@ -119,10 +105,10 @@ echo "Worker ${WORKER_INDEX} ready on branch ${BRANCH}."
 echo "Attach: docker compose -p quotethat-w${WORKER_INDEX} exec worker tmux attach -t ${SESSION}"
 
 if [ -n "${TASK:-}" ]; then
-    # Wait for Claude to finish, then mark done and stay alive so the tunnel
-    # keeps serving the preview URL. The host-side PR lifecycle watcher in
-    # spawn-worker.sh calls `docker compose down` when the PR is merged or
-    # closed, which terminates this wait.
+    # Wait for Claude to finish, then mark done and stay alive. The agent
+    # starts dev servers + cloudflared tunnels as background processes before
+    # creating the PR; keeping the container alive keeps those processes running
+    # so the preview URL in the PR body remains accessible.
     while tmux has-session -t "$SESSION" 2>/dev/null; do
         sleep 3
     done

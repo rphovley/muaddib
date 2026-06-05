@@ -86,7 +86,42 @@ Stage files by name — never `git add -A` / `git add .`.
 
 If a pre-commit hook fails, fix the underlying issue and create a **new** commit. Never `--amend` or `--no-verify`.
 
-## Step 8 — Push and open PR
+## Step 8 — Start preview servers and tunnel (fleet only)
+
+Skip this step if `WORKER_INDEX` is not set.
+
+Start the API, portal, and homeowner dev servers as background processes, then open a Cloudflare quick tunnel for each. The tunnel URLs go into the PR body so reviewers can click through to a live preview.
+
+```bash
+# Start servers (background, logs to /tmp)
+nohup npm run api:dev      > /tmp/preview-api.log      2>&1 &
+nohup npm run portal:dev   > /tmp/preview-portal.log   2>&1 &
+nohup npm run homeowner:dev > /tmp/preview-homeowner.log 2>&1 &
+
+# Give the API time to bind before starting its tunnel
+sleep 10
+
+# Start one cloudflared tunnel per service
+nohup cloudflared tunnel --url http://localhost:8081 --no-autoupdate \
+    > /tmp/cf-api.log 2>&1 &
+nohup cloudflared tunnel --url http://localhost:5173 --no-autoupdate \
+    > /tmp/cf-portal.log 2>&1 &
+nohup cloudflared tunnel --url http://localhost:5174 --no-autoupdate \
+    > /tmp/cf-homeowner.log 2>&1 &
+
+# Wait up to 30 s for all three URLs to appear
+for i in $(seq 1 30); do
+    API_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/cf-api.log      2>/dev/null | head -1 || true)
+    PORTAL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/cf-portal.log   2>/dev/null | head -1 || true)
+    HO_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/cf-homeowner.log 2>/dev/null | head -1 || true)
+    [ -n "$API_URL" ] && [ -n "$PORTAL_URL" ] && [ -n "$HO_URL" ] && break
+    sleep 1
+done
+```
+
+If any URL is still empty after 30 s, proceed without it and note "tunnel unavailable" for that service in the PR body. The portal and homeowner Vite ports (5173 / 5174) are defaults — if the project's dev scripts bind to different ports, use those instead.
+
+## Step 9 — Push and open PR
 
 ```
 git push -u origin <branch>
@@ -96,6 +131,15 @@ gh pr create --base main --title "<short title>" --body "$(cat <<'EOF'
 
 ## Linear
 <ticket URL>
+
+## Preview
+| Service | URL |
+|---------|-----|
+| API | <$API_URL or "unavailable"> |
+| Portal | <$PORTAL_URL or "unavailable"> |
+| Homeowner | <$HO_URL or "unavailable"> |
+
+_Preview runs in a sandboxed Docker worker. Tear down with `./muaddib/teardown-worker.sh <N>`._
 
 ## Test plan
 - [ ] ...
