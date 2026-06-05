@@ -109,40 +109,71 @@ Stage files by name — never `git add -A` / `git add .`.
 
 If a pre-commit hook fails, fix the underlying issue and create a **new** commit. Never `--amend` or `--no-verify`.
 
-## Step 8 — Start preview servers and tunnel (fleet only)
+## Step 8 — Start preview servers and tunnels (fleet only)
 
 Skip this step if `WORKER_INDEX` is not set.
 
-Start the API, portal, and homeowner dev servers as background processes, then open a Cloudflare quick tunnel for each. The tunnel URLs go into the PR body so reviewers can click through to a live preview.
+The startup order matters: DB migrations must run before the API starts; the API tunnel URL must be known before the frontends start (so they can call the preview API, not prod).
 
 ```bash
-# Start servers (background, logs to /tmp)
-nohup npm run api:dev       > /tmp/preview-api.log      2>&1 &
-nohup npm run portal:dev    > /tmp/preview-portal.log   2>&1 &
-nohup npm run homeowner:dev > /tmp/preview-homeowner.log 2>&1 &
+# 1. Run DB migrations against the ephemeral dev DB
+cd /home/worker/repo && npm run --prefix projects/api migrate:up
 
-# Give the API time to bind before starting its tunnel
-sleep 10
+# 2. Start the API dev server in the background
+nohup npm run api:dev > /tmp/preview-api.log 2>&1 &
 
-# Start one cloudflared tunnel per service
+# 3. Wait for the API to bind on port 8081 (up to 60 s)
+for i in $(seq 1 60); do
+    (echo > /dev/tcp/localhost/8081) 2>/dev/null && break
+    sleep 1
+done
+
+# 4. Open a Cloudflare quick tunnel for the API and capture its URL
 nohup cloudflared tunnel --url http://localhost:8081 --no-autoupdate \
     > /tmp/cf-api.log 2>&1 &
+API_TUNNEL_URL=""
+for i in $(seq 1 30); do
+    API_TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' \
+        /tmp/cf-api.log 2>/dev/null | head -1 || true)
+    [ -n "$API_TUNNEL_URL" ] && break
+    sleep 1
+done
+
+# 5. Start portal then homeowner with the API tunnel URL so their API calls
+#    reach the containerized API rather than the prod endpoint.
+#    Portal binds to 5173 first; homeowner auto-increments to 5174.
+VITE_API_URL="$API_TUNNEL_URL" nohup npm run portal:dev \
+    > /tmp/preview-portal.log 2>&1 &
+VITE_API_URL="$API_TUNNEL_URL" nohup npm run homeowner:dev \
+    > /tmp/preview-homeowner.log 2>&1 &
+
+# 6. Wait for both Vite servers to bind
+for i in $(seq 1 60); do
+    (echo > /dev/tcp/localhost/5173) 2>/dev/null && \
+    (echo > /dev/tcp/localhost/5174) 2>/dev/null && break
+    sleep 1
+done
+
+# 7. Open tunnels for portal and homeowner
 nohup cloudflared tunnel --url http://localhost:5173 --no-autoupdate \
     > /tmp/cf-portal.log 2>&1 &
 nohup cloudflared tunnel --url http://localhost:5174 --no-autoupdate \
     > /tmp/cf-homeowner.log 2>&1 &
 
-# Wait up to 30 s for all three URLs to appear
+# 8. Capture all three tunnel URLs (wait up to 30 s each)
+PORTAL_URL=""
+HO_URL=""
 for i in $(seq 1 30); do
-    API_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/cf-api.log      2>/dev/null | head -1 || true)
-    PORTAL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/cf-portal.log   2>/dev/null | head -1 || true)
-    HO_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/cf-homeowner.log 2>/dev/null | head -1 || true)
-    [ -n "$API_URL" ] && [ -n "$PORTAL_URL" ] && [ -n "$HO_URL" ] && break
+    PORTAL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' \
+        /tmp/cf-portal.log 2>/dev/null | head -1 || true)
+    HO_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' \
+        /tmp/cf-homeowner.log 2>/dev/null | head -1 || true)
+    [ -n "$PORTAL_URL" ] && [ -n "$HO_URL" ] && break
     sleep 1
 done
 ```
 
-If any URL is still empty after 30 s, proceed without it and note "tunnel unavailable" for that service in the PR body. The portal and homeowner Vite ports (5173 / 5174) are defaults — if the project's dev scripts bind to different ports, use those instead.
+If any URL is still empty after the wait, proceed and mark that service as "unavailable" in the PR body.
 
 ## Step 9 — Push and open PR
 
