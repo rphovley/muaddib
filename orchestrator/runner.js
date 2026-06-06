@@ -178,9 +178,23 @@ async function runScriptStep(worker, step) {
   const scriptPath = path.join(REPO, 'muaddib', step.script);
   const env = { ...process.env, ...extraEnv, WORKER_INDEX: String(worker) };
   const runtime = scriptPath.endsWith('.js') ? 'node' : 'bash';
-  const r = spawnSync(runtime, [scriptPath], { stdio: 'inherit', env });
+
+  // Capture output to a host-visible log file so it survives container teardown.
+  // The status dir is volume-mounted; log path mirrors the state file convention.
+  const statusDir = path.join(REPO, 'muaddib/status');
+  const logPath = path.join(statusDir, `worker-${worker}-${step.id}.log`);
+  try { fs.mkdirSync(statusDir, { recursive: true }); } catch (_) {}
+  const logFd = fs.openSync(logPath, 'w');
+
+  const r = spawnSync(runtime, [scriptPath], { stdio: ['ignore', logFd, logFd], env });
+  fs.closeSync(logFd);
+
+  // Echo to orchestrator stdout so it also appears in docker logs.
+  const output = fs.readFileSync(logPath, 'utf8');
+  if (output) process.stdout.write(output);
+
   if (r.status !== 0) {
-    throw new Error(`script ${step.script} exited ${r.status}`);
+    throw new Error(`script ${step.id} exited ${r.status} — see muaddib/status/worker-${worker}-${step.id}.log`);
   }
 }
 

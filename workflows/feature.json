@@ -58,7 +58,6 @@
           "id": "review",
           "type": "claude-tui",
           "skill": "review-fleet",
-          "runIf": "state.check_status === 'pass'",
           "stateWrites": ["review_status", "review_findings"]
         },
         {

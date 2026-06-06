@@ -156,13 +156,18 @@ EVENTS_FILE="$FLEET_DIR/status/worker-${WORKER}.events"
             WATCHING)          osascript -e "display notification \"Preview live — watching for Linear feedback\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
             WATCHING_FEEDBACK) osascript -e "display notification \"Addressing PR feedback\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
             DONE_FINAL)        osascript -e "display notification \"PR merged — preview torn down ✓\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
-            FAILED)            osascript -e "display notification \"Worker failed — check logs\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
+            FAILED)            osascript -e "display notification \"Worker ${WORKER} failed — check muaddib/status/ logs, then teardown-worker.sh ${WORKER}\" with title \"muaddib: worker-${WORKER}\" sound name \"Basso\"" 2>/dev/null || true ;;
         esac
 
         case "$_state" in
-            DONE|DONE_FINAL|FAILED)
+            DONE|DONE_FINAL)
                 echo "→ Worker ${WORKER} finished (${_state}) — tearing down..."
                 "$BIN_DIR/teardown-worker.sh" "$WORKER" 2>/dev/null || true
+                break
+                ;;
+            FAILED)
+                echo "→ Worker ${WORKER} FAILED — logs at muaddib/status/worker-${WORKER}-*.log"
+                echo "   Inspect, then run: ./bin/teardown-worker.sh ${WORKER}"
                 break
                 ;;
         esac
