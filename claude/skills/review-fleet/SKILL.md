@@ -27,7 +27,7 @@ If there are no blockers, no majors, and no unresolved code-change questions: ve
 ## Step 3 — Write state
 
 ```bash
-STATE_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/lib/state-cli.js"
+STATE_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/state-cli.js"
 WORKER="${WORKER_INDEX:-0}"
 
 node "$STATE_CLI" "$WORKER" set review_status <approved|needs_fix>

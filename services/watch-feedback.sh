@@ -22,7 +22,7 @@ set -euo pipefail
 WORKER="$WORKER_INDEX"
 REPO=$(echo "$REPO_URL" | sed 's|^github\.com/||')
 REPO_DIR="${REPO_DIR:-/home/worker/repo}"
-EMIT_CLI="$REPO_DIR/muaddib/lib/emit-cli.js"
+EMIT_CLI="$REPO_DIR/muaddib/orchestrator/emit-cli.js"
 COMMENT_FLAG="/tmp/wf-comment-${WORKER}"
 RECEIVER_LOG="/tmp/webhook-receiver.log"
 TUNNEL_LOG="/tmp/cf-webhook.log"
@@ -52,7 +52,7 @@ rm -f "$COMMENT_FLAG"
 WEBHOOK_SECRET="$WEBHOOK_SECRET" \
 COMMENT_FLAG="$COMMENT_FLAG" \
 PORT="$WEBHOOK_PORT" \
-    node "$REPO_DIR/muaddib/webhook-receiver.js" > "$RECEIVER_LOG" 2>&1 &
+    node "$REPO_DIR/muaddib/services/webhook-receiver.js" > "$RECEIVER_LOG" 2>&1 &
 RECEIVER_PID=$!
 log "receiver PID ${RECEIVER_PID} on :${WEBHOOK_PORT}"
 
@@ -95,7 +95,7 @@ WEBHOOK_SECRET="$WEBHOOK_SECRET" \
 COMMENT_FLAG="$COMMENT_FLAG" \
 PR_NUMBER="$PR_NUMBER" \
 PORT="$WEBHOOK_PORT" \
-    node "$REPO_DIR/muaddib/webhook-receiver.js" > "$RECEIVER_LOG" 2>&1 &
+    node "$REPO_DIR/muaddib/services/webhook-receiver.js" > "$RECEIVER_LOG" 2>&1 &
 kill "$RECEIVER_PID" 2>/dev/null || true
 RECEIVER_PID=$!
 log "restarted receiver with PR_NUMBER=${PR_NUMBER}"

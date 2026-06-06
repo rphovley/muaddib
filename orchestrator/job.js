@@ -5,7 +5,7 @@ const path = require('path');
 const { emit } = require('./events');
 
 const REPO = process.env.REPO_DIR || '/home/worker/repo';
-const EMIT_CLI = path.join(REPO, 'muaddib/lib/emit-cli.js');
+const EMIT_CLI = path.join(REPO, 'muaddib/orchestrator/emit-cli.js');
 
 // Spawn a named tmux window running `cmd`. Wraps the command so it emits a
 // done (exit 0) or failed (exit N) event when the process finishes.

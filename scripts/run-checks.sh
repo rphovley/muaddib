@@ -13,7 +13,7 @@ set -uo pipefail
 : "${WORKER_INDEX:?WORKER_INDEX not set}"
 
 REPO="${REPO_DIR:-/home/worker/repo}"
-STATE_CLI="$REPO/muaddib/lib/state-cli.js"
+STATE_CLI="$REPO/muaddib/orchestrator/state-cli.js"
 
 log() { echo "[run-checks w${WORKER_INDEX}] $*"; }
 

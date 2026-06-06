@@ -87,7 +87,7 @@ if [ -n "${TASK:-}" ]; then
     export REPO_DIR="$WORKDIR"
     echo "Worker ${WORKER_INDEX} starting orchestrator on branch ${BRANCH}."
     echo "Attach: docker compose -p quotethat-w${WORKER_INDEX} exec worker tmux attach -t ${SESSION}"
-    exec node "$WORKDIR/muaddib/lib/orchestrator.js"
+    exec node "$WORKDIR/muaddib/orchestrator/orchestrator.js"
 else
     # Interactive mode: drop to bash after Claude exits, keep container alive.
     note "READY"

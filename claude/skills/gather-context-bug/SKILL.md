@@ -41,7 +41,7 @@ If the working tree has uncommitted changes, write BLOCKED state and stop — do
 ## Step 3 — Write state
 
 ```bash
-STATE_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/lib/state-cli.js"
+STATE_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/state-cli.js"
 WORKER="${WORKER_INDEX:-0}"
 
 node "$STATE_CLI" "$WORKER" set branch "<branch-name>"

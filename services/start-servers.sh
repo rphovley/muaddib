@@ -12,7 +12,7 @@ set -euo pipefail
 : "${WORKER_INDEX:?WORKER_INDEX not set}"
 WORKER="$WORKER_INDEX"
 REPO="${REPO_DIR:-/home/worker/repo}"
-EMIT_CLI="$REPO/muaddib/lib/emit-cli.js"
+EMIT_CLI="$REPO/muaddib/orchestrator/emit-cli.js"
 
 log() { echo "[start-servers w${WORKER}] $*"; }
 
@@ -96,7 +96,7 @@ URLS_FILE="/tmp/preview-urls-${WORKER}.env"
 log "wrote $URLS_FILE"
 
 # --- 8. Write tunnel URLs to worker state for runner STATE_* injection ---
-STATE_CLI="$REPO/muaddib/lib/state-cli.js"
+STATE_CLI="$REPO/muaddib/orchestrator/state-cli.js"
 node "$STATE_CLI" "$WORKER" set api_tunnel_url "${API_TUNNEL_URL:-}"
 node "$STATE_CLI" "$WORKER" set portal_url     "${PORTAL_URL:-}"
 node "$STATE_CLI" "$WORKER" set ho_url         "${HO_URL:-}"

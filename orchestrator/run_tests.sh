@@ -2,7 +2,7 @@
 # Run the orchestrator lib test suite inside the worker container.
 # Always runs via docker so tmux and all runtime deps are available.
 #
-# Usage: ./muaddib/lib/run_tests.sh
+# Usage: ./muaddib/orchestrator/run_tests.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -21,7 +21,7 @@ docker run --rm \
     quotethat-worker:latest \
     -c "
         set -e
-        cd /home/worker/repo/muaddib/lib
+        cd /home/worker/repo/muaddib/orchestrator
         echo '=== test-event-bus ==='
         node __tests__/test-event-bus.js
         echo '=== test-job ==='

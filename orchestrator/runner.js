@@ -4,7 +4,7 @@
 // Step types:
 //   script     — bash script, run synchronously via spawnSync (no tmux)
 //   claude-tui — Claude session in a tmux window; waits for done/failed event
-//   loop       — repeats inner jobs until exitCondition or maxIterations
+//   loop       — repeats inner steps until exitCondition or maxIterations
 //
 // State passing: steps declare stateReads and stateWrites. The runner injects
 // declared read values as STATE_<KEY> env vars before each step runs.
@@ -22,7 +22,7 @@ const state = require('./state');
 
 const REPO = process.env.REPO_DIR || '/home/worker/repo';
 const MOCK_JOBS = process.env.MOCK_JOBS === '1';
-const STATE_CLI = path.join(REPO, 'muaddib/lib/state-cli.js');
+const STATE_CLI = path.join(REPO, 'muaddib/orchestrator/state-cli.js');
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -204,7 +204,7 @@ async function runLoop(worker, loopStep, ticketId, flushNotify) {
         return;
       }
     }
-    for (const job of loopStep.jobs) {
+    for (const job of loopStep.steps) {
       // eslint-disable-next-line no-await-in-loop
       await runSingleStep(worker, job, ticketId, flushNotify);
     }
@@ -251,7 +251,7 @@ async function run(worker, workflowPath, ticketId) {
   const definition = JSON.parse(fs.readFileSync(workflowPath, 'utf8'));
   console.log(`[runner w${worker}] workflow: ${definition.name}`);
 
-  const notifyScript = path.join(REPO, 'muaddib/notify.sh');
+  const notifyScript = path.join(REPO, 'muaddib/services/notify.sh');
   const flushNotify = makeNotifyFlusher(worker, notifyScript);
 
   for (const step of definition.workflow) {

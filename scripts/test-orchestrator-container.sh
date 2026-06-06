@@ -5,7 +5,7 @@
 # tmux, the event bus, job lifecycle, and volume mounts are exercised in the
 # real container runtime rather than just as host Node.js processes.
 #
-# Test coverage (mirrors lib/__tests__/test-orchestrator.js):
+# Test coverage (mirrors orchestrator/__tests__/test-orchestrator.js):
 #   testBootSequence    — BOOTING → STARTING_SERVICES → RUNNING → WATCHING
 #   testFeedbackCycle   — webhook:feedback → WATCHING_FEEDBACK → WATCHING
 #   testMergedExitsDone — webhook:merged → DONE_FINAL + orchestrator exits 0
@@ -44,7 +44,7 @@ docker run --rm \
     quotethat-worker:latest \
     -c "
         set -e
-        cd /home/worker/repo/muaddib/lib
+        cd /home/worker/repo/muaddib/orchestrator
         echo '=== test-orchestrator (container) ==='
         node __tests__/test-orchestrator.js
         echo ''

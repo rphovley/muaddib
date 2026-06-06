@@ -117,7 +117,7 @@ PREOF
 ```bash
 PR_NUMBER=$(gh pr view --json number --jq '.number')
 WORKER="${WORKER_INDEX:-0}"
-STATE_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/lib/state-cli.js"
+STATE_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/state-cli.js"
 
 node "$STATE_CLI" "$WORKER" set pr_number "$PR_NUMBER"
 printf '%s\n' "$PR_NUMBER" > "/tmp/pr-number-${WORKER}"

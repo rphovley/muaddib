@@ -1,7 +1,7 @@
 {
   "name": "bug",
   "services": [
-    { "name": "webhook", "script": "watch-feedback.sh" }
+    { "name": "webhook", "script": "services/watch-feedback.sh" }
   ],
   "workflow": [
     {
@@ -21,7 +21,7 @@
       "type": "loop",
       "maxIterations": 5,
       "exitCondition": "state.review_status === 'approved'",
-      "jobs": [
+      "steps": [
         {
           "id": "checks",
           "type": "script",

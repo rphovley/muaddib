@@ -7,7 +7,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CHECKS_SCRIPT="$SCRIPT_DIR/run-checks.sh"
-STATE_CLI="$REPO_ROOT/lib/state-cli.js"
+STATE_CLI="$REPO_ROOT/orchestrator/state-cli.js"
 
 PASS=0; FAIL=0
 
@@ -39,7 +39,7 @@ run_test() {
 # FAKE_NPM_EXIT controls npm exit code (default 0).
 make_fake_repo() {
   local dir="$1"
-  mkdir -p "$dir/bin" "$dir/muaddib/lib" "$dir/muaddib/scripts"
+  mkdir -p "$dir/bin" "$dir/muaddib/orchestrator" "$dir/muaddib/scripts"
 
   cat > "$dir/bin/git" <<'EOF'
 #!/usr/bin/env bash
@@ -57,8 +57,8 @@ exit "${FAKE_NPM_EXIT:-0}"
 EOF
   chmod +x "$dir/bin/npm"
 
-  cp "$STATE_CLI" "$dir/muaddib/lib/state-cli.js"
-  cp "$REPO_ROOT/lib/state.js"  "$dir/muaddib/lib/state.js"
+  cp "$STATE_CLI" "$dir/muaddib/orchestrator/state-cli.js"
+  cp "$REPO_ROOT/orchestrator/state.js"  "$dir/muaddib/orchestrator/state.js"
   cp "$CHECKS_SCRIPT" "$dir/muaddib/scripts/run-checks.sh"
 }
 

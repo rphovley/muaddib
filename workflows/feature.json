@@ -1,8 +1,8 @@
 {
   "name": "feature",
   "services": [
-    { "name": "servers", "script": "start-servers.sh", "readyEvent": "tunnel_ready" },
-    { "name": "webhook", "script": "watch-feedback.sh" }
+    { "name": "servers", "script": "services/start-servers.sh", "readyEvent": "tunnel_ready" },
+    { "name": "webhook", "script": "services/watch-feedback.sh" }
   ],
   "workflow": [
     {
@@ -22,7 +22,7 @@
       "type": "loop",
       "maxIterations": 5,
       "exitCondition": "state.review_status === 'approved'",
-      "jobs": [
+      "steps": [
         {
           "id": "checks",
           "type": "script",

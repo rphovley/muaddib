@@ -16,7 +16,7 @@ const { run } = require('./runner');
 
 const WORKER         = parseInt(process.env.WORKER_INDEX || '1', 10);
 const REPO           = process.env.REPO_DIR || '/home/worker/repo';
-const EMIT_CLI       = path.join(REPO, 'muaddib/lib/emit-cli.js');
+const EMIT_CLI       = path.join(REPO, 'muaddib/orchestrator/emit-cli.js');
 const AGENT_STATUS_DIR = process.env.AGENT_STATUS_DIR || '/var/run/agent-status';
 const STATUS_FILE    = path.join(AGENT_STATUS_DIR, `worker-${WORKER}.state`);
 const WORK_TYPE_FILE = `/tmp/work-type-${WORKER}`;

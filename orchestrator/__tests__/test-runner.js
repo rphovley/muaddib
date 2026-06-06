@@ -171,7 +171,7 @@ fi
       type:          'loop',
       maxIterations: 5,
       exitCondition: "state.review_status === 'approved'",
-      jobs: [
+      steps: [
         { id: 'checks', type: 'script', script: checksScript, stateWrites: ['check_status'] },
         { id: 'review', type: 'script', script: reviewScript, runIf: "state.check_status === 'pass'", stateWrites: ['review_status'] },
         { id: 'fix',    type: 'script', script: fixScript,    runIf: "state.review_status === 'needs_fix'" },
@@ -208,7 +208,7 @@ async function testLoopMaxIterations() {
     type:          'loop',
     maxIterations: 3,
     exitCondition: "state.review_status === 'approved'",
-    jobs: [
+    steps: [
       { id: 'checks', type: 'script', script: checksScript },
       { id: 'review', type: 'script', script: reviewScript, runIf: "state.check_status === 'pass'" },
     ],
@@ -237,7 +237,7 @@ async function testNotifyNonBlock() {
 
   // Stub notify.sh — writes a flag file we can check.
   const notifyFlag   = path.join(TMP_DIR, `notify-fired-${W}`);
-  const notifyScript = path.join(MUADDIB_DIR, 'notify.sh');
+  const notifyScript = path.join(MUADDIB_DIR, 'services/notify.sh');
   const hadNotify    = fs.existsSync(notifyScript);
   const savedNotify  = hadNotify ? fs.readFileSync(notifyScript) : null;
   fs.writeFileSync(notifyScript, `#!/usr/bin/env bash\ntouch '${notifyFlag}'\n`);
@@ -307,7 +307,7 @@ node '${STATE_CLI}' ${W} set check_status pass
         type:          'loop',
         maxIterations: 5,
         exitCondition: "state.review_status === 'approved'",
-        jobs: [
+        steps: [
           {
             id:     'checks',
             type:   'script',
@@ -388,7 +388,7 @@ async function testBugWorkflow() {
         type:          'loop',
         maxIterations: 5,
         exitCondition: "state.review_status === 'approved'",
-        jobs: [
+        steps: [
           {
             id:          'checks',
             type:        'script',
