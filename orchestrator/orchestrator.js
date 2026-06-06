@@ -91,7 +91,7 @@ function serviceCmd(svc) {
 // that event fires on the bus (e.g. servers waits for tunnel_ready).
 function startService(svc) {
   const cmd = serviceCmd(svc);
-  const logFile = path.join(REPO, `muaddib/status/worker-${WORKER}-${svc.name}.log`);
+  const logFile = path.join(AGENT_STATUS_DIR, `worker-${WORKER}-${svc.name}.log`);
   const opts = { logFile };
   if (!svc.readyEvent) { startJob(WORKER, svc.name, cmd, {}, opts); return Promise.resolve(); }
   return new Promise((resolve) => {

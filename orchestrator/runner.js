@@ -179,11 +179,9 @@ async function runScriptStep(worker, step) {
   const env = { ...process.env, ...extraEnv, WORKER_INDEX: String(worker) };
   const runtime = scriptPath.endsWith('.js') ? 'node' : 'bash';
 
-  // Capture output to a host-visible log file so it survives container teardown.
-  // The status dir is volume-mounted; log path mirrors the state file convention.
-  const statusDir = path.join(REPO, 'muaddib/status');
+  // Capture output to the host-mounted status dir (/var/run/agent-status).
+  const statusDir = process.env.AGENT_STATUS_DIR || '/var/run/agent-status';
   const logPath = path.join(statusDir, `worker-${worker}-${step.id}.log`);
-  try { fs.mkdirSync(statusDir, { recursive: true }); } catch (_) {}
   const logFd = fs.openSync(logPath, 'w');
 
   const r = spawnSync(runtime, [scriptPath], { stdio: ['ignore', logFd, logFd], env });

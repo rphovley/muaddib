@@ -21,6 +21,25 @@ write_status() {
   node "$STATE_CLI" "$WORKER_INDEX" set check_status "$1" || true
 }
 
+write_output() {
+  node "$STATE_CLI" "$WORKER_INDEX" set check_output "$1" || true
+}
+
+TMPOUT=$(mktemp)
+FAILED_OUTPUT=""
+
+capture() {
+  local label="$1"; shift
+  if "$@" >"$TMPOUT" 2>&1; then
+    return 0
+  else
+    FAILED_OUTPUT="${FAILED_OUTPUT}=== ${label} ===
+$(cat "$TMPOUT")
+"
+    return 1
+  fi
+}
+
 # ─── collect changed files across all diff scopes ────────────────────────────
 
 CHANGED=$(
@@ -56,7 +75,7 @@ cd "$REPO"
 
 if [ "$has_api" -eq 1 ]; then
   log "api: running checks..."
-  if npm run api:check; then
+  if capture "api:check" npm run api:check; then
     log "api: PASS"
   else
     log "api: FAIL"
@@ -66,7 +85,10 @@ fi
 
 if [ "$has_portal" -eq 1 ]; then
   log "portal: running lint + test..."
-  if npm --prefix projects/portal run lint && npm --prefix projects/portal run test; then
+  portal_ok=1
+  capture "portal:lint" npm --prefix projects/portal run lint || portal_ok=0
+  capture "portal:test" npm --prefix projects/portal run test || portal_ok=0
+  if [ "$portal_ok" -eq 1 ]; then
     log "portal: PASS"
   else
     log "portal: FAIL"
@@ -76,7 +98,10 @@ fi
 
 if [ "$has_homeowner" -eq 1 ]; then
   log "homeowner: running lint + test..."
-  if npm --prefix projects/homeowner run lint && npm --prefix projects/homeowner run test; then
+  homeowner_ok=1
+  capture "homeowner:lint" npm --prefix projects/homeowner run lint || homeowner_ok=0
+  capture "homeowner:test" npm --prefix projects/homeowner run test || homeowner_ok=0
+  if [ "$homeowner_ok" -eq 1 ]; then
     log "homeowner: PASS"
   else
     log "homeowner: FAIL"
@@ -86,7 +111,7 @@ fi
 
 if [ "$has_app_install" -eq 1 ]; then
   log "app_install: running lint..."
-  if npm --prefix projects/app_install run lint; then
+  if capture "app_install:lint" npm --prefix projects/app_install run lint; then
     log "app_install: PASS"
   else
     log "app_install: FAIL"
@@ -94,14 +119,18 @@ if [ "$has_app_install" -eq 1 ]; then
   fi
 fi
 
+rm -f "$TMPOUT"
+
 # ─── write result ─────────────────────────────────────────────────────────────
 
 if [ "$FAILED" -eq 1 ]; then
   log "result: FAIL"
   write_status fail
+  write_output "$FAILED_OUTPUT"
 else
   log "result: PASS"
   write_status pass
+  write_output ""
 fi
 
 exit 0

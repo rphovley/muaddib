@@ -46,13 +46,13 @@
           "id": "implement",
           "type": "claude-tui",
           "skill": "implement",
-          "stateReads": ["branch", "ticket_identifier", "check_status"]
+          "stateReads": ["branch", "ticket_identifier", "check_status", "check_output"]
         },
         {
           "id": "checks",
           "type": "script",
           "script": "scripts/run-checks.sh",
-          "stateWrites": ["check_status"]
+          "stateWrites": ["check_status", "check_output"]
         }
       ]
     },
@@ -73,13 +73,13 @@
           "id": "fix",
           "type": "claude-tui",
           "skill": "implement",
-          "stateReads": ["review_findings", "check_status"]
+          "stateReads": ["review_findings", "check_status", "check_output"]
         },
         {
           "id": "checks",
           "type": "script",
           "script": "scripts/run-checks.sh",
-          "stateWrites": ["check_status"]
+          "stateWrites": ["check_status", "check_output"]
         }
       ]
     },

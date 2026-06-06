@@ -39,12 +39,15 @@ function startJob(worker, name, cmd, extraEnv = {}, opts = {}) {
     extraExports,
     'set +e',
     // Run the command in the background so we can poll for the done sentinel.
-    // Services pass logFile to capture output; claude-tui steps render to the terminal directly.
+    // Services pass logFile to capture output and tail it so the tmux window
+    // is not empty. claude-tui steps render to the terminal directly (no logFile).
     ...(logFile ? [`mkdir -p '${path.dirname(logFile)}'`] : []),
     '(',
     cmd,
     logFile ? `) > '${logFile}' 2>&1 &` : ') &',
     '_claude_pid=$!',
+    // Mirror the log to the tmux window so the window isn't blank for services.
+    ...(logFile ? [`tail -n 0 -f '${logFile}' &`, '_tail_pid=$!'] : []),
     // Poll until the skill writes a sentinel file or the process exits on its own.
     `while kill -0 $_claude_pid 2>/dev/null; do`,
     `  if [ -f "${doneFile}" ] || [ -f "${failedFile}" ]; then`,
@@ -54,6 +57,7 @@ function startJob(worker, name, cmd, extraEnv = {}, opts = {}) {
     `  fi`,
     `  sleep 1`,
     `done`,
+    ...(logFile ? [`kill $_tail_pid 2>/dev/null || true`] : []),
     `wait $_claude_pid 2>/dev/null`,
     `_raw_exit=$?`,
     // Sentinel file presence overrides the process exit code.
