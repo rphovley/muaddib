@@ -1,0 +1,54 @@
+{
+  "name": "bug",
+  "services": [
+    { "name": "webhook", "script": "watch-feedback.sh" }
+  ],
+  "workflow": [
+    {
+      "id": "gather-context-bug",
+      "type": "claude-tui",
+      "skill": "gather-context-bug",
+      "stateWrites": ["branch", "ticket_url"]
+    },
+    {
+      "id": "implement-bug",
+      "type": "claude-tui",
+      "skill": "implement-bug",
+      "stateReads": ["branch"]
+    },
+    {
+      "id": "quality-loop",
+      "type": "loop",
+      "maxIterations": 5,
+      "exitCondition": "state.review_status === 'approved'",
+      "jobs": [
+        {
+          "id": "checks",
+          "type": "script",
+          "script": "scripts/run-checks.sh",
+          "stateWrites": ["check_status"]
+        },
+        {
+          "id": "review",
+          "type": "claude-tui",
+          "skill": "review-fleet",
+          "runIf": "state.check_status === 'pass'",
+          "stateWrites": ["review_status"]
+        },
+        {
+          "id": "fix",
+          "type": "claude-tui",
+          "skill": "implement-bug",
+          "runIf": "state.review_status === 'needs_fix'"
+        }
+      ]
+    },
+    {
+      "id": "wrapup",
+      "type": "claude-tui",
+      "skill": "commit-and-pr",
+      "stateReads": ["branch", "ticket_url"],
+      "stateWrites": ["pr_number"]
+    }
+  ]
+}
