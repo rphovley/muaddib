@@ -157,7 +157,8 @@ async function runScriptStep(worker, step) {
   const extraEnv = buildExtraEnv(worker, step.stateReads);
   const scriptPath = path.join(REPO, 'muaddib', step.script);
   const env = { ...process.env, ...extraEnv, WORKER_INDEX: String(worker) };
-  const r = spawnSync('bash', [scriptPath], { stdio: 'inherit', env });
+  const runtime = scriptPath.endsWith('.js') ? 'node' : 'bash';
+  const r = spawnSync(runtime, [scriptPath], { stdio: 'inherit', env });
   if (r.status !== 0) {
     throw new Error(`script ${step.script} exited ${r.status}`);
   }
