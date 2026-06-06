@@ -11,7 +11,9 @@ const EMIT_CLI = path.join(REPO, 'muaddib/orchestrator/emit-cli.js');
 // done (exit 0) or failed (exit N) event when the process finishes.
 // Also emits started immediately.
 // extraEnv: optional {KEY: value} pairs exported into the wrapper before cmd runs.
-function startJob(worker, name, cmd, extraEnv = {}) {
+// opts.logFile: redirect the command's stdout+stderr to this path (for services).
+//   Leave unset for claude-tui steps — the TUI renders to the terminal directly.
+function startJob(worker, name, cmd, extraEnv = {}, opts = {}) {
   const session = `w${worker}`;
   const wrapperPath = `/tmp/job-${worker}-${name}.sh`;
   const agentStatusDir = process.env.AGENT_STATUS_DIR || '/var/run/agent-status';
@@ -25,6 +27,7 @@ function startJob(worker, name, cmd, extraEnv = {}) {
   // kill the wrapper before the emit-cli call can record the exit code.
   const doneFile = `/tmp/step-done-${worker}-${name}`;
   const failedFile = `/tmp/step-failed-${worker}-${name}`;
+  const { logFile } = opts;
 
   fs.writeFileSync(wrapperPath, [
     '#!/usr/bin/env bash',
@@ -36,10 +39,11 @@ function startJob(worker, name, cmd, extraEnv = {}) {
     extraExports,
     'set +e',
     // Run the command in the background so we can poll for the done sentinel.
-    // This is needed because claude interactive TUI never exits after a skill runs.
+    // Services pass logFile to capture output; claude-tui steps render to the terminal directly.
+    ...(logFile ? [`mkdir -p '${path.dirname(logFile)}'`] : []),
     '(',
     cmd,
-    ') &',
+    logFile ? `) > '${logFile}' 2>&1 &` : ') &',
     '_claude_pid=$!',
     // Poll until the skill writes a sentinel file or the process exits on its own.
     `while kill -0 $_claude_pid 2>/dev/null; do`,

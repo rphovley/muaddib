@@ -89,12 +89,14 @@ function serviceCmd(svc) {
 // that event fires on the bus (e.g. servers waits for tunnel_ready).
 function startService(svc) {
   const cmd = serviceCmd(svc);
-  if (!svc.readyEvent) { startJob(WORKER, svc.name, cmd); return Promise.resolve(); }
+  const logFile = path.join(REPO, `muaddib/status/worker-${WORKER}-${svc.name}.log`);
+  const opts = { logFile };
+  if (!svc.readyEvent) { startJob(WORKER, svc.name, cmd, {}, opts); return Promise.resolve(); }
   return new Promise((resolve) => {
     const sub = subscribe(WORKER, (ev) => {
       if (ev.job === svc.name && ev.event === svc.readyEvent) { sub.kill(); resolve(); }
     });
-    startJob(WORKER, svc.name, cmd);
+    startJob(WORKER, svc.name, cmd, {}, opts);
   });
 }
 
