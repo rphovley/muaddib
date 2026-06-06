@@ -74,11 +74,37 @@ Test conventions:
 
 Do not expand scope beyond the plan. If a discovery mid-implementation reveals the plan is wrong, write `BLOCKED` to the state file and stop — do not silently pivot.
 
-## Step 5 — Run `/check`
+## Step 5 — Write preview seed script
+
+Write `projects/api/scripts/seed-preview.ts`. This script creates login-ready test data so the PR reviewer can exercise the feature without manual setup. It must be **idempotent**.
+
+The script must:
+
+1. Initialize firebase-admin using the dev service account (read the API's Firebase config to find the key file path).
+
+2. Create or update a preview contractor user in Firebase:
+   - Email: `preview-w${process.env.WORKER_INDEX || '0'}@quotethat.local`
+   - Password: generate once with `require('crypto').randomBytes(6).toString('hex')`
+   - If `auth/email-already-exists`, look up the UID and call `updateUser(uid, { password })`
+
+3. Upsert a matching contractor record in the DB.
+
+4. Seed minimal fixture data needed to exercise the feature — derive from the plan's acceptance criteria.
+
+5. If the feature involves the homeowner app, seed a homeowner project and generate its magic-link URL.
+
+6. Print to stdout as the **last line**:
+   ```json
+   {"email":"...","password":"...","homeowner_magic_link":"<url-or-null>"}
+   ```
+
+Add `seed-preview.ts` to the commit in Step 6.
+
+## Step 6 — Run `/check`
 
 Call `Skill(check)` with no `args`.
 
-## Step 6 — Fix findings, then re-check
+## Step 7 — Fix findings, then re-check
 
 Triage output:
 
@@ -94,7 +120,7 @@ printf 'FAILED %s\n' "$(date -u +%FT%TZ)" > "/var/run/agent-status/worker-${WORK
 
 Do not commit, push, or open a PR on failure. If `WORKER_INDEX` is unset (non-fleet context), the write silently fails — that is expected.
 
-## Step 7 — Commit
+## Step 8 — Commit
 
 ```bash
 git add <specific files>
@@ -109,73 +135,55 @@ Stage files by name — never `git add -A` / `git add .`.
 
 If a pre-commit hook fails, fix the underlying issue and create a **new** commit. Never `--amend` or `--no-verify`.
 
-## Step 8 — Start preview servers and tunnels (fleet only)
+## Step 9 — Start preview servers and tunnels (fleet only)
 
 Skip this step if `WORKER_INDEX` is not set.
 
-The startup order matters: DB migrations must run before the API starts; the API tunnel URL must be known before the frontends start (so they can call the preview API, not prod).
-
 ```bash
-# 1. Run DB migrations against the ephemeral dev DB
+# 1. Run DB migrations
 cd /home/worker/repo && npm run --prefix projects/api migrate:up
 
-# 2. Start the API dev server in the background
+# 2. Run preview seed — capture credentials
+SEED_JSON=$(cd /home/worker/repo && npx --prefix projects/api tsx \
+    projects/api/scripts/seed-preview.ts 2>/tmp/seed-preview.log \
+    | tail -1 \
+    || echo '{"email":"(seed failed — see /tmp/seed-preview.log)","password":"","homeowner_magic_link":null}')
+PREVIEW_EMAIL=$(printf '%s' "$SEED_JSON"    | jq -r '.email // "(unknown)"')
+PREVIEW_PASSWORD=$(printf '%s' "$SEED_JSON" | jq -r '.password // "(unknown)"')
+HO_MAGIC_LINK=$(printf '%s' "$SEED_JSON"   | jq -r '.homeowner_magic_link // ""')
+
+# 3. Start API dev server
 nohup npm run api:dev > /tmp/preview-api.log 2>&1 &
+for i in $(seq 1 60); do (echo > /dev/tcp/localhost/8081) 2>/dev/null && break; sleep 1; done
 
-# 3. Wait for the API to bind on port 8081 (up to 60 s)
-for i in $(seq 1 60); do
-    (echo > /dev/tcp/localhost/8081) 2>/dev/null && break
-    sleep 1
-done
-
-# 4. Open a Cloudflare quick tunnel for the API and capture its URL
-nohup cloudflared tunnel --url http://localhost:8081 --no-autoupdate \
-    > /tmp/cf-api.log 2>&1 &
+# 4. API tunnel
+nohup cloudflared tunnel --url http://localhost:8081 --no-autoupdate > /tmp/cf-api.log 2>&1 &
 API_TUNNEL_URL=""
 for i in $(seq 1 30); do
-    API_TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' \
-        /tmp/cf-api.log 2>/dev/null | head -1 || true)
-    [ -n "$API_TUNNEL_URL" ] && break
-    sleep 1
+    API_TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/cf-api.log 2>/dev/null | head -1 || true)
+    [ -n "$API_TUNNEL_URL" ] && break; sleep 1
 done
 
-# 5. Start portal then homeowner with the API tunnel URL so their API calls
-#    reach the containerized API rather than the prod endpoint.
-#    Portal binds to 5173 first; homeowner auto-increments to 5174.
-VITE_API_URL="$API_TUNNEL_URL" nohup npm run portal:dev \
-    > /tmp/preview-portal.log 2>&1 &
-VITE_API_URL="$API_TUNNEL_URL" nohup npm run homeowner:dev \
-    > /tmp/preview-homeowner.log 2>&1 &
-
-# 6. Wait for both Vite servers to bind
+# 5. Start frontends
+VITE_API_URL="$API_TUNNEL_URL" nohup npm run portal:dev > /tmp/preview-portal.log 2>&1 &
+VITE_API_URL="$API_TUNNEL_URL" nohup npm run homeowner:dev > /tmp/preview-homeowner.log 2>&1 &
 for i in $(seq 1 60); do
-    (echo > /dev/tcp/localhost/5173) 2>/dev/null && \
-    (echo > /dev/tcp/localhost/5174) 2>/dev/null && break
+    (echo > /dev/tcp/localhost/5173) 2>/dev/null && (echo > /dev/tcp/localhost/5174) 2>/dev/null && break
     sleep 1
 done
 
-# 7. Open tunnels for portal and homeowner
-nohup cloudflared tunnel --url http://localhost:5173 --no-autoupdate \
-    > /tmp/cf-portal.log 2>&1 &
-nohup cloudflared tunnel --url http://localhost:5174 --no-autoupdate \
-    > /tmp/cf-homeowner.log 2>&1 &
-
-# 8. Capture all three tunnel URLs (wait up to 30 s each)
-PORTAL_URL=""
-HO_URL=""
+# 6. Frontend tunnels
+nohup cloudflared tunnel --url http://localhost:5173 --no-autoupdate > /tmp/cf-portal.log 2>&1 &
+nohup cloudflared tunnel --url http://localhost:5174 --no-autoupdate > /tmp/cf-homeowner.log 2>&1 &
+PORTAL_URL=""; HO_URL=""
 for i in $(seq 1 30); do
-    PORTAL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' \
-        /tmp/cf-portal.log 2>/dev/null | head -1 || true)
-    HO_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' \
-        /tmp/cf-homeowner.log 2>/dev/null | head -1 || true)
-    [ -n "$PORTAL_URL" ] && [ -n "$HO_URL" ] && break
-    sleep 1
+    PORTAL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/cf-portal.log 2>/dev/null | head -1 || true)
+    HO_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/cf-homeowner.log 2>/dev/null | head -1 || true)
+    [ -n "$PORTAL_URL" ] && [ -n "$HO_URL" ] && break; sleep 1
 done
 ```
 
-If any URL is still empty after the wait, proceed and mark that service as "unavailable" in the PR body.
-
-## Step 9 — Push and open PR
+## Step 10 — Push and open PR
 
 ```bash
 git push -u origin <branch>
@@ -189,9 +197,15 @@ gh pr create --base main --title "<short title>" --body "$(cat <<'EOF'
 ## Preview
 | Service | URL |
 |---------|-----|
-| API | <$API_URL or "unavailable"> |
+| API | <$API_TUNNEL_URL or "unavailable"> |
 | Portal | <$PORTAL_URL or "unavailable"> |
 | Homeowner | <$HO_URL or "unavailable"> |
+
+## Preview credentials
+| Role | Login |
+|------|-------|
+| Contractor (Portal) | **$PREVIEW_EMAIL** / `$PREVIEW_PASSWORD` |
+| Homeowner | $HO_URL$HO_MAGIC_LINK _(magic-link — open directly)_ |
 
 _Preview runs in a sandboxed Docker worker. Tear down with `./muaddib/teardown-worker.sh <N>`._
 
@@ -209,6 +223,25 @@ EOF
 )"
 ```
 
-PR title ≤ 70 characters. Detail belongs in the body.
+PR title ≤ 70 characters. Capture the PR number:
+```bash
+PR_NUMBER=$(gh pr view --json number --jq '.number')
+```
 
 Print the PR URL as the final line of output.
+
+## Step 11 — Enter WATCHING mode (fleet only)
+
+Skip if `WORKER_INDEX` is not set. Skip if `WORKER_INDEX` is set but the task has no associated Linear ticket (the feedback loop requires a Linear ticket for comment routing; leave a note in the PR body that feedback should be left as PR comments and the reviewer should re-run `/muaddib-task` manually).
+
+```bash
+printf 'WATCHING %s\n' "$(date -u +%FT%TZ)" \
+    > "/var/run/agent-status/worker-${WORKER_INDEX}.state" 2>/dev/null || true
+
+PR_NUMBER="$PR_NUMBER" \
+LINEAR_ISSUE_ID="<issue UUID if known>" \
+LINEAR_ISSUE_IDENTIFIER="<identifier if known>" \
+LINEAR_TEAM_ID="<teamId if known>" \
+nohup /home/worker/repo/muaddib/watch-feedback.sh \
+    > /tmp/feedback-watcher.log 2>&1 &
+```

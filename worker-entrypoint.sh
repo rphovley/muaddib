@@ -112,7 +112,13 @@ if [ -n "${TASK:-}" ]; then
     while tmux has-session -t "$SESSION" 2>/dev/null; do
         sleep 3
     done
-    note DONE
+    # Don't overwrite WATCHING/WATCHING_FEEDBACK/DONE_FINAL — the feedback
+    # watcher (watch-feedback.sh) controls state transitions from here.
+    _current_state=$(cut -d' ' -f1 "$STATUS_FILE" 2>/dev/null || echo "")
+    case "$_current_state" in
+        WATCHING|WATCHING_FEEDBACK|DONE_FINAL) ;;
+        *) note DONE ;;
+    esac
     tail -f /dev/null
 else
     # Keep the container running until the user tears it down.

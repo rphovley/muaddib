@@ -161,6 +161,31 @@ no socket. Defaults are preserved, so local `npm test` on your Mac is unchanged.
 - `/grill-me` still blocks interactively — attend via tmux when a worker goes
   `BLOCKED`.
 
+## Preview feedback loop
+
+After opening the PR, each worker enters **WATCHING** mode:
+
+1. `watch-feedback.sh` starts a tiny Node.js webhook receiver (`webhook-receiver.js`) on port 9090 and opens a cloudflared tunnel to it.
+2. A Linear team webhook is registered pointing at the tunnel URL — fires on `Comment` events.
+3. When you post a comment on the Linear ticket, the receiver drops a flag file. The watcher spawns a `/muaddib-feedback` Claude session in a new tmux window to address it, then returns to WATCHING.
+4. The worker also polls the GitHub PR state every 30 s. When the PR is merged/closed, the webhook is deleted and the container is torn down.
+
+`attend.sh` shows **🔭 WATCHING** and **🔧 WATCHING_FEEDBACK** states.
+
+### Cleaning up stale webhooks
+
+Workers delete their own webhook on exit (via `trap`). If a worker crashed before cleanup:
+
+```bash
+LINEAR_API_KEY=<key> ./muaddib/cleanup-webhooks.sh
+```
+
+This lists and deletes all Linear webhooks whose URL contains `trycloudflare.com`.
+
+### Token scope note
+
+The `LINEAR_API_KEY` needs write access to webhooks — no change required to the GitHub PAT.
+
 ## Not yet wired (later layers)
 
 - **Egress allowlist.** Restrict outbound to GitHub/npm/Linear/Anthropic to blunt

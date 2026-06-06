@@ -11,7 +11,11 @@ Programmatic. **Auto-commits and opens a PR** — this is the documented excepti
 
 ## Step 1 — Load the ticket plan
 
-Call `mcp__linear__get_issue` with the ID from `$ARGUMENTS`. Then call `mcp__linear__list_comments` for the same ticket and find the most recent comment whose body starts with `## Plan`.
+Call `mcp__linear__get_issue` with the ID from `$ARGUMENTS`. Capture:
+- `id` (UUID), `identifier`, `title`, `url`
+- `teamId` (UUID)
+
+Then call `mcp__linear__list_comments` for the same ticket and find the most recent comment whose body starts with `## Plan`.
 
 If no plan comment exists, stop and tell the user to run `/prepare-feast <ticket-id>` first. Do not improvise a plan.
 
@@ -49,11 +53,38 @@ For every new code path, write a dedicated test. Follow project conventions:
 
 Fold tests into the same step as the code they cover — not a separate "tests" phase.
 
-## Step 5 — Run `/check`
+## Step 5 — Write preview seed script
+
+Write `projects/api/scripts/seed-preview.ts`. This script creates login-ready test data so the PR reviewer can immediately exercise the feature without manual setup. It must be **idempotent** — safe to run on every preview startup.
+
+The script must:
+
+1. Initialize firebase-admin using the dev service account (read the API's Firebase config to find the key file path — check `projects/api/src/config/` for how the dev SA is loaded).
+
+2. Create or update a preview contractor user in Firebase:
+   - Email: `preview-w${process.env.WORKER_INDEX || '0'}@quotethat.local`
+   - Password: `node -e "process.stdout.write(require('crypto').randomBytes(6).toString('hex'))"` — generate this once at the top of the script and reuse it
+   - If `auth/email-already-exists`, look up the user by email and call `updateUser(uid, { password })` instead
+
+3. Upsert a matching contractor record in the DB (use the `db` instance from `@/database/index.js`; look at existing contractor DB patterns for the upsert shape).
+
+4. Seed minimal fixture data that an acceptance-criteria reviewer needs to exercise the feature — derive this from the plan's work streams and acceptance criteria. Only seed what is necessary.
+
+5. If the feature involves the homeowner app and homeowner auth uses a magic-link token, seed a homeowner project and generate its token; output the full magic-link URL in the JSON.
+
+6. Print to stdout as the **last line**:
+   ```json
+   {"email":"...","password":"...","homeowner_magic_link":"<url-or-null>"}
+   ```
+   Write errors to stderr and exit 1 on failure.
+
+Add `seed-preview.ts` to the commit in Step 7.
+
+## Step 6 — Run `/check`
 
 Call `Skill(check)` with no `args`. It runs the per-project `npm` checks and then `/review`.
 
-## Step 6 — Fix findings, then re-check
+## Step 7 — Fix findings, then re-check
 
 Triage `/check` output:
 
@@ -71,7 +102,7 @@ Stop immediately. Do not commit, push, or open a PR. The worker state signals `a
 
 If `WORKER_INDEX` is unset (non-fleet context), the write silently fails — that is expected.
 
-## Step 7 — Commit
+## Step 8 — Commit
 
 ```
 git add <specific files>
@@ -86,26 +117,35 @@ Stage files by name — never `git add -A` / `git add .`.
 
 If a pre-commit hook fails, fix the underlying issue and create a **new** commit. Never `--amend` or `--no-verify`.
 
-## Step 8 — Start preview servers and tunnels (fleet only)
+## Step 9 — Start preview servers and tunnels (fleet only)
 
 Skip this step if `WORKER_INDEX` is not set.
 
-The startup order matters: DB migrations must run before the API starts; the API tunnel URL must be known before the frontends start (so they can call the preview API, not prod).
+The startup order matters: DB migrations must run before the API starts; the seed must run before the API starts; the API tunnel URL must be known before the frontends start.
 
 ```bash
 # 1. Run DB migrations against the ephemeral dev DB
 cd /home/worker/repo && npm run --prefix projects/api migrate:up
 
-# 2. Start the API dev server in the background
+# 2. Run preview seed — capture credentials for the PR body
+SEED_JSON=$(cd /home/worker/repo && npx --prefix projects/api tsx \
+    projects/api/scripts/seed-preview.ts 2>/tmp/seed-preview.log \
+    | tail -1 \
+    || echo '{"email":"(seed failed — see /tmp/seed-preview.log)","password":"","homeowner_magic_link":null}')
+PREVIEW_EMAIL=$(printf '%s' "$SEED_JSON"    | jq -r '.email // "(unknown)"')
+PREVIEW_PASSWORD=$(printf '%s' "$SEED_JSON" | jq -r '.password // "(unknown)"')
+HO_MAGIC_LINK=$(printf '%s' "$SEED_JSON"   | jq -r '.homeowner_magic_link // ""')
+
+# 3. Start the API dev server in the background
 nohup npm run api:dev > /tmp/preview-api.log 2>&1 &
 
-# 3. Wait for the API to bind on port 8081 (up to 60 s)
+# 4. Wait for the API to bind on port 8081 (up to 60 s)
 for i in $(seq 1 60); do
     (echo > /dev/tcp/localhost/8081) 2>/dev/null && break
     sleep 1
 done
 
-# 4. Open a Cloudflare quick tunnel for the API and capture its URL
+# 5. Open a Cloudflare quick tunnel for the API and capture its URL
 nohup cloudflared tunnel --url http://localhost:8081 --no-autoupdate \
     > /tmp/cf-api.log 2>&1 &
 API_TUNNEL_URL=""
@@ -116,28 +156,26 @@ for i in $(seq 1 30); do
     sleep 1
 done
 
-# 5. Start portal then homeowner with the API tunnel URL so their API calls
-#    reach the containerized API rather than the prod endpoint.
-#    Portal binds to 5173 first; homeowner auto-increments to 5174.
+# 6. Start portal then homeowner with the API tunnel URL
 VITE_API_URL="$API_TUNNEL_URL" nohup npm run portal:dev \
     > /tmp/preview-portal.log 2>&1 &
 VITE_API_URL="$API_TUNNEL_URL" nohup npm run homeowner:dev \
     > /tmp/preview-homeowner.log 2>&1 &
 
-# 6. Wait for both Vite servers to bind
+# 7. Wait for both Vite servers to bind
 for i in $(seq 1 60); do
     (echo > /dev/tcp/localhost/5173) 2>/dev/null && \
     (echo > /dev/tcp/localhost/5174) 2>/dev/null && break
     sleep 1
 done
 
-# 7. Open tunnels for portal and homeowner
+# 8. Open tunnels for portal and homeowner
 nohup cloudflared tunnel --url http://localhost:5173 --no-autoupdate \
     > /tmp/cf-portal.log 2>&1 &
 nohup cloudflared tunnel --url http://localhost:5174 --no-autoupdate \
     > /tmp/cf-homeowner.log 2>&1 &
 
-# 8. Capture all three tunnel URLs (wait up to 30 s each)
+# 9. Capture all tunnel URLs (wait up to 30 s each)
 PORTAL_URL=""
 HO_URL=""
 for i in $(seq 1 30); do
@@ -152,7 +190,7 @@ done
 
 If any URL is still empty after the wait, proceed and mark that service as "unavailable" in the PR body.
 
-## Step 9 — Push and open PR
+## Step 10 — Push and open PR
 
 ```
 git push -u origin <branch>
@@ -166,11 +204,18 @@ gh pr create --base main --title "<short title>" --body "$(cat <<'EOF'
 ## Preview
 | Service | URL |
 |---------|-----|
-| API | <$API_URL or "unavailable"> |
+| API | <$API_TUNNEL_URL or "unavailable"> |
 | Portal | <$PORTAL_URL or "unavailable"> |
 | Homeowner | <$HO_URL or "unavailable"> |
 
+## Preview credentials
+| Role | Login |
+|------|-------|
+| Contractor (Portal) | **$PREVIEW_EMAIL** / `$PREVIEW_PASSWORD` |
+| Homeowner | $HO_URL$HO_MAGIC_LINK _(magic-link — open directly)_ |
+
 _Preview runs in a sandboxed Docker worker. Tear down with `./muaddib/teardown-worker.sh <N>`._
+_Leave feedback on the Linear ticket — the agent is watching and will address it._
 
 ## Test plan
 - [ ] ...
@@ -183,15 +228,39 @@ EOF
 )"
 ```
 
-PR title ≤ 70 characters. Detail belongs in the body.
+PR title ≤ 70 characters. Capture the PR number:
+```bash
+PR_NUMBER=$(gh pr view --json number --jq '.number')
+```
 
-## Step 9 — Update the ticket
+## Step 11 — Update the Linear ticket
 
-Post a comment on the Linear ticket via `mcp__linear__save_comment`:
+Post a comment on the ticket via `mcp__linear__save_comment`:
 
 ```
 PR opened: <pr-url>
 Branch: <branch-name>
+Preview: <portal-url> (Portal) · <ho-url> (Homeowner)
+Feedback: comment on this ticket — the agent is watching.
 ```
 
-Print the PR URL to the user as the final line of output.
+## Step 12 — Enter WATCHING mode (fleet only)
+
+Skip if `WORKER_INDEX` is not set.
+
+Write the WATCHING state (prevents the entrypoint from writing DONE and triggering host teardown), then start the feedback watcher:
+
+```bash
+printf 'WATCHING %s\n' "$(date -u +%FT%TZ)" \
+    > "/var/run/agent-status/worker-${WORKER_INDEX}.state" 2>/dev/null || true
+
+# Pass the issue UUID and team UUID captured in Step 1
+PR_NUMBER="$PR_NUMBER" \
+LINEAR_ISSUE_ID="<issue UUID from Step 1>" \
+LINEAR_ISSUE_IDENTIFIER="<identifier e.g. QUO-281>" \
+LINEAR_TEAM_ID="<teamId from Step 1>" \
+nohup /home/worker/repo/muaddib/watch-feedback.sh \
+    > /tmp/feedback-watcher.log 2>&1 &
+```
+
+Print the PR URL as the final line of output.
