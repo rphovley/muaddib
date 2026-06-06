@@ -96,7 +96,11 @@ WORKER_CID=$(docker compose -p "$PROJECT" -f docker-compose.worker.yml ps -q wor
 echo "→ provisioning (clone + deps + MCP)…"
 SECONDS=0
 while :; do
-    [ "$(cut -d' ' -f1 "$STATE_FILE" 2>/dev/null || true)" = "READY" ] && break
+    # READY      = interactive mode (no TASK set)
+    # RUNNING / WATCHING* = task mode: orchestrator past provisioning
+    case "$(cut -d' ' -f1 "$STATE_FILE" 2>/dev/null || true)" in
+        READY|RUNNING|WATCHING|WATCHING_FEEDBACK) break ;;
+    esac
     if [ -z "$(docker ps -q --filter "label=com.docker.compose.project=${PROJECT}" --filter "name=worker")" ]; then
         {
             echo
