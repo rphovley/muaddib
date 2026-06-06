@@ -117,48 +117,49 @@ done
 echo
 echo "✓ Worker ${WORKER} up and READY."
 
-# Background watcher: tear down automatically once the task is done or the
-# container exits. Polls the state file every 5 s — avoids the dead-lock where
-# docker wait blocks forever because worker-entrypoint.sh ends with
-# `tail -f /dev/null` (keeping the container alive for the preview URL).
-CID=$(worker_cid)
-( while docker ps -q --filter "id=$CID" | grep -q .; do
-      state="$(cut -d' ' -f1 "$FLEET_DIR/status/worker-${WORKER}.state" 2>/dev/null || echo "")"
-      if [ "$state" = "DONE" ] || [ "$state" = "FAILED" ] || [ "$state" = "DONE_FINAL" ]; then break; fi
-      sleep 5
-  done
-  echo "→ Worker ${WORKER} finished — tearing down..."
-  state="$(cut -d' ' -f1 "$FLEET_DIR/status/worker-${WORKER}.state" 2>/dev/null || echo "UNKNOWN")"
-  case "$state" in
-    DONE)       msg="Task complete ✓" ;;
-    DONE_FINAL) msg="PR merged — preview torn down ✓" ;;
-    FAILED)     msg="Worker failed — check logs" ;;
-    *)          msg="Worker stopped (state: $state)" ;;
-  esac
-  osascript -e "display notification \"$msg\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true
-  "$FLEET_DIR/teardown-worker.sh" "$WORKER" 2>/dev/null || true ) &
-disown $!
-
-# Background state watcher: send macOS notifications on important state
-# transitions so the user is alerted even when attend.sh isn't running.
+# Events-file watcher: tails the JSONL event bus written by the orchestrator
+# inside the container.
+EVENTS_FILE="$FLEET_DIR/status/worker-${WORKER}.events"
 (
-    _sw_prev=""
-    _sw_state_file="$FLEET_DIR/status/worker-${WORKER}.state"
-    while docker ps -q --filter "label=com.docker.compose.project=${PROJECT}" --filter "name=worker" | grep -q .; do
-        _sw_line="$(cut -d' ' -f1 "$_sw_state_file" 2>/dev/null || echo "")"
-        if [ "$_sw_line" != "$_sw_prev" ] && [ -n "$_sw_line" ]; then
-            case "$_sw_line" in
-                WAITING_FOR_INPUT) osascript -e "display notification \"Questions posted to Linear — needs your answers\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
-                BLOCKED)           osascript -e "display notification \"Waiting for your input\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
-                WATCHING)          osascript -e "display notification \"Preview live — watching for Linear feedback\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
-                WATCHING_FEEDBACK) osascript -e "display notification \"Addressing PR feedback\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
-                DONE_FINAL)        osascript -e "display notification \"PR merged — tearing down\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
-                FAILED)            osascript -e "display notification \"Worker failed — check logs\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
-            esac
-            _sw_prev="$_sw_line"
-        fi
-        sleep 3
+    # Wait up to 60 s for the events file to appear (created at first orchestrator emit).
+    for _i in $(seq 1 60); do
+        [ -f "$EVENTS_FILE" ] && break
+        sleep 1
     done
+    [ -f "$EVENTS_FILE" ] || exit 0  # container exited before events were written
+
+    # Parse orchestrator state from a JSONL line using node (always available).
+    _parse_state() {
+        node -e "
+          try {
+            const e = JSON.parse(process.argv[1]);
+            if (e.job === 'orchestrator' && e.event === 'state_changed')
+              process.stdout.write(e.payload.state || '');
+          } catch (_) {}
+        " "$1" 2>/dev/null || true
+    }
+
+    while IFS= read -r _ev_line; do
+        _state=$(_parse_state "$_ev_line")
+        [ -z "$_state" ] && continue
+
+        case "$_state" in
+            WAITING_FOR_INPUT) osascript -e "display notification \"Questions posted to Linear — needs your answers\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
+            BLOCKED)           osascript -e "display notification \"Waiting for your input\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
+            WATCHING)          osascript -e "display notification \"Preview live — watching for Linear feedback\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
+            WATCHING_FEEDBACK) osascript -e "display notification \"Addressing PR feedback\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
+            DONE_FINAL)        osascript -e "display notification \"PR merged — preview torn down ✓\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
+            FAILED)            osascript -e "display notification \"Worker failed — check logs\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
+        esac
+
+        case "$_state" in
+            DONE|DONE_FINAL|FAILED)
+                echo "→ Worker ${WORKER} finished (${_state}) — tearing down..."
+                "$FLEET_DIR/teardown-worker.sh" "$WORKER" 2>/dev/null || true
+                break
+                ;;
+        esac
+    done < <(tail -n 0 -f "$EVENTS_FILE" 2>/dev/null)
 ) &
 disown $!
 
