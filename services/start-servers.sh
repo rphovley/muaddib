@@ -22,10 +22,11 @@ cd "$REPO" && npm run --prefix projects/api migrate:up
 
 # --- 2. Preview seed — capture credentials for the PR body ---
 log "running preview seed..."
-SEED_JSON=$(cd "$REPO" && npx --prefix projects/api tsx \
-    projects/api/scripts/seed-preview.ts 2>/tmp/seed-preview.log \
-    | tail -1 \
-    || echo '{"email":"(seed failed — see /tmp/seed-preview.log)","password":"","homeowner_magic_link":null}')
+cd "$REPO" && npx --prefix projects/api tsx \
+    projects/api/scripts/seed-preview.ts \
+    > /tmp/seed-preview-out.txt 2>/tmp/seed-preview.log || true
+SEED_JSON="$(tail -1 /tmp/seed-preview-out.txt 2>/dev/null || true)"
+[ -z "$SEED_JSON" ] && SEED_JSON='{"email":"(seed failed — see /tmp/seed-preview.log)","password":"","homeowner_magic_link":null}'
 PREVIEW_EMAIL=$(printf '%s' "$SEED_JSON"    | jq -r '.email // "(unknown)"')
 PREVIEW_PASSWORD=$(printf '%s' "$SEED_JSON" | jq -r '.password // "(unknown)"')
 HO_MAGIC_LINK=$(printf '%s' "$SEED_JSON"   | jq -r '.homeowner_magic_link // ""')

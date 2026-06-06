@@ -88,9 +88,11 @@ fi
 
 docker compose -p "$PROJECT" -f docker-compose.worker.yml up -d
 
+# Capture container ID immediately — before it can be removed on fast exit.
+WORKER_CID=$(docker compose -p "$PROJECT" -f docker-compose.worker.yml ps -q worker 2>/dev/null | head -1)
+
 # Wait for the worker to finish provisioning (clone + deps + MCP). If it dies,
 # surface its logs to THIS console instead of reporting a false "up".
-worker_cid() { docker ps -aq --filter "label=com.docker.compose.project=${PROJECT}" --filter "name=worker" | head -1; }
 echo "→ provisioning (clone + deps + MCP)…"
 SECONDS=0
 while :; do
@@ -100,7 +102,7 @@ while :; do
             echo
             echo "✗ Worker ${WORKER} exited during provisioning. Last log lines:"
             echo "────────────────────────────────────────────────────────────"
-            docker logs "$(worker_cid)" 2>&1 | tail -30
+            docker logs "${WORKER_CID}" 2>&1 | tail -30
             echo "────────────────────────────────────────────────────────────"
             echo "Fix the cause, then:  ./bin/teardown-worker.sh ${WORKER}  &&  re-run."
         } >&2
@@ -108,7 +110,7 @@ while :; do
     fi
     if [ "$SECONDS" -ge 300 ]; then
         echo "✗ Worker ${WORKER} not READY after ${SECONDS}s. Recent logs:" >&2
-        docker logs "$(worker_cid)" 2>&1 | tail -30 >&2
+        docker logs "${WORKER_CID}" 2>&1 | tail -30 >&2
         echo "(container still running — attach to inspect)" >&2
         exit 1
     fi
@@ -170,7 +172,7 @@ disown $!
 if [ "${MUADIB_NO_ATTACH:-0}" != "1" ] && [ -t 0 ] && [ -t 1 ]; then
     echo "  Attaching — Ctrl-b then d to detach (worker keeps running)."
     echo "  Re-attach: ./bin/attach.sh ${WORKER}  ·  Monitor: ./bin/attend.sh  ·  Stop: ./bin/teardown-worker.sh ${WORKER}"
-    docker exec -it "$(worker_cid)" tmux attach -t "w${WORKER}" || true
+    docker exec -it "${WORKER_CID}" tmux attach -t "w${WORKER}" || true
     # After detach or task completion, teardown immediately if the task is done.
     # (The background watcher above handles the no-attach case within ~5 s.)
     state="$(cut -d' ' -f1 "$FLEET_DIR/status/worker-${WORKER}.state" 2>/dev/null || echo "")"
