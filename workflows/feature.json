@@ -34,13 +34,14 @@
           "type": "claude-tui",
           "skill": "review-fleet",
           "runIf": "state.check_status === 'pass'",
-          "stateWrites": ["review_status"]
+          "stateWrites": ["review_status", "review_findings"]
         },
         {
           "id": "fix",
           "type": "claude-tui",
           "skill": "implement",
-          "runIf": "state.review_status === 'needs_fix'"
+          "runIf": "state.review_status === 'needs_fix'",
+          "stateReads": ["review_findings"]
         }
       ]
     },

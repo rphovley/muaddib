@@ -95,7 +95,13 @@ URLS_FILE="/tmp/preview-urls-${WORKER}.env"
 } > "$URLS_FILE"
 log "wrote $URLS_FILE"
 
-# --- 8. Signal orchestrator that servers are ready ---
+# --- 8. Write tunnel URLs to worker state for runner STATE_* injection ---
+STATE_CLI="$REPO/muaddib/lib/state-cli.js"
+node "$STATE_CLI" "$WORKER" set api_tunnel_url "${API_TUNNEL_URL:-}"
+node "$STATE_CLI" "$WORKER" set portal_url     "${PORTAL_URL:-}"
+node "$STATE_CLI" "$WORKER" set ho_url         "${HO_URL:-}"
+
+# --- 9. Signal orchestrator that servers are ready ---
 log "emitting tunnel_ready"
 node "$EMIT_CLI" "$WORKER" servers tunnel_ready \
     "{\"api\":\"${API_TUNNEL_URL:-}\",\"portal\":\"${PORTAL_URL:-}\",\"homeowner\":\"${HO_URL:-}\"}"

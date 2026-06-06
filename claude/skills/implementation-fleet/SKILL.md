@@ -1,7 +1,9 @@
 ---
 name: implementation-fleet
-description: Fleet-safe variant of /implementation. Implements a Linear ticket end-to-end — branches, writes code, writes tests, runs /check, fixes findings, commits, opens a PR. On 3 consecutive failed /check passes, writes FAILED to the worker state file and exits instead of prompting the user.
+description: DEPRECATED — superseded by gather-context + implement + commit-and-pr. The definition-driven workflow (orchestrator.js + runner.js) now invokes those focused skills directly. This file is retained only for workers still running the legacy orchestrate.sh flow.
 ---
+
+> **Deprecated.** The runner-based workflow (`workflows/feature.json`, `workflows/bug.json`) replaces this skill with three focused steps: `gather-context`, `implement`, and `commit-and-pr`. New workers will never invoke this skill.
 
 # Implementation (Fleet)
 

@@ -28,6 +28,10 @@ docker run --rm \
         node __tests__/test-job.js
         echo '=== test-orchestrator ==='
         node __tests__/test-orchestrator.js
+        echo '=== test-runner ==='
+        node __tests__/test-runner.js
+        echo '=== test-state ==='
+        node __tests__/test-state.js
         echo ''
         echo 'All test suites passed.'
     "
