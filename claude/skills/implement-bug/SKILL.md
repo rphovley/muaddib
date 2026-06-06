@@ -35,3 +35,9 @@ For every new or changed code path, write a dedicated test. Follow project conve
 - API service edits → unit tests (`npm run test:unit`)
 - API database edits → integration tests (`npm run test:integration`)
 - Portal / homeowner logic → component or hook tests
+
+## Step 4 — Signal done
+
+```bash
+touch "$STEP_DONE_FILE"
+```

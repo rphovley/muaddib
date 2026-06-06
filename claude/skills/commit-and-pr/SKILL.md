@@ -135,3 +135,9 @@ Branch: $STATE_BRANCH
 Preview: ${STATE_PORTAL_URL:-(unavailable)} (Portal) · ${STATE_HO_URL:-(unavailable)} (Homeowner)
 Feedback: comment on the PR with /feedback — the agent is watching.
 ```
+
+## Step 8 — Signal done
+
+```bash
+touch "$STEP_DONE_FILE"
+```

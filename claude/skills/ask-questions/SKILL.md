@@ -29,3 +29,9 @@ Rewrite the plan with the answers folded in:
 ## Step 4 — Post final plan to Linear
 
 Post the updated `.muaddib/plan.md` as a `## Plan` comment on the Linear ticket using `mcp__linear__save_comment` (`STATE_TICKET_URL` identifies the issue).
+
+## Step 5 — Signal done
+
+```bash
+touch "$STEP_DONE_FILE"
+```

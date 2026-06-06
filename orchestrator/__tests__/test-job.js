@@ -62,6 +62,22 @@ async function testJobExitFailure() {
   if (failedEv.payload.exitCode !== 1) throw new Error(`expected exitCode=1, got ${failedEv.payload.exitCode}`);
 }
 
+// The new sentinel-file path: job sleeps forever but the skill touches
+// $STEP_DONE_FILE — wrapper must kill the process and emit done.
+async function testJobDoneByFile() {
+  const jobName = 'done-by-file';
+  const doneFile = `/tmp/step-done-${WORKER}-${jobName}`;
+
+  // Command: sleep indefinitely; a background subshell touches the done file after 0.3 s.
+  const cmd = `( sleep 0.3 && touch '${doneFile}' ) & sleep 30`;
+
+  const p = collectMatching((e) => e.job === jobName, 2, 8000);
+  startJob(WORKER, jobName, cmd);
+  const [startedEv, doneEv] = await p;
+  if (startedEv.event !== 'started') throw new Error(`expected started, got ${startedEv.event}`);
+  if (doneEv.event !== 'done')       throw new Error(`expected done, got ${doneEv.event}`);
+}
+
 async function testStopJobMidRun() {
   const jobName = 'stop-job';
   const p = collectMatching((e) => e.job === jobName && e.event === 'stopped', 1);
@@ -76,9 +92,10 @@ async function testStopJobMidRun() {
 
 async function main() {
   const tests = [
-    ['job exits 0 → started + done', testJobExitSuccess],
-    ['job exits 1 → started + failed with exitCode', testJobExitFailure],
-    ['stopJob mid-run → stopped event + window removed', testStopJobMidRun],
+    ['job exits 0 → started + done',                      testJobExitSuccess],
+    ['job exits 1 → started + failed with exitCode',      testJobExitFailure],
+    ['done sentinel file → process killed + done emitted', testJobDoneByFile],
+    ['stopJob mid-run → stopped event + window removed',  testStopJobMidRun],
   ];
 
   let passed = 0;

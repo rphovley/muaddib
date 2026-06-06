@@ -68,3 +68,9 @@ The script must:
    {"email":"...","password":"...","homeowner_magic_link":"<url-or-null>"}
    ```
    Write errors to stderr and exit 1 on failure.
+
+## Step 5 — Signal done
+
+```bash
+touch "$STEP_DONE_FILE"
+```

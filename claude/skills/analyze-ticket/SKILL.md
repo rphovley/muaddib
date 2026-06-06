@@ -69,7 +69,12 @@ node "$STATE_CLI" "$WORKER" set needs_questions "true"   # or "false"
 
 ## Step 5a — No questions needed: post plan and finish
 
-If `needs_questions=false`, post `.muaddib/plan.md` as a `## Plan` comment on the Linear ticket using `mcp__linear__save_comment`, then stop.
+If `needs_questions=false`, post `.muaddib/plan.md` as a `## Plan` comment on the Linear ticket using `mcp__linear__save_comment`.
+
+Then signal done:
+```bash
+touch "$STEP_DONE_FILE"
+```
 
 ## Step 5b — Questions needed: notify and stop
 
@@ -93,4 +98,7 @@ node "${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/emit-cli.js" \
     "{\"msg\":\"${STATE_TICKET_IDENTIFIER} needs your input before implementing\"}"
 ```
 
-Then stop — the `ask-questions` step will call `AskUserQuestion` and handle the response.
+Then signal done — the `ask-questions` step will handle the response:
+```bash
+touch "$STEP_DONE_FILE"
+```

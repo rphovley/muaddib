@@ -57,7 +57,15 @@ function buildExtraEnv(worker, stateReads) {
 // Poll the events file for a done/failed event on `jobName`, starting from
 // the file offset at call time (so old events from prior jobs are ignored).
 // Must be called BEFORE startJob() to capture the current offset.
-function waitForJobCompletion(worker, jobName, timeoutMs = 300000) {
+//
+// opts.warnMs   — ms before firing onWarn (default 300 000 = 5 min); keeps waiting after.
+// opts.onWarn   — callback fired once at warnMs if the step hasn't finished yet.
+// opts.hardTimeoutMs — ms before giving up entirely (default: none).
+function waitForJobCompletion(worker, jobName, opts = {}) {
+  const warnMs = opts.warnMs ?? 300_000;
+  const hardTimeoutMs = opts.hardTimeoutMs ?? null;
+  const onWarn = opts.onWarn ?? null;
+
   const file = eventsFile(worker);
   let offset = 0;
   try { offset = fs.statSync(file).size; } catch (_) {}
@@ -87,13 +95,15 @@ function waitForJobCompletion(worker, jobName, timeoutMs = 300000) {
           if (ev.job !== jobName) continue;
           if (ev.event === 'done') {
             clearInterval(poll);
-            clearTimeout(deadline);
+            clearTimeout(warnTimer);
+            if (hardTimer) clearTimeout(hardTimer);
             resolve();
             return;
           }
           if (ev.event === 'failed') {
             clearInterval(poll);
-            clearTimeout(deadline);
+            clearTimeout(warnTimer);
+            if (hardTimer) clearTimeout(hardTimer);
             reject(new Error(`job ${jobName} failed (exit ${ev.payload && ev.payload.exitCode})`));
             return;
           }
@@ -103,11 +113,21 @@ function waitForJobCompletion(worker, jobName, timeoutMs = 300000) {
       }
     }, 50);
 
-    const deadline = setTimeout(() => {
-      clearInterval(poll);
-      reject(new Error(`timeout (${timeoutMs}ms) waiting for ${jobName}`));
-    }, timeoutMs);
-    deadline.unref();
+    // Warn at warnMs but keep waiting — the step may need user input.
+    const warnTimer = setTimeout(() => {
+      if (onWarn) onWarn();
+    }, warnMs);
+    warnTimer.unref();
+
+    // Optional hard ceiling — fail only if explicitly configured.
+    const hardTimer = hardTimeoutMs
+      ? setTimeout(() => {
+          clearInterval(poll);
+          clearTimeout(warnTimer);
+          reject(new Error(`hard timeout (${hardTimeoutMs}ms) waiting for ${jobName}`));
+        }, hardTimeoutMs)
+      : null;
+    if (hardTimer) hardTimer.unref();
   });
 }
 
@@ -187,8 +207,23 @@ async function runClaudeTuiStep(worker, step, ticketId) {
     WORKER_INDEX: String(worker),
   };
   const cmd = claudeTuiCmd(worker, step, ticketId);
+  const notifyScript = path.join(REPO, 'muaddib/services/notify.sh');
+
+  const onWarn = () => {
+    const msg = `${step.id} is taking longer than expected — worker ${worker} may need input`;
+    console.log(`[runner w${worker}] WARN: ${msg}`);
+    emit(worker, 'orchestrator', 'notify', { msg });
+    if (fs.existsSync(notifyScript)) {
+      spawn('bash', [notifyScript, String(worker), msg], { stdio: 'ignore', detached: true }).unref();
+    }
+  };
+
+  // STEP_WARN_MS overrides the default (300 000 ms) — used in tests to trigger
+  // the warn callback quickly without waiting 5 minutes.
+  const warnMs = process.env.STEP_WARN_MS ? Number(process.env.STEP_WARN_MS) : 300_000;
+
   // Capture offset BEFORE startJob so the done event is never missed.
-  const waitP = waitForJobCompletion(worker, step.id);
+  const waitP = waitForJobCompletion(worker, step.id, { onWarn, warnMs });
   startJob(worker, step.id, cmd, extraEnv);
   await waitP;
 }

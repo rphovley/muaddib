@@ -44,3 +44,9 @@ If the verdict is `approved`, clear any prior findings:
 ```bash
 node "$STATE_CLI" "$WORKER" set review_findings ""
 ```
+
+## Step 4 — Signal done
+
+```bash
+touch "$STEP_DONE_FILE"
+```

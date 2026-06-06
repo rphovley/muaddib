@@ -272,6 +272,55 @@ node '${STATE_CLI}' ${W} set step_a done
   }
 }
 
+// ─── testWarnFiresNotFails ────────────────────────────────────────────────────
+// claude-tui step with STEP_WARN_MS=100. The mock job takes ~300 ms (sleep 0.3)
+// plus up to 1 s in the wrapper's poll loop — longer than 100 ms — so the warn
+// timer fires while the step is still running. Verifies:
+//   1. notify.sh is called (warn fired)
+//   2. the workflow still completes successfully (runner did NOT fail the step)
+
+async function testWarnFiresNotFails() {
+  if (!hasTmux()) { console.log('    (skipped — tmux not available)'); return; }
+
+  const W = BASE + 7;
+  ensureTmuxSession(W);
+
+  const notifyFlag   = path.join(TMP_DIR, `warn-notify-fired-${W}`);
+  const notifyScript = path.join(MUADDIB_DIR, 'services/notify.sh');
+  const hadNotify    = fs.existsSync(notifyScript);
+  const savedNotify  = hadNotify ? fs.readFileSync(notifyScript) : null;
+  fs.writeFileSync(notifyScript, `#!/usr/bin/env bash\ntouch '${notifyFlag}'\n`);
+  fs.chmodSync(notifyScript, 0o755);
+
+  const prevWarnMs = process.env.STEP_WARN_MS;
+  process.env.STEP_WARN_MS = '100'; // fire warn after 100 ms; mock job takes ~300 ms+
+
+  try {
+    const wf = mkWorkflow(`w${W}-warn`, [{
+      id:              'slow-step',
+      type:            'claude-tui',
+      skill:           'slow-step',
+      mockStateWrites: [['warn_step_done', 'true']],
+      stateWrites:     ['warn_step_done'],
+    }]);
+
+    await run(W, wf, 'QUO-warn');
+
+    const s = stateRead(W);
+    if (s.warn_step_done !== 'true') throw new Error('step did not complete — workflow failed');
+
+    // notify.sh is spawned detached; give it a moment to execute.
+    await wait(400);
+    if (!fs.existsSync(notifyFlag)) throw new Error('notify.sh was not called — onWarn did not fire');
+  } finally {
+    if (prevWarnMs !== undefined) process.env.STEP_WARN_MS = prevWarnMs;
+    else delete process.env.STEP_WARN_MS;
+    if (savedNotify) fs.writeFileSync(notifyScript, savedNotify);
+    else try { fs.unlinkSync(notifyScript); } catch (_) {}
+    killTmuxSession(W);
+  }
+}
+
 // ─── testFeatureWorkflow ──────────────────────────────────────────────────────
 // Full feature workflow shape: gather-context → implement → quality-loop
 // (checks+review+fix) → wrapup. Uses MOCK_JOBS=1 with mockStateWrites to
@@ -442,6 +491,7 @@ async function main() {
     ['loop exits when exitCondition met',                testLoopExitsOnCond],
     ['loop throws after maxIterations',                  testLoopMaxIterations],
     ['notify fires without blocking workflow',           testNotifyNonBlock],
+    ['warn fires notify without failing step (tmux)',                testWarnFiresNotFails],
     ['feature workflow — full gather→implement→loop→wrapup (tmux)', testFeatureWorkflow],
     ['bug workflow — gather-bug→implement-bug→loop→wrapup (tmux)',  testBugWorkflow],
   ];
