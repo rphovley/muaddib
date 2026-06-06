@@ -24,6 +24,7 @@ const ISSUE_ID = process.env.LINEAR_ISSUE_ID || '';
 const ISSUE_IDENTIFIER = process.env.LINEAR_ISSUE_IDENTIFIER || '';
 const COMMENT_FLAG = process.env.COMMENT_FLAG;
 const PORT = parseInt(process.env.PORT || '9090', 10);
+const DEBUG = process.env.WEBHOOK_DEBUG === '1';
 
 if (!SECRET || !COMMENT_FLAG) {
     console.error('webhook-receiver: missing required env vars (WEBHOOK_SECRET, COMMENT_FLAG)');
@@ -36,9 +37,18 @@ if (!ISSUE_ID && !ISSUE_IDENTIFIER) {
 
 function verify(secret, rawBody, sig) {
     // Linear-Signature is a plain hex HMAC-SHA256 digest (no "sha256=" prefix)
-    if (!sig || sig.length === 0) return false;
+    if (!sig || sig.length === 0) {
+        if (DEBUG) console.log('[webhook-receiver:debug] no signature header');
+        return false;
+    }
     const expected = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
-    if (sig.length !== expected.length) return false;
+    const lengthOk = sig.length === expected.length;
+    if (DEBUG) {
+        console.log(`[webhook-receiver:debug] received sig : ${sig}`);
+        console.log(`[webhook-receiver:debug] computed  sig : ${expected}`);
+        console.log(`[webhook-receiver:debug] length check  : ${lengthOk ? 'pass' : `FAIL (received=${sig.length} expected=${expected.length})`}`);
+    }
+    if (!lengthOk) return false;
     try {
         return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
     } catch (_) {
