@@ -20,4 +20,4 @@ if [ -n "$TASK" ]; then
 else
     echo "→ muaddib-task on worker ${N}: (interactive — no task provided)"
 fi
-exec "$DIR/spawn-worker.sh" "$N" "/muaddib-task ${TASK}"
+exec "$DIR/bin/spawn-worker.sh" "$N" "/muaddib-task ${TASK}"

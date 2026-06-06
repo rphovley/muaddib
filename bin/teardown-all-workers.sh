@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Tear down all active workers.
 set -euo pipefail
-FLEET_DIR="$(cd "$(dirname "$0")" && pwd)"
+BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
+FLEET_DIR="$(cd "$BIN_DIR/.." && pwd)"
 
 # Collect worker numbers from running Docker projects AND leftover env files.
 workers=()
@@ -32,5 +33,5 @@ fi
 
 echo "Tearing down workers: ${workers[*]}"
 for WORKER in "${workers[@]}"; do
-    "$FLEET_DIR/teardown-worker.sh" "$WORKER"
+    "$BIN_DIR/teardown-worker.sh" "$WORKER"
 done

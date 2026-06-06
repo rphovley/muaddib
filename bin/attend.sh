@@ -3,7 +3,7 @@
 # write, rings the terminal bell, and fires a macOS notification when any worker
 # transitions to DONE, BLOCKED, WAITING_FOR_INPUT, or FAILED.
 set -euo pipefail
-STATUS_DIR="$(cd "$(dirname "$0")" && pwd)/status"
+STATUS_DIR="$(cd "$(dirname "$0")/.." && pwd)/status"
 
 declare -A prev_states
 

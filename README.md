@@ -95,23 +95,23 @@ The agent runs in a detached **tmux session inside the container**. `npm run
 muaddib` attaches you to it automatically once it's ready, so you can watch it work
 and answer `/grill-me`. **Ctrl-b then d** detaches and leaves the worker running.
 
-- Re-attach (or attach a different worker): `npm run muaddib:attach 1` (or `./muaddib/attach.sh 1`)
-- Monitor all workers at a glance: `./muaddib/attend.sh` — bells when one is `BLOCKED` or `FAILED`
+- Re-attach (or attach a different worker): `npm run muaddib:attach 1` (or `./muaddib/bin/attach.sh 1`)
+- Monitor all workers at a glance: `./muaddib/bin/attend.sh` — bells when one is `BLOCKED` or `FAILED`
 - Fire-and-forget (don't auto-attach): `MUADIB_NO_ATTACH=1 npm run muaddib <ticket>`
 
-`attend.sh` is only a status board — the actual back-and-forth happens in the
+`bin/attend.sh` is only a status board — the actual back-and-forth happens in the
 attached session. Typical fleet flow: spawn a worker (auto-attach, glance, Ctrl-b
-d), spawn the next, keep `attend.sh` open in another pane, and `attach.sh <n>`
+d), spawn the next, keep `bin/attend.sh` open in another pane, and `bin/attach.sh <n>`
 whichever it flags.
 
 Lower-level controls (run from `muaddib/`):
 
 ```bash
-./spawn-worker.sh 1 "/muaddib QUO-281"   # specific worker number / arbitrary task
-./spawn-worker.sh 2                     # bare interactive session
-./attach.sh 1                           # jump into worker 1
-./attend.sh                             # fleet status board (bell on BLOCKED/FAILED)
-./teardown-worker.sh 1
+./bin/spawn-worker.sh 1 "/muaddib QUO-281"   # specific worker number / arbitrary task
+./bin/spawn-worker.sh 2                      # bare interactive session
+./bin/attach.sh 1                            # jump into worker 1
+./bin/attend.sh                              # fleet status board (bell on BLOCKED/FAILED)
+./bin/teardown-worker.sh 1
 ```
 
 ## ⚠ Two things to verify by hand before scaling past N=1
@@ -145,7 +145,7 @@ no socket. Defaults are preserved, so local `npm test` on your Mac is unchanged.
 ## Running muaddib in a worker
 
 ```bash
-./spawn-worker.sh 1 "/muaddib QUO-281"
+./bin/spawn-worker.sh 1 "/muaddib QUO-281"
 ```
 
 - The task arg becomes Claude's initial prompt; a leading `/` runs the skill.
@@ -170,14 +170,14 @@ After opening the PR, each worker enters **WATCHING** mode:
 3. When you post a comment on the Linear ticket, the receiver drops a flag file. The watcher spawns a `/muaddib-feedback` Claude session in a new tmux window to address it, then returns to WATCHING.
 4. The worker also polls the GitHub PR state every 30 s. When the PR is merged/closed, the webhook is deleted and the container is torn down.
 
-`attend.sh` shows **🔭 WATCHING** and **🔧 WATCHING_FEEDBACK** states.
+`bin/attend.sh` shows **🔭 WATCHING** and **🔧 WATCHING_FEEDBACK** states.
 
 ### Cleaning up stale webhooks
 
 Workers delete their own webhook on exit (via `trap`). If a worker crashed before cleanup:
 
 ```bash
-LINEAR_API_KEY=<key> ./muaddib/cleanup-webhooks.sh
+LINEAR_API_KEY=<key> ./muaddib/bin/cleanup-webhooks.sh
 ```
 
 This lists and deletes all Linear webhooks whose URL contains `trycloudflare.com`.

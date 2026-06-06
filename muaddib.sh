@@ -15,4 +15,4 @@ while [ "$N" -le 64 ] \
 done
 
 echo "→ muaddib on worker ${N}: ${TICKET}"
-exec "$DIR/spawn-worker.sh" "$N" "/muaddib ${TICKET}"
+exec "$DIR/bin/spawn-worker.sh" "$N" "/muaddib ${TICKET}"

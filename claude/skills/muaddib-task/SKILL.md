@@ -215,7 +215,7 @@ gh pr create --base main --title "<short title>" --body "$(cat <<'EOF'
 | Contractor (Portal) | **$PREVIEW_EMAIL** / `$PREVIEW_PASSWORD` |
 | Homeowner | $HO_URL$HO_MAGIC_LINK _(magic-link — open directly)_ |
 
-_Preview runs in a sandboxed Docker worker. Tear down with `./muaddib/teardown-worker.sh <N>`._
+_Preview runs in a sandboxed Docker worker. Tear down with `./muaddib/bin/teardown-worker.sh <N>`._
 
 ## Decisions
 <any interpretation choices made in Step 2, or "None">

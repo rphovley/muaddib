@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Stop a worker and remove its containers, volumes, env file, and status entry.
 set -euo pipefail
-FLEET_DIR="$(cd "$(dirname "$0")" && pwd)"
+FLEET_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 WORKER="${1:?usage: teardown-worker.sh <worker-number>}"
 PROJECT="quotethat-w${WORKER}"
 

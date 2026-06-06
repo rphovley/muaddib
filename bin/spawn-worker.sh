@@ -7,7 +7,8 @@
 # secrets come from a local non-prod.env, injected as VALUES into the container.
 set -euo pipefail
 
-FLEET_DIR="$(cd "$(dirname "$0")" && pwd)"
+BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
+FLEET_DIR="$(cd "$BIN_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$FLEET_DIR/.." && pwd)"
 cd "$FLEET_DIR"
 
@@ -101,7 +102,7 @@ while :; do
             echo "────────────────────────────────────────────────────────────"
             docker logs "$(worker_cid)" 2>&1 | tail -30
             echo "────────────────────────────────────────────────────────────"
-            echo "Fix the cause, then:  ./teardown-worker.sh ${WORKER}  &&  re-run."
+            echo "Fix the cause, then:  ./bin/teardown-worker.sh ${WORKER}  &&  re-run."
         } >&2
         exit 1
     fi
@@ -155,7 +156,7 @@ EVENTS_FILE="$FLEET_DIR/status/worker-${WORKER}.events"
         case "$_state" in
             DONE|DONE_FINAL|FAILED)
                 echo "→ Worker ${WORKER} finished (${_state}) — tearing down..."
-                "$FLEET_DIR/teardown-worker.sh" "$WORKER" 2>/dev/null || true
+                "$BIN_DIR/teardown-worker.sh" "$WORKER" 2>/dev/null || true
                 break
                 ;;
         esac
@@ -168,20 +169,20 @@ disown $!
 # MUADIB_NO_ATTACH=1 (e.g. when fire-and-forging several workers from a script).
 if [ "${MUADIB_NO_ATTACH:-0}" != "1" ] && [ -t 0 ] && [ -t 1 ]; then
     echo "  Attaching — Ctrl-b then d to detach (worker keeps running)."
-    echo "  Re-attach: ./attach.sh ${WORKER}  ·  Monitor: ./attend.sh  ·  Stop: ./teardown-worker.sh ${WORKER}"
+    echo "  Re-attach: ./bin/attach.sh ${WORKER}  ·  Monitor: ./bin/attend.sh  ·  Stop: ./bin/teardown-worker.sh ${WORKER}"
     docker exec -it "$(worker_cid)" tmux attach -t "w${WORKER}" || true
     # After detach or task completion, teardown immediately if the task is done.
     # (The background watcher above handles the no-attach case within ~5 s.)
     state="$(cut -d' ' -f1 "$FLEET_DIR/status/worker-${WORKER}.state" 2>/dev/null || echo "")"
     if [ "$state" = "DONE" ] || [ "$state" = "FAILED" ]; then
         echo "→ Task complete — tearing down worker ${WORKER}..."
-        "$FLEET_DIR/teardown-worker.sh" "$WORKER" 2>/dev/null || true
+        "$BIN_DIR/teardown-worker.sh" "$WORKER" 2>/dev/null || true
     fi
     exit 0
 fi
 
 cat <<EOF
-  Attach    : ./attach.sh ${WORKER}
-  Monitor   : ./attend.sh
-  Tear down : ./teardown-worker.sh ${WORKER}
+  Attach    : ./bin/attach.sh ${WORKER}
+  Monitor   : ./bin/attend.sh
+  Tear down : ./bin/teardown-worker.sh ${WORKER}
 EOF

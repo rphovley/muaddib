@@ -98,7 +98,7 @@ $STATE_TICKET_URL
 | Contractor (Portal) | **$PREVIEW_EMAIL** / \`$PREVIEW_PASSWORD\` |
 | Homeowner | ${STATE_HO_URL}${HO_MAGIC_LINK} _(magic-link — open directly)_ |
 
-_Preview runs in a sandboxed Docker worker. Tear down with \`./muaddib/teardown-worker.sh <N>\`._
+_Preview runs in a sandboxed Docker worker. Tear down with \`./muaddib/bin/teardown-worker.sh <N>\`._
 _Leave feedback on the PR — the agent is watching and will address it._
 
 ## Test plan
