@@ -1,13 +1,15 @@
 ---
 name: muaddib
-description: Fleet-safe variant of /muadib. End-to-end automation for a Linear ticket — discovery, plan, implementation, and PR. Never calls AskUserQuestion. Use when running headless in a fleet worker (Docker container launched by muadib.sh). Control flow lives in ~/.claude/skills/muadib/orchestrate.sh; this skill follows the directives that script emits. Sub-skills (/prepare-feast, /implementation-fleet) do the LLM work.
+description: Fleet end-to-end automation for a Linear ticket — discovery, plan, implementation, and PR. Autonomous pipeline; never calls AskUserQuestion; never pauses between steps. Runs in headless Docker workers launched by muaddib.sh. Control flow lives in ~/.claude/skills/muaddib/orchestrate.sh (fleet-specific). Sub-skills (/prepare-feast, /implementation-fleet) do the LLM work.
 ---
 
 # Muaddib (Fleet)
 
-Fleet-safe variant of `/muadib`. **Never calls `AskUserQuestion`.** Designed for headless Docker workers where no user is at the terminal.
+**Autonomous pipeline**: run all steps in a single continuous pass. Do not pause between steps, narrate progress, or produce any intermediate output. Call the next tool immediately after the previous one completes without ending the turn. Only produce user-facing output when the entire flow finishes (Step 5 summary) or when a `FAILED`/`BLOCKED` condition is reached.
 
-Control flow is owned by `~/.claude/skills/muadib/orchestrate.sh` (shared with the interactive `/muadib`). The script emits directives prefixed `PARSED_TICKET:`, `INVOKE_SKILL:`, `TRACK:`, `THEN_RUN:`. Read each subcommand's output and execute its directives literally. Do not improvise the flow.
+**Never calls `AskUserQuestion`.** Designed for headless Docker workers where no user is at the terminal.
+
+Control flow is owned by `~/.claude/skills/muaddib/orchestrate.sh` (fleet-specific — emits `implementation-fleet`, not `implementation`; includes `NO_PAUSE` directives). Read each directive the script emits (`PARSED_TICKET:`, `NO_PAUSE:`, `INVOKE_SKILL:`, `TRACK:`, `THEN_RUN:`) and execute them immediately. Do not improvise the flow.
 
 If the script exits non-zero at any step, write `FAILED` to the worker state file and stop:
 
@@ -18,41 +20,44 @@ printf 'FAILED %s\n' "$(date -u +%FT%TZ)" > "/var/run/agent-status/worker-${WORK
 ## Step 1 — Parse the Linear reference
 
 ```
-bash ~/.claude/skills/muadib/orchestrate.sh parse "$ARGUMENTS"
+bash ~/.claude/skills/muaddib/orchestrate.sh parse "$ARGUMENTS"
 ```
 
-Read the `PARSED_TICKET:` line for the ticket ID. The `INVOKE_SKILL:` line is your next action.
+Read the `PARSED_TICKET:` line for the ticket ID. → Proceed immediately to Step 2 — do not end the turn.
 
 ## Step 2 — Run /prepare-feast
 
-Per the directive from Step 1, call `Skill(prepare-feast)` with the parsed ticket ID as `args`.
+Per the `INVOKE_SKILL:` directive from Step 1, call `Skill(prepare-feast)` with the parsed ticket ID as `args`.
 
-It returns a JSON array of ticket IDs to implement (parent on its own, or sub-ticket IDs if planning chose to split). Capture this array verbatim.
-
-`/prepare-feast` never blocks — if questions were detected, they were posted to Linear and the pipeline continues. Do not wait for answers.
+It returns **only a bare JSON array** of ticket IDs (e.g. `["QUO-281"]`). Capture this array verbatim. → Proceed immediately to Step 3 — do not end the turn.
 
 ## Step 3 — Queue
 
 ```
-bash ~/.claude/skills/muadib/orchestrate.sh queue '<json-array-from-step-2>'
+bash ~/.claude/skills/muaddib/orchestrate.sh queue '<json-array-from-step-2>'
 ```
 
-The script validates each ID, then emits:
+The script validates each ID then emits:
 - `TRACK:` — create one tracking task per ticket using your task-tracking tool.
+- `NO_PAUSE:` — do not end the turn; run all INVOKE_SKILL lines in sequence immediately.
 - One `INVOKE_SKILL: implementation-fleet <id>` line per ticket, in order.
+
+→ Proceed immediately to Step 4.
 
 ## Step 4 — Run /implementation-fleet per ticket
 
-Execute the `INVOKE_SKILL: implementation-fleet <id>` lines **sequentially**, in the order emitted. For each, call `Skill(implementation-fleet)` with the ID as `args`. Mark the matching tracking task complete after each one finishes.
+Execute the `INVOKE_SKILL: implementation-fleet <id>` lines **sequentially**. For each:
+1. Call `Skill(implementation-fleet)` with the ID as `args`.
+2. Mark the matching tracking task complete.
+3. Collect: `{"ticket": "<id>", "pr": "<url-or-null>", "status": "opened|failed|skipped"}`.
+4. → Proceed to the next ticket immediately without ending the turn.
 
-Collect a result object per ticket: `{"ticket": "<id>", "pr": "<url-or-null>", "status": "opened|failed|skipped"}`.
-
-If an implementation writes `FAILED` to the state file and exits, record `status: "failed"` and stop the loop. Do not continue to remaining tickets.
+If an implementation writes `FAILED` to the state file, record `status: "failed"` and stop the loop. Do not continue to remaining tickets.
 
 ## Step 5 — Summary
 
 ```
-bash ~/.claude/skills/muadib/orchestrate.sh summary '<json-array-of-results>'
+bash ~/.claude/skills/muaddib/orchestrate.sh summary '<json-array-of-results>'
 ```
 
 Print the script's output verbatim as your final message.

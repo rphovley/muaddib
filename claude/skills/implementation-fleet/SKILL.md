@@ -146,7 +146,7 @@ for i in $(seq 1 60); do
 done
 
 # 5. Open a Cloudflare quick tunnel for the API and capture its URL
-nohup cloudflared tunnel --url http://localhost:8081 --no-autoupdate \
+nohup cloudflared tunnel --url http://localhost:8081 --no-autoupdate --protocol http2 \
     > /tmp/cf-api.log 2>&1 &
 API_TUNNEL_URL=""
 for i in $(seq 1 30); do
@@ -170,9 +170,9 @@ for i in $(seq 1 60); do
 done
 
 # 8. Open tunnels for portal and homeowner
-nohup cloudflared tunnel --url http://localhost:5173 --no-autoupdate \
+nohup cloudflared tunnel --url http://localhost:5173 --no-autoupdate --protocol http2 \
     > /tmp/cf-portal.log 2>&1 &
-nohup cloudflared tunnel --url http://localhost:5174 --no-autoupdate \
+nohup cloudflared tunnel --url http://localhost:5174 --no-autoupdate --protocol http2 \
     > /tmp/cf-homeowner.log 2>&1 &
 
 # 9. Capture all tunnel URLs (wait up to 30 s each)

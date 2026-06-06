@@ -1,11 +1,13 @@
 ---
 name: prepare-feast
-description: Fleet-safe variant of /prepare-meal. Reads the ticket, optionally invokes /grill-me-async to post clarifying questions (non-blocking), invokes /wash-hands to produce a plan, optionally creates sub-tickets, then posts findings to Linear. All heuristic gates proceed with best available info — never blocks waiting for user input. Returns a list of ticket IDs to implement.
+description: Fleet-safe variant of /prepare-meal. Reads the ticket, optionally invokes /grill-me-async to post clarifying questions (non-blocking), invokes /wash-hands-async to produce a plan, optionally creates sub-tickets, then posts findings to Linear. All heuristic gates proceed with best available info — never blocks waiting for user input. Returns a bare JSON array of ticket IDs to implement.
 ---
 
 # Prepare Feast
 
-Fleet-safe variant of `/prepare-meal`. Programmatic — step order is fixed. The only judgment calls are the two heuristic gates (Step 2, Step 5). Unlike `/prepare-meal`, **never blocks on user input** — if ambiguity is detected, questions are posted to Linear and the pipeline continues with best available info.
+Fleet-safe variant of `/prepare-meal`. Programmatic — step order is fixed. The only judgment calls are the two heuristic gates (Step 2, Step 4). Unlike `/prepare-meal`, **never blocks on user input** — if ambiguity is detected, questions are posted to Linear and the pipeline continues with best available info.
+
+**Autonomous execution**: run all steps in a single continuous pass. Do not pause, narrate, or produce intermediate output between steps. After each step completes, call the next tool immediately. The only output from this skill is the bare JSON array returned in Step 6.
 
 ## Step 1 — Load the ticket
 
@@ -40,16 +42,20 @@ Created by: <createdBy> (id: <createdById>)
 
 If not triggered: continue with an empty transcript.
 
-## Step 3 — Invoke `/wash-hands`
+→ Proceed immediately to Step 3.
 
-Call `Skill(wash-hands)` with the full ticket context as `args`:
+## Step 3 — Invoke `/wash-hands-async`
+
+Call `Skill(wash-hands-async)` with the full ticket context as `args`:
 - Original description
 - Grilled Q&A (always empty from grill-me-async)
 - Title, labels
 
-It returns a structured plan containing: `Diagnosis`, `Proposed solution`, `Work streams`, and a `RECOMMEND_SPLIT: true|false` flag.
+It returns a structured plan containing: `Diagnosis`, `Proposed solution`, `Work streams`, and a `RECOMMEND_SPLIT: true|false` flag. If no approach is clearly best, it posts options to Linear and picks the strongest — it never blocks.
 
-**Proceed regardless of ambiguity** — if clarifications were posted to Linear in Step 2, wash-hands works with what the ticket already describes. Do not wait or block.
+**Proceed regardless of ambiguity** — if clarifications were posted to Linear in Step 2, wash-hands-async works with what the ticket already describes. Do not wait or block.
+
+→ Proceed immediately to Step 4.
 
 ## Step 4 — Sub-ticket heuristic → maybe split
 
@@ -70,6 +76,8 @@ Trigger sub-ticket creation if **any** of these are true:
 
 **If not triggered:**
 - Tickets to return = `[<original ticket ID>]`.
+
+→ Proceed immediately to Step 5.
 
 ## Step 5 — Post plan as comment on parent
 
@@ -92,4 +100,6 @@ Post a single comment on the *original* (parent) ticket via `mcp__linear__save_c
 
 ## Step 6 — Return
 
-Return the list of ticket IDs from Step 5. The caller (typically `/muaddib`) consumes this list.
+Return **only** the bare JSON array of ticket IDs — no surrounding text, no summary, no status message. The caller (`/muaddib`) reads this value programmatically and proceeds immediately to the next step without user input.
+
+Examples: `["QUO-281"]` or `["QUO-282","QUO-283"]`

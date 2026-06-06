@@ -2,11 +2,17 @@
 // Tiny Linear webhook receiver. Validates Linear-Signature HMAC-SHA256, then
 // drops a flag file when a Comment is created on the watched issue.
 //
-// Env vars (all required):
-//   WEBHOOK_SECRET    — HMAC secret used when registering the Linear webhook
-//   LINEAR_ISSUE_ID   — UUID of the Linear issue to watch
-//   COMMENT_FLAG      — path to touch when a new comment arrives on the issue
-//   PORT              — port to listen on (default: 9090)
+// Env vars:
+//   WEBHOOK_SECRET         — HMAC secret used when registering the Linear webhook
+//   LINEAR_ISSUE_ID        — UUID of the Linear issue to watch (preferred)
+//   LINEAR_ISSUE_IDENTIFIER — identifier e.g. "QUO-311" (fallback if UUID not set)
+//   COMMENT_FLAG           — path to touch when a new comment arrives on the issue
+//   PORT                   — port to listen on (default: 9090)
+//
+// Matching logic: a comment event fires the flag if EITHER
+//   data.issueId       === LINEAR_ISSUE_ID         (UUID match), OR
+//   data.issue.identifier === LINEAR_ISSUE_IDENTIFIER (identifier match fallback)
+// This makes the receiver robust to agents passing the identifier instead of the UUID.
 'use strict';
 
 const http = require('http');
@@ -14,12 +20,17 @@ const crypto = require('crypto');
 const fs = require('fs');
 
 const SECRET = process.env.WEBHOOK_SECRET;
-const ISSUE_ID = process.env.LINEAR_ISSUE_ID;
+const ISSUE_ID = process.env.LINEAR_ISSUE_ID || '';
+const ISSUE_IDENTIFIER = process.env.LINEAR_ISSUE_IDENTIFIER || '';
 const COMMENT_FLAG = process.env.COMMENT_FLAG;
 const PORT = parseInt(process.env.PORT || '9090', 10);
 
-if (!SECRET || !ISSUE_ID || !COMMENT_FLAG) {
-    console.error('webhook-receiver: missing required env vars (WEBHOOK_SECRET, LINEAR_ISSUE_ID, COMMENT_FLAG)');
+if (!SECRET || !COMMENT_FLAG) {
+    console.error('webhook-receiver: missing required env vars (WEBHOOK_SECRET, COMMENT_FLAG)');
+    process.exit(1);
+}
+if (!ISSUE_ID && !ISSUE_IDENTIFIER) {
+    console.error('webhook-receiver: set LINEAR_ISSUE_ID (UUID) and/or LINEAR_ISSUE_IDENTIFIER');
     process.exit(1);
 }
 
@@ -49,22 +60,30 @@ http.createServer((req, res) => {
             return;
         }
 
-        // Respond immediately so Linear doesn't retry
+        // Respond immediately so Linear does not retry
         res.writeHead(200);
         res.end('ok');
 
         let payload;
         try { payload = JSON.parse(rawBody.toString()); } catch (_) { return; }
 
-        // Filter: Comment created on our watched issue
+        console.log(`[webhook-receiver] valid delivery: type=${payload.type} action=${payload.action}`);
+
         if (payload.type === 'Comment' && payload.action === 'create') {
-            const issueId = payload.data && payload.data.issueId;
-            if (issueId === ISSUE_ID) {
-                console.log(`[webhook-receiver] new comment on issue ${ISSUE_ID}`);
+            const issueId = (payload.data && payload.data.issueId) || '';
+            const issueIdentifier = (payload.data && payload.data.issue && payload.data.issue.identifier) || '';
+
+            const uuidMatch = ISSUE_ID && issueId === ISSUE_ID;
+            const identifierMatch = ISSUE_IDENTIFIER && issueIdentifier === ISSUE_IDENTIFIER;
+
+            if (uuidMatch || identifierMatch) {
+                console.log(`[webhook-receiver] new comment on ${issueIdentifier || issueId} — writing flag`);
                 fs.writeFileSync(COMMENT_FLAG, String(Date.now()));
+            } else {
+                console.log(`[webhook-receiver] comment on ${issueIdentifier || issueId} (watching id="${ISSUE_ID}" identifier="${ISSUE_IDENTIFIER}") — ignored`);
             }
         }
     });
 }).listen(PORT, () => {
-    console.log(`[webhook-receiver] listening on :${PORT} for issue ${ISSUE_ID}`);
+    console.log(`[webhook-receiver] listening on :${PORT} — watching id="${ISSUE_ID}" identifier="${ISSUE_IDENTIFIER}"`);
 });

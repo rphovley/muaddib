@@ -7,6 +7,8 @@ description: Fleet-safe free-form task executor. Takes a task description and im
 
 Fleet-safe, no Linear ticket required. Takes a task description from `$ARGUMENTS` and implements it end-to-end. **Never calls `AskUserQuestion` in fleet context (`WORKER_INDEX` is set).** When a decision is ambiguous, make the most reasonable interpretation and document it in the PR body.
 
+**Autonomous execution**: run all steps in a single continuous pass. Do not pause, narrate, or produce intermediate output between steps. Call the next tool immediately after the previous one completes. Only produce user-facing output as the final PR URL or when a `BLOCKED`/`FAILED` condition is reached.
+
 Programmatic. **Auto-commits and opens a PR** — this is the documented exception to the user's usual "I handle my own commits" rule, scoped to fleet workers only.
 
 ## Step 0 — Collect task description (interactive only)
@@ -46,6 +48,8 @@ printf 'BLOCKED %s\n' "$(date -u +%FT%TZ)" > "/var/run/agent-status/worker-${WOR
 
 Otherwise proceed — document any interpretation choices in the PR body under "Decisions".
 
+→ Proceed immediately to Step 3.
+
 ## Step 3 — Branch from `main`
 
 ```bash
@@ -73,6 +77,8 @@ Test conventions:
 - Use `npm run test:unit` / `npm run test:integration`, not raw `vitest`.
 
 Do not expand scope beyond the plan. If a discovery mid-implementation reveals the plan is wrong, write `BLOCKED` to the state file and stop — do not silently pivot.
+
+→ Proceed immediately to Step 5.
 
 ## Step 5 — Write preview seed script
 
@@ -120,6 +126,8 @@ printf 'FAILED %s\n' "$(date -u +%FT%TZ)" > "/var/run/agent-status/worker-${WORK
 
 Do not commit, push, or open a PR on failure. If `WORKER_INDEX` is unset (non-fleet context), the write silently fails — that is expected.
 
+→ Proceed immediately to Step 8.
+
 ## Step 8 — Commit
 
 ```bash
@@ -157,7 +165,7 @@ nohup npm run api:dev > /tmp/preview-api.log 2>&1 &
 for i in $(seq 1 60); do (echo > /dev/tcp/localhost/8081) 2>/dev/null && break; sleep 1; done
 
 # 4. API tunnel
-nohup cloudflared tunnel --url http://localhost:8081 --no-autoupdate > /tmp/cf-api.log 2>&1 &
+nohup cloudflared tunnel --url http://localhost:8081 --no-autoupdate --protocol http2 > /tmp/cf-api.log 2>&1 &
 API_TUNNEL_URL=""
 for i in $(seq 1 30); do
     API_TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/cf-api.log 2>/dev/null | head -1 || true)
@@ -173,8 +181,8 @@ for i in $(seq 1 60); do
 done
 
 # 6. Frontend tunnels
-nohup cloudflared tunnel --url http://localhost:5173 --no-autoupdate > /tmp/cf-portal.log 2>&1 &
-nohup cloudflared tunnel --url http://localhost:5174 --no-autoupdate > /tmp/cf-homeowner.log 2>&1 &
+nohup cloudflared tunnel --url http://localhost:5173 --no-autoupdate --protocol http2 > /tmp/cf-portal.log 2>&1 &
+nohup cloudflared tunnel --url http://localhost:5174 --no-autoupdate --protocol http2 > /tmp/cf-homeowner.log 2>&1 &
 PORTAL_URL=""; HO_URL=""
 for i in $(seq 1 30); do
     PORTAL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/cf-portal.log 2>/dev/null | head -1 || true)

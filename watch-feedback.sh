@@ -78,6 +78,7 @@ echo "$PR_NUMBER" > /tmp/pr-number
 rm -f "$COMMENT_FLAG"
 WEBHOOK_SECRET="$WEBHOOK_SECRET" \
 LINEAR_ISSUE_ID="$LINEAR_ISSUE_ID" \
+LINEAR_ISSUE_IDENTIFIER="$LINEAR_ISSUE_IDENTIFIER" \
 COMMENT_FLAG="$COMMENT_FLAG" \
 PORT="$WEBHOOK_PORT" \
     node /home/worker/repo/muaddib/webhook-receiver.js > "$RECEIVER_LOG" 2>&1 &
@@ -91,7 +92,7 @@ for i in $(seq 1 10); do
 done
 
 # --- 3. Open cloudflared tunnel for the webhook receiver ---
-nohup cloudflared tunnel --url "http://localhost:${WEBHOOK_PORT}" --no-autoupdate \
+nohup cloudflared tunnel --url "http://localhost:${WEBHOOK_PORT}" --no-autoupdate --protocol http2 \
     > "$TUNNEL_LOG" 2>&1 &
 
 WEBHOOK_URL=""
