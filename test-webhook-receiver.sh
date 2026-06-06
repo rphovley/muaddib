@@ -110,7 +110,7 @@ if [[ -n "${WEBHOOK_RECEIVER_URL:-}" ]]; then
     log "using provided URL: ${WEBHOOK_URL}"
 else
     log "opening cloudflared tunnel..."
-    cloudflared tunnel --config /dev/null --url "http://localhost:${WEBHOOK_PORT}" --no-autoupdate \
+    cloudflared tunnel --config /dev/null --url "http://localhost:${WEBHOOK_PORT}" --no-autoupdate --protocol http2 \
         > "$TUNNEL_LOG" 2>&1 &
     CF_PID=$!
 

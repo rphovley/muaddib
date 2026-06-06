@@ -34,11 +34,8 @@ USER worker
 RUN mkdir -p /home/worker/.claude /home/worker/repo
 
 # --- Pre-install project dependencies (Linux-native, layer-cached) -----------
-# Copy ONLY the manifests, so this layer's cache key is the lockfiles — it
-# rebuilds only when a package-lock.json changes. Deps are installed at the
-# FINAL repo path; at spawn the entrypoint fetches source OVER them (node_modules
-# is gitignored, so checkout leaves it in place). No install/copy on the hot path.
-# Each baked lockfile is stashed under ~/.deps-lock for drift detection.
+# Copy ONLY the manifests first so this layer re-runs only when lockfiles change.
+# Each baked lockfile is stashed under ~/.deps-lock for drift detection at startup.
 WORKDIR /home/worker/repo
 COPY --chown=worker:worker projects/api/package.json          projects/api/package-lock.json          projects/api/
 COPY --chown=worker:worker projects/portal/package.json       projects/portal/package-lock.json       projects/portal/
@@ -48,8 +45,12 @@ RUN for p in projects/api projects/portal projects/homeowner projects/app_instal
         echo "== installing deps: $p ==" && npm --prefix "$p" ci \
         && mkdir -p "/home/worker/.deps-lock/$p" \
         && cp "$p/package-lock.json" "/home/worker/.deps-lock/$p/package-lock.json" ; \
-    done \
-    && rm -f projects/*/package.json projects/*/package-lock.json
+    done
+
+# Bake the full repo source + .git into the image so startup only needs a
+# fast `git fetch --depth 1` (just the delta since the image was built) instead
+# of cloning from GitHub from scratch. node_modules is excluded via dockerignore.
+COPY --chown=worker:worker . /home/worker/repo/
 
 WORKDIR /home/worker
 COPY --chown=worker:worker muaddib/claude/settings.json /home/worker/.claude/settings.json

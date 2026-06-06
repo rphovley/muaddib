@@ -20,19 +20,15 @@ trap 'rc=$?; echo "✗ provisioning FAILED (exit $rc) at line ${BASH_LINENO[0]}:
 
 note "PROVISIONING"
 
-# The image already contains /home/worker/repo with pre-installed node_modules
-# (baked Linux-native at build). Init git here and fetch source OVER the deps —
-# node_modules is gitignored, so checkout leaves it untouched. No clone, no
-# install on the hot path.
+# The image already contains the full repo source + .git (baked at build time).
+# Just authenticate the remote and fetch the delta since the image was built —
+# typically zero or a handful of commits, much faster than a fresh clone.
 WORKDIR=/home/worker/repo
 cd "$WORKDIR"
-if [ ! -d .git ]; then
-    git init -q
-    git remote add origin "https://x-access-token:${GITHUB_TOKEN}@${REPO_URL}"
-fi
+git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@${REPO_URL}"
 git config user.name "agent-worker-${WORKER_INDEX}"
 git config user.email "agent+w${WORKER_INDEX}@quotethat.local"
-git fetch --depth 50 origin main
+git fetch --depth 1 origin main
 git checkout -f -B "$BRANCH" FETCH_HEAD
 
 # Refresh deps ONLY for projects whose lockfile drifted from the baked one
@@ -81,46 +77,29 @@ if [ -n "$CLAUDE_VER" ]; then
     echo "→ lastOnboardingVersion patched to $CLAUDE_VER"
 fi
 
-note "READY"
-
 SESSION="w${WORKER_INDEX}"
-# bypassPermissions = zero prompts; the container sandbox is the safety boundary,
-# not the permission gate. Override CLAUDE_PERMISSION_MODE=acceptEdits to re-gate
-# bash (file edits still auto-approved) if you want a tighter session.
-PERM="${CLAUDE_PERMISSION_MODE:-bypassPermissions}"
 
 if [ -n "${TASK:-}" ]; then
-    # Task mode: exit the container when Claude finishes so spawn-worker.sh
-    # auto-tears down. No exec bash — letting the session end causes the loop
-    # below to exit and the container to stop.
-    tmux new-session -d -s "$SESSION" \
-        "claude --permission-mode $PERM \"$TASK\""
+    # Task mode: hand off to the orchestrator. Create a bare tmux session for
+    # job windows, then exec the orchestrator as the container's main process.
+    # The orchestrator owns the state machine (BOOTING → READY → … → DONE).
+    tmux new-session -d -s "$SESSION"
+    export REPO_DIR="$WORKDIR"
+    echo "Worker ${WORKER_INDEX} starting orchestrator on branch ${BRANCH}."
+    echo "Attach: docker compose -p quotethat-w${WORKER_INDEX} exec worker tmux attach -t ${SESSION}"
+    exec node "$WORKDIR/muaddib/lib/orchestrator.js"
 else
     # Interactive mode: drop to bash after Claude exits, keep container alive.
+    note "READY"
+    PERM="${CLAUDE_PERMISSION_MODE:-bypassPermissions}"
+    if [ "$PERM" = "bypassPermissions" ]; then
+        PERM_FLAG="--dangerously-skip-permissions"
+    else
+        PERM_FLAG="--permission-mode $PERM"
+    fi
     tmux new-session -d -s "$SESSION" \
-        "claude --permission-mode $PERM; exec bash"
-fi
-
-echo "Worker ${WORKER_INDEX} ready on branch ${BRANCH}."
-echo "Attach: docker compose -p quotethat-w${WORKER_INDEX} exec worker tmux attach -t ${SESSION}"
-
-if [ -n "${TASK:-}" ]; then
-    # Wait for Claude to finish, then mark done and stay alive. The agent
-    # starts dev servers + cloudflared tunnels as background processes before
-    # creating the PR; keeping the container alive keeps those processes running
-    # so the preview URL in the PR body remains accessible.
-    while tmux has-session -t "$SESSION" 2>/dev/null; do
-        sleep 3
-    done
-    # Don't overwrite WATCHING/WATCHING_FEEDBACK/DONE_FINAL — the feedback
-    # watcher (watch-feedback.sh) controls state transitions from here.
-    _current_state=$(cut -d' ' -f1 "$STATUS_FILE" 2>/dev/null || echo "")
-    case "$_current_state" in
-        WATCHING|WATCHING_FEEDBACK|DONE_FINAL) ;;
-        *) note DONE ;;
-    esac
-    tail -f /dev/null
-else
-    # Keep the container running until the user tears it down.
+        "claude $PERM_FLAG; exec bash"
+    echo "Worker ${WORKER_INDEX} ready (interactive) on branch ${BRANCH}."
+    echo "Attach: docker compose -p quotethat-w${WORKER_INDEX} exec worker tmux attach -t ${SESSION}"
     tail -f /dev/null
 fi
