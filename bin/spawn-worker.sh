@@ -176,6 +176,9 @@ disown $!
 if [ "${MUADIB_NO_ATTACH:-0}" != "1" ] && [ -t 0 ] && [ -t 1 ]; then
     echo "  Attaching — Ctrl-b then d to detach (worker keeps running)."
     echo "  Re-attach: ./bin/attach.sh ${WORKER}  ·  Monitor: ./bin/attend.sh  ·  Stop: ./bin/teardown-worker.sh ${WORKER}"
+    # Switch to the most recently created window (current job) before attaching,
+    # so the user lands on the Claude session rather than the base shell window.
+    docker exec "${WORKER_CID}" tmux select-window -t "w${WORKER}:{end}" 2>/dev/null || true
     docker exec -it "${WORKER_CID}" tmux attach -t "w${WORKER}" || true
     # After detach or task completion, teardown immediately if the task is done.
     # (The background watcher above handles the no-attach case within ~5 s.)

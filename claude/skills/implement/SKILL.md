@@ -5,13 +5,15 @@ description: Fleet implementation step. Writes code, tests, and a preview seed s
 
 # Implement
 
-Fleet-safe implementation step. **Never calls `AskUserQuestion`.** Never commits.
+Fleet implementation step. Never commits.
 
-`$ARGUMENTS` is the Linear ticket identifier. `STATE_BRANCH` is already checked out by gather-context. If `STATE_REVIEW_FINDINGS` is non-empty this is a **fix pass** — address those findings instead of implementing from scratch.
+**If a blocking question arises mid-implementation** and cannot be resolved by reading the codebase: post to Linear as a `@mention` comment, fire a macOS notify via the event bus, then call `AskUserQuestion`. Do not block silently.
+
+`$ARGUMENTS` is the Linear ticket identifier. `STATE_BRANCH` is already checked out. If `STATE_REVIEW_FINDINGS` is non-empty this is a **fix pass** — address those findings instead of implementing from scratch.
 
 ## Step 1 — Load plan context
 
-Call `mcp__linear__get_issue` with the identifier from `$ARGUMENTS`. Find the `## Plan` comment on this ticket or its parent (check the parent if `parentId` is set and no plan is on this ticket).
+Read `.muaddib/plan.md` in the repo root — this is the authoritative plan written by `analyze-ticket` / `ask-questions`. If that file does not exist, fall back to finding the `## Plan` comment via `mcp__linear__get_issue` on `$ARGUMENTS` (or its parent).
 
 Read `CLAUDE.md` (root and per-project for the affected area). Read neighboring files in the plan's touched directories to match existing patterns.
 

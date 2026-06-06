@@ -6,16 +6,41 @@
   ],
   "workflow": [
     {
-      "id": "gather-context",
+      "id": "fetch-ticket",
+      "type": "script",
+      "script": "scripts/fetch-ticket.sh",
+      "stateWrites": ["ticket_identifier", "ticket_url", "ticket_title", "plan_status"]
+    },
+    {
+      "id": "branch",
+      "type": "script",
+      "script": "scripts/branch.sh",
+      "stateReads": ["ticket_identifier", "ticket_title"],
+      "stateWrites": ["branch"]
+    },
+    {
+      "id": "analyze-ticket",
       "type": "claude-tui",
-      "skill": "gather-context",
-      "stateWrites": ["branch", "ticket_url"]
+      "skill": "analyze-ticket",
+      "runIf": "state.plan_status !== 'found'",
+      "stateReads": ["ticket_identifier", "ticket_url", "ticket_title"],
+      "stateWrites": ["needs_questions"],
+      "mockStateWrites": [["needs_questions", "false"]]
+    },
+    {
+      "id": "ask-questions",
+      "type": "claude-tui",
+      "skill": "ask-questions",
+      "runIf": "state.needs_questions === 'true'",
+      "stateReads": ["ticket_identifier", "ticket_url"],
+      "stateWrites": [],
+      "mockStateWrites": []
     },
     {
       "id": "implement",
       "type": "claude-tui",
       "skill": "implement",
-      "stateReads": ["branch"]
+      "stateReads": ["branch", "ticket_identifier"]
     },
     {
       "id": "quality-loop",
