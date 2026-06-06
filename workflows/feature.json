@@ -37,35 +37,49 @@
       "mockStateWrites": []
     },
     {
-      "id": "implement",
-      "type": "claude-tui",
-      "skill": "implement",
-      "stateReads": ["branch", "ticket_identifier"]
-    },
-    {
-      "id": "quality-loop",
+      "id": "implement-loop",
       "type": "loop",
       "maxIterations": 5,
-      "exitCondition": "state.review_status === 'approved'",
+      "exitCondition": "state.check_status === 'passed'",
       "steps": [
+        {
+          "id": "implement",
+          "type": "claude-tui",
+          "skill": "implement",
+          "stateReads": ["branch", "ticket_identifier", "check_status"]
+        },
         {
           "id": "checks",
           "type": "script",
           "script": "scripts/run-checks.sh",
           "stateWrites": ["check_status"]
-        },
-        {
-          "id": "review",
-          "type": "claude-tui",
-          "skill": "review-fleet",
-          "stateWrites": ["review_status", "review_findings"]
-        },
+        }
+      ]
+    },
+    {
+      "id": "review",
+      "type": "claude-tui",
+      "skill": "review-fleet",
+      "stateWrites": ["review_status", "review_findings"]
+    },
+    {
+      "id": "fix-loop",
+      "type": "loop",
+      "maxIterations": 5,
+      "exitCondition": "state.check_status === 'passed'",
+      "runIf": "state.review_status === 'needs_fix'",
+      "steps": [
         {
           "id": "fix",
           "type": "claude-tui",
           "skill": "implement",
-          "runIf": "state.review_status === 'needs_fix'",
-          "stateReads": ["review_findings"]
+          "stateReads": ["review_findings", "check_status"]
+        },
+        {
+          "id": "checks",
+          "type": "script",
+          "script": "scripts/run-checks.sh",
+          "stateWrites": ["check_status"]
         }
       ]
     },
