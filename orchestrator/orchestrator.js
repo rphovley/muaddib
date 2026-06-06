@@ -82,7 +82,9 @@ function serviceCmd(svc) {
     };
     return stubs[svc.name] || `echo "unknown mock service: ${svc.name}"; exit 1`;
   }
-  return `bash '${path.join(REPO, 'muaddib', svc.script)}'`;
+  const scriptPath = path.join(REPO, 'muaddib', svc.script);
+  const runtime = scriptPath.endsWith('.js') ? 'node' : 'bash';
+  return `${runtime} '${scriptPath}'`;
 }
 
 // Start a background service. If svc.readyEvent is set, resolves only once
