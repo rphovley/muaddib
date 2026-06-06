@@ -16,8 +16,14 @@ export HOST_DESKTOP="$HOME/Desktop"
 
 # Detach any attached tmux clients before killing the container so tmux can
 # send its own cleanup sequences and leave the host terminal in a clean state.
+# Then wait for the docker exec process to exit before bringing the container
+# down — without the wait, compose down races the PTY flush and the host
+# terminal is left with mouse-tracking escape sequences still active.
 WORKER_CID=$(docker compose -p "$PROJECT" -f "$FLEET_DIR/docker-compose.worker.yml" ps -q worker 2>/dev/null | head -1)
-[ -n "$WORKER_CID" ] && docker exec "$WORKER_CID" tmux detach-client -s "w${WORKER}" 2>/dev/null || true
+if [ -n "$WORKER_CID" ]; then
+    docker exec "$WORKER_CID" tmux detach-client -s "w${WORKER}" 2>/dev/null || true
+    sleep 1
+fi
 
 docker compose -p "$PROJECT" -f "$FLEET_DIR/docker-compose.worker.yml" down -v
 rm -f "$FLEET_DIR/.worker-${WORKER}.env" \
