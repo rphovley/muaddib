@@ -32,7 +32,7 @@ while true; do
                     DONE_FINAL)        notify "muaddib: $label" "PR merged — tearing down ✓" ;;
                     BLOCKED)           notify "muaddib: $label" "Waiting for your input" ;;
                     WAITING_FOR_INPUT) notify "muaddib: $label" "Questions posted to Linear — needs answers" ;;
-                    WATCHING)          notify "muaddib: $label" "Preview live — watching for Linear feedback" ;;
+                    WATCHING)          notify "muaddib: $label" "Preview live — waiting for feedback" ;;
                     WATCHING_FEEDBACK) notify "muaddib: $label" "Addressing PR feedback" ;;
                     FAILED)            notify "muaddib: $label" "Worker failed — check logs" ;;
                 esac
