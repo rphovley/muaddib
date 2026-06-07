@@ -50,6 +50,7 @@ struct PinnedPanelView: View {
                     }
                     .buttonStyle(.plain)
                     .help("Unpin")
+                    .transition(.opacity)
                 }
             }
             .padding(.horizontal, 12)
@@ -64,12 +65,17 @@ struct PinnedPanelView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.bottom, 8)
+                .transition(.opacity)
             }
         }
         .fixedSize(horizontal: true, vertical: false)
         .background(Color(white: 0.12))
         .clipShape(RoundedRectangle(cornerRadius: 14))
-        .onHover { isHovered = $0 }
+        .onHover { hovered in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isHovered = hovered
+            }
+        }
     }
 
     private var gripHandle: some View {
@@ -87,6 +93,7 @@ struct WorkerPill: View {
     let worker: WorkerInfo
     @State private var copied = false
     @State private var isHovered = false
+    @State private var isPulsing = false
 
     var body: some View {
         Button(action: copy) {
@@ -111,8 +118,18 @@ struct WorkerPill: View {
             .clipShape(RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
+        .scaleEffect(worker.statusCategory == .attention ? (isPulsing ? 1.05 : 1.0) : 1.0)
         .animation(.easeInOut(duration: 0.12), value: copied)
         .onHover { isHovered = $0 }
+        .onAppear {
+            guard worker.statusCategory == .attention else { return }
+            withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
+                isPulsing = true
+            }
+        }
+        .onDisappear {
+            isPulsing = false
+        }
     }
 
     private var pillLabel: String {
