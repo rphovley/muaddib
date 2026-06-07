@@ -95,7 +95,7 @@ $STATE_TICKET_URL
 ## Preview credentials
 | Role | Login |
 |------|-------|
-| Contractor (Portal) | **$PREVIEW_EMAIL** / \`$PREVIEW_PASSWORD\` |
+| Contractor (Portal) | **$PREVIEW_EMAIL** / $PREVIEW_PASSWORD |
 | Homeowner | ${STATE_HO_URL}${HO_MAGIC_LINK} _(magic-link — open directly)_ |
 
 _Preview runs in a sandboxed Docker worker. Tear down with \`./muaddib/bin/teardown-worker.sh <N>\`._
