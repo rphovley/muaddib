@@ -12,6 +12,12 @@ FLEET_DIR="$(cd "$BIN_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$FLEET_DIR/.." && pwd)"
 cd "$FLEET_DIR"
 
+# When spawn-worker.sh is called from inside the dispatch Docker container
+# (docker.sock bind-mounted), `docker compose` sends volume-mount paths to the
+# HOST daemon, which resolves them on the host filesystem — not the container's.
+# HOST_FLEET_DIR is the real host path to muaddib/; dispatch.sh sets it via env.
+HOST_FLEET_DIR="${HOST_FLEET_DIR:-$FLEET_DIR}"
+
 WORKER="${1:?usage: spawn-worker.sh <worker-number> [task...]}"
 shift || true
 TASK="${*:-}"
@@ -33,7 +39,8 @@ MERGED_SKILLS="$FLEET_DIR/status/.skills-${WORKER}"
 rm -rf "$MERGED_SKILLS" && mkdir -p "$MERGED_SKILLS"
 [ -d "$CLAUDE_SKILLS_DIR" ] && cp -r "$CLAUDE_SKILLS_DIR/." "$MERGED_SKILLS/"
 cp -r "$FLEET_DIR/claude/skills/." "$MERGED_SKILLS/"
-CLAUDE_SKILLS_DIR="$MERGED_SKILLS"
+# Use the host-side path so docker compose mounts the right directory on the host.
+CLAUDE_SKILLS_DIR="$HOST_FLEET_DIR/status/.skills-${WORKER}"
 
 : "${CLAUDE_CODE_OAUTH_TOKEN:?export your subscription token first: run 'claude setup-token'}"
 : "${GITHUB_TOKEN:?export a repo-scoped GitHub token (push branches + open PRs only)}"
@@ -69,10 +76,10 @@ chmod 600 "$ENV_FILE"
 mkdir -p "$FLEET_DIR/status" && chmod 777 "$FLEET_DIR/status"
 
 export WORKER_API_PORT="$API_PORT" WORKER_DB_PORT="$DB_PORT" \
-    WORKER_ENV_FILE="$ENV_FILE" WORKER_INDEX="$WORKER" \
+    WORKER_ENV_FILE="$HOST_FLEET_DIR/.worker-${WORKER}.env" WORKER_INDEX="$WORKER" \
     CLAUDE_SKILLS_DIR="$CLAUDE_SKILLS_DIR" \
-    HOST_TMPDIR="${TMPDIR:-/tmp}" \
-    HOST_DESKTOP="$HOME/Desktop"
+    HOST_TMPDIR="${HOST_TMPDIR:-${TMPDIR:-/tmp}}" \
+    HOST_DESKTOP="${HOST_DESKTOP:-$HOME/Desktop}"
 
 STATE_FILE="$FLEET_DIR/status/worker-${WORKER}.state"
 : >"$STATE_FILE" # clear any stale state from a previous run
@@ -87,10 +94,14 @@ if ! docker image inspect quotethat-worker:latest >/dev/null 2>&1; then
     docker build -f "$FLEET_DIR/Dockerfile.worker" -t quotethat-worker:latest "$REPO_ROOT"
 fi
 
-docker compose -p "$PROJECT" -f docker-compose.worker.yml up -d
+docker compose -p "$PROJECT" \
+    --project-directory "$HOST_FLEET_DIR" \
+    -f "$HOST_FLEET_DIR/docker-compose.worker.yml" up -d
 
 # Capture container ID immediately — before it can be removed on fast exit.
-WORKER_CID=$(docker compose -p "$PROJECT" -f docker-compose.worker.yml ps -q worker 2>/dev/null | head -1)
+WORKER_CID=$(docker compose -p "$PROJECT" \
+    --project-directory "$HOST_FLEET_DIR" \
+    -f "$HOST_FLEET_DIR/docker-compose.worker.yml" ps -q worker 2>/dev/null | head -1)
 
 # Wait for the worker to finish provisioning (clone + deps + MCP). If it dies,
 # surface its logs to THIS console instead of reporting a false "up".

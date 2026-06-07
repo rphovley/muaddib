@@ -1,0 +1,45 @@
+# Dispatch daemon — registers a Linear webhook, tunnels it via cloudflared,
+# and auto-routes new tickets to muaddib worker containers.
+#
+# Managed via dispatch.sh (which sets HOST_FLEET_DIR automatically):
+#   npm run muaddib:start   →  dispatch.sh --bg   (detached, restart: unless-stopped)
+#   npm run muaddib:stop    →  dispatch.sh --stop  (deregisters webhook, removes container)
+#   docker compose -p quotethat-dispatch -f muaddib/docker-compose.dispatch.yml logs -f
+#
+# Prerequisites — export in shell before muaddib:start:
+#   CLAUDE_CODE_OAUTH_TOKEN  (claude setup-token)
+#   GITHUB_TOKEN             (repo-scoped PAT for opening PRs)
+# Dispatch-specific config goes in muaddib/non-prod.env (see non-prod.env.example).
+
+services:
+  dispatch:
+    build:
+      context: ..
+      dockerfile: muaddib/Dockerfile.dispatch
+    image: quotethat-dispatch:latest
+    restart: unless-stopped
+    env_file:
+      - non-prod.env
+    environment:
+      REPO_ROOT: /repo
+      # HOST_FLEET_DIR: real path of muaddib/ on the host machine.
+      # When spawn-worker.sh calls `docker compose` from inside this container,
+      # Docker resolves volume mounts against the HOST filesystem, not the
+      # container's bind-mount path. dispatch.sh sets this automatically.
+      HOST_FLEET_DIR: ${HOST_FLEET_DIR:?run via dispatch.sh — it sets HOST_FLEET_DIR automatically}
+      # Host-side paths passed through to spawn-worker.sh → worker compose file.
+      HOST_DESKTOP: ${HOST_DESKTOP:-${HOME}/Desktop}
+      HOST_TMPDIR: ${TMPDIR:-/tmp}
+      CLAUDE_SKILLS_DIR: ${CLAUDE_SKILLS_DIR:-${HOME}/.claude/skills}
+      # Auth tokens must be in the shell env; docker restart preserves the values
+      # saved when the container was first created.
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:?export CLAUDE_CODE_OAUTH_TOKEN before running muaddib:start}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:?export GITHUB_TOKEN before running muaddib:start}
+    volumes:
+      # Repo bind-mount: daemon and spawn-worker.sh read workflows, scripts, etc.
+      # Writes (status files, per-worker .env files) land on the host via this mount.
+      - ..:/repo
+      # Host Docker socket: daemon calls `docker ps`; spawn-worker.sh calls
+      # `docker compose up` to launch worker containers on the host daemon.
+      - /var/run/docker.sock:/var/run/docker.sock
+    working_dir: /repo/muaddib

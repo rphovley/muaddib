@@ -48,6 +48,12 @@ docker run --rm \
         echo '=== scripts/test-fetch-ticket ==='
         node \$REPO/muaddib/scripts/test-fetch-ticket.js
 
+        echo '=== services/test-linear-webhook ==='
+        node \$REPO/muaddib/services/__tests__/test-linear-webhook.js
+
+        echo '=== services/test-dispatch-queue ==='
+        node \$REPO/muaddib/services/__tests__/test-dispatch-queue.js
+
         echo ''
         echo 'All test suites passed.'
     "

@@ -1,0 +1,37 @@
+# Dispatch daemon image — lightweight Node.js container that listens for Linear
+# webhooks via a cloudflared tunnel and routes new tickets to worker containers.
+# BUILD CONTEXT IS THE REPO ROOT:
+#   docker build -f muaddib/Dockerfile.dispatch -t quotethat-dispatch .
+#
+# Does NOT bake source — the repo is bind-mounted at runtime (/repo).
+# Requires /var/run/docker.sock so it can call `docker compose` to spawn workers.
+FROM node:22-slim
+
+# Toolchain: git (auto-detect REPO_URL from the mounted repo), bash + curl (scripts).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        bash ca-certificates curl git wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# docker CLI + compose plugin — daemon calls `docker ps`; spawn-worker.sh calls
+# `docker compose up` via the bind-mounted host socket.
+RUN mkdir -p -m 755 /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg \
+            -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
+             https://download.docker.com/linux/debian bookworm stable" \
+        > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends docker-ce-cli docker-compose-plugin \
+    && rm -rf /var/lib/apt/lists/*
+
+# cloudflared — quick tunnel for the Linear webhook (no account needed).
+RUN CF_ARCH=$(dpkg --print-architecture) \
+    && wget -nv -O /usr/local/bin/cloudflared \
+       "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CF_ARCH}" \
+    && chmod +x /usr/local/bin/cloudflared
+
+WORKDIR /repo
+ENV REPO_ROOT=/repo
+
+CMD ["node", "muaddib/services/dispatch-daemon.js"]

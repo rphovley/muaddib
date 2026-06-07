@@ -9,3 +9,9 @@ status/
 
 # Host-mounted screenshot inbox (contents are transient)
 screenshots/
+
+# Dispatch daemon runtime files
+../.muaddib-dispatch-queue.json
+../.muaddib-dispatch.json
+../.muaddib-dispatch.pid
+../.muaddib-dispatch.log
