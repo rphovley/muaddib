@@ -38,7 +38,7 @@ Fold tests into the same step as the code they cover — not a separate phase.
 
 ## Step 4 — Write preview seed script
 
-Write `projects/api/scripts/seed-preview.ts`. Must be idempotent — safe to run on every preview startup.
+Write `projects/api/scripts/seed-preview-w${WORKER_INDEX:-0}.ts`. Must be idempotent — safe to run on every preview startup.
 
 The script must:
 

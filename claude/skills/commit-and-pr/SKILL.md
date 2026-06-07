@@ -32,15 +32,16 @@ Run the seed script to get credentials that reflect the current implementation:
 
 ```bash
 REPO="${REPO_DIR:-/home/worker/repo}"
-SEED_JSON=$(cd "$REPO" && \
-    npx --prefix projects/api tsx projects/api/scripts/seed-preview.ts 2>/dev/null | tail -1 \
+SEED_SCRIPT="$REPO/projects/api/scripts/seed-preview-w${WORKER_INDEX:-0}.ts"
+SEED_JSON=$([ -f "$SEED_SCRIPT" ] && \
+    cd "$REPO" && npx --prefix projects/api tsx "$SEED_SCRIPT" 2>/dev/null | tail -1 \
     || echo '{"email":"(unavailable)","password":"","homeowner_magic_link":null}')
 PREVIEW_EMAIL=$(printf '%s' "$SEED_JSON" | jq -r '.email // "(unavailable)"')
 PREVIEW_PASSWORD=$(printf '%s' "$SEED_JSON" | jq -r '.password // ""')
 HO_MAGIC_LINK=$(printf '%s' "$SEED_JSON" | jq -r '.homeowner_magic_link // ""')
 ```
 
-If `projects/api/scripts/seed-preview.ts` does not exist (bug workflow or not yet written), skip and leave all credential vars as `(unavailable)`.
+If the worker's seed script does not exist (bug workflow or not yet written), skip and leave all credential vars as `(unavailable)`.
 
 ## Step 3 — Commit
 

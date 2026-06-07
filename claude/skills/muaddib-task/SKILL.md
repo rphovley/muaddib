@@ -82,7 +82,7 @@ Do not expand scope beyond the plan. If a discovery mid-implementation reveals t
 
 ## Step 5 — Write preview seed script
 
-Write `projects/api/scripts/seed-preview.ts`. This script creates login-ready test data so the PR reviewer can exercise the feature without manual setup. It must be **idempotent**.
+Write `projects/api/scripts/seed-preview-w${WORKER_INDEX:-0}.ts`. This script creates login-ready test data so the PR reviewer can exercise the feature without manual setup. It must be **idempotent**.
 
 The script must:
 
@@ -104,7 +104,7 @@ The script must:
    {"email":"...","password":"...","homeowner_magic_link":"<url-or-null>"}
    ```
 
-Add `seed-preview.ts` to the commit in Step 6.
+Do not commit the seed script — `seed-preview-w*.ts` is gitignored.
 
 ## Step 6 — Run `/check`
 
@@ -152,9 +152,9 @@ Skip this step if `WORKER_INDEX` is not set.
 cd /home/worker/repo && npm run --prefix projects/api migrate:up
 
 # 2. Run preview seed — capture credentials
-SEED_JSON=$(cd /home/worker/repo && npx --prefix projects/api tsx \
-    projects/api/scripts/seed-preview.ts 2>/tmp/seed-preview.log \
-    | tail -1 \
+SEED_SCRIPT="/home/worker/repo/projects/api/scripts/seed-preview-w${WORKER_INDEX:-0}.ts"
+SEED_JSON=$([ -f "$SEED_SCRIPT" ] && \
+    cd /home/worker/repo && npx --prefix projects/api tsx "$SEED_SCRIPT" 2>/tmp/seed-preview.log | tail -1 \
     || echo '{"email":"(seed failed — see /tmp/seed-preview.log)","password":"","homeowner_magic_link":null}')
 PREVIEW_EMAIL=$(printf '%s' "$SEED_JSON"    | jq -r '.email // "(unknown)"')
 PREVIEW_PASSWORD=$(printf '%s' "$SEED_JSON" | jq -r '.password // "(unknown)"')
