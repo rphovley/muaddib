@@ -13,7 +13,7 @@ Fleet implementation step for bug fixes. Never commits. Does not write a preview
 
 There are three modes — check which applies before doing anything else:
 
-- **Check fix pass**: `STATE_CHECK_STATUS` is `fail` and `STATE_CHECK_OUTPUT` is non-empty → fix failing tests/checks only. Skip Step 1 entirely.
+- **Check fix pass**: `STATE_CHECK_STATUS === 'fail'` and `STATE_CHECK_OUTPUT` is non-empty → fix failing tests/checks only. Skip Step 1 entirely.
 - **Review fix pass**: `STATE_REVIEW_FINDINGS` is non-empty → fix review findings only. Skip Step 1 entirely.
 - **Initial pass**: neither of the above → implement from scratch.
 

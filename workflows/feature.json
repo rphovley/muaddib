@@ -40,7 +40,7 @@
       "id": "implement-loop",
       "type": "loop",
       "maxIterations": 5,
-      "exitCondition": "state.check_status === 'passed'",
+      "exitCondition": "state.check_status === 'pass'",
       "steps": [
         {
           "id": "implement",
@@ -65,8 +65,9 @@
     {
       "id": "fix-loop",
       "type": "loop",
+      "minIterations": 1,
       "maxIterations": 5,
-      "exitCondition": "state.check_status === 'passed'",
+      "exitCondition": "state.check_status === 'pass'",
       "runIf": "state.review_status === 'needs_fix'",
       "steps": [
         {

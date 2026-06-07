@@ -244,9 +244,10 @@ async function runClaudeTuiStep(worker, step, ticketId) {
 
 async function runLoop(worker, loopStep, ticketId, flushNotify) {
   const max = loopStep.maxIterations || 10;
+  const min = loopStep.minIterations || 0;
 
   for (let i = 0; i < max; i++) {
-    if (loopStep.exitCondition) {
+    if (i >= min && loopStep.exitCondition) {
       if (evaluateCondition(loopStep.exitCondition, state.read(worker))) {
         console.log(`[runner w${worker}] loop ${loopStep.id} exited at iteration ${i}`);
         return;
