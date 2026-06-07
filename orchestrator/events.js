@@ -25,14 +25,18 @@ function emit(worker, job, event, payload) {
 }
 
 // Poll the worker's events file for new JSONL lines every 50 ms.
-// Replays all lines already in the file before watching for new ones.
+// By default replays all lines already in the file; pass { fromEnd: true }
+// to start from the current end and only see events emitted after subscribe().
 // Returns an object with a kill() method to stop polling.
-function subscribe(worker, handler) {
+function subscribe(worker, handler, opts = {}) {
   const file = eventsFile(worker);
   fs.mkdirSync(eventsDir(), { recursive: true });
   fs.closeSync(fs.openSync(file, 'a')); // ensure file exists
 
   let offset = 0;
+  if (opts.fromEnd) {
+    try { offset = fs.statSync(file).size; } catch (_) {}
+  }
   let remainder = '';
   let killed = false;
 

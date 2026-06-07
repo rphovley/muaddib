@@ -143,7 +143,7 @@ async function main() {
         note('WATCHING');
       }
       if (ev.job === 'webhook' && ev.event === 'merged') { sub.kill(); resolve(); }
-    });
+    }, { fromEnd: true });
   });
 
   note('DONE_FINAL');
