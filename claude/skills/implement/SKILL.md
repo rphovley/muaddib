@@ -38,7 +38,13 @@ Fold tests into the same step as the code they cover — not a separate phase.
 
 ## Step 4 — Write preview seed script
 
-Write `projects/api/scripts/seed-preview-w${WORKER_INDEX:-0}.ts`. Must be idempotent — safe to run on every preview startup.
+First resolve the worker suffix — do not guess or default to 0:
+
+```bash
+echo "WORKER_SUFFIX=${WORKER_INDEX:-0}"
+```
+
+Write the seed file at exactly `projects/api/scripts/seed-preview-w<resolved-suffix>.ts` (e.g. `seed-preview-w1.ts` when WORKER_INDEX=1). Must be idempotent — safe to run on every preview startup.
 
 The script must:
 

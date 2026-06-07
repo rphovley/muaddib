@@ -28,10 +28,16 @@ printf 'BLOCKED %s\n' "$(date -u +%FT%TZ)" > "/var/run/agent-status/worker-${WOR
 
 ## Step 2 — Refresh preview credentials
 
-Run the seed script to get credentials that reflect the current implementation:
+First apply any pending migrations so the seed script sees the current schema:
 
 ```bash
 REPO="${REPO_DIR:-/home/worker/repo}"
+(cd "$REPO/projects/api" && npm run migrate:up 2>&1) || true
+```
+
+Then run the seed script to get credentials that reflect the current implementation:
+
+```bash
 SEED_SCRIPT="$REPO/projects/api/scripts/seed-preview-w${WORKER_INDEX:-0}.ts"
 SEED_JSON=$([ -f "$SEED_SCRIPT" ] && \
     cd "$REPO" && npx --prefix projects/api tsx "$SEED_SCRIPT" 2>/dev/null | tail -1 \
