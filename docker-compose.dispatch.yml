@@ -35,6 +35,8 @@ services:
       # saved when the container was first created.
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:?export CLAUDE_CODE_OAUTH_TOKEN before running muaddib:start}
       GITHUB_TOKEN: ${GITHUB_TOKEN:?export GITHUB_TOKEN before running muaddib:start}
+      LINEAR_API_KEY: ${LINEAR_API_KEY:?export LINEAR_API_KEY before running muaddib:start}
+      LINEAR_TEAM_ID: ${LINEAR_TEAM_ID:?export LINEAR_TEAM_ID before running muaddib:start}
     volumes:
       # Repo bind-mount: daemon and spawn-worker.sh read workflows, scripts, etc.
       # Writes (status files, per-worker .env files) land on the host via this mount.

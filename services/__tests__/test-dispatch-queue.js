@@ -54,6 +54,17 @@ async function testMarkDispatched() {
   if (!persisted.includes('QUO-1')) throw new Error('QUO-1 not found in dedup file');
 }
 
+async function testUnmarkDispatched() {
+  clearFiles();
+  const { isDispatched, markDispatched, unmarkDispatched } = freshModule();
+  markDispatched('QUO-5');
+  if (!isDispatched('QUO-5')) throw new Error('precondition: should be true after mark');
+  unmarkDispatched('QUO-5');
+  if (isDispatched('QUO-5')) throw new Error('expected false after unmark');
+  const persisted = readDedupFile();
+  if (persisted.includes('QUO-5')) throw new Error('QUO-5 should be removed from dedup file');
+}
+
 async function testEnqueue() {
   clearFiles();
   const { enqueue } = freshModule();
@@ -137,6 +148,7 @@ async function main() {
   const tests = [
     ['isDispatched: unknown ticket → false', testIsDispatchedFalseInitially],
     ['markDispatched: check true after mark; file persisted', testMarkDispatched],
+    ['unmarkDispatched: check false after unmark; file updated', testUnmarkDispatched],
     ['enqueue: adds entries to queue file', testEnqueue],
     ['flush: trySpawn true → entry removed', testFlushSuccess],
     ['flush: trySpawn false → entry kept', testFlushFailure],

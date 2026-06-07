@@ -66,7 +66,17 @@ TASK=${TASK}
 CLAUDE_PERMISSION_MODE=${CLAUDE_PERMISSION_MODE:-bypassPermissions}
 NODE_ENV=development
 EOF
-[ -n "${WORKFLOW_FILE:-}" ] && echo "WORKFLOW_FILE=${WORKFLOW_FILE}" >>"$ENV_FILE"
+if [ -n "${WORKFLOW_FILE:-}" ]; then
+  # muaddib-fast.sh / muaddib-plan.sh already set the worker path directly.
+  # The dispatch daemon sets the dispatch container path (/repo/...) — translate
+  # it to the worker container path (/home/worker/repo/...).
+  case "$WORKFLOW_FILE" in
+    "${REPO_ROOT}"/*)
+      echo "WORKFLOW_FILE=/home/worker/repo/${WORKFLOW_FILE#"${REPO_ROOT}/"}" >>"$ENV_FILE" ;;
+    *)
+      echo "WORKFLOW_FILE=${WORKFLOW_FILE}" >>"$ENV_FILE" ;;
+  esac
+fi
 
 # Let LINEAR_API_KEY come from the shell env too (overrides non-prod.env if set).
 [ -n "${LINEAR_API_KEY:-}" ] && echo "LINEAR_API_KEY=${LINEAR_API_KEY}" >>"$ENV_FILE"
@@ -76,7 +86,7 @@ chmod 600 "$ENV_FILE"
 mkdir -p "$FLEET_DIR/status" && chmod 777 "$FLEET_DIR/status"
 
 export WORKER_API_PORT="$API_PORT" WORKER_DB_PORT="$DB_PORT" \
-    WORKER_ENV_FILE="$HOST_FLEET_DIR/.worker-${WORKER}.env" WORKER_INDEX="$WORKER" \
+    WORKER_ENV_FILE="$FLEET_DIR/.worker-${WORKER}.env" WORKER_INDEX="$WORKER" \
     CLAUDE_SKILLS_DIR="$CLAUDE_SKILLS_DIR" \
     HOST_TMPDIR="${HOST_TMPDIR:-${TMPDIR:-/tmp}}" \
     HOST_DESKTOP="${HOST_DESKTOP:-$HOME/Desktop}"
@@ -96,12 +106,12 @@ fi
 
 docker compose -p "$PROJECT" \
     --project-directory "$HOST_FLEET_DIR" \
-    -f "$HOST_FLEET_DIR/docker-compose.worker.yml" up -d
+    -f "$FLEET_DIR/docker-compose.worker.yml" up -d
 
 # Capture container ID immediately — before it can be removed on fast exit.
 WORKER_CID=$(docker compose -p "$PROJECT" \
     --project-directory "$HOST_FLEET_DIR" \
-    -f "$HOST_FLEET_DIR/docker-compose.worker.yml" ps -q worker 2>/dev/null | head -1)
+    -f "$FLEET_DIR/docker-compose.worker.yml" ps -q worker 2>/dev/null | head -1)
 
 # Wait for the worker to finish provisioning (clone + deps + MCP). If it dies,
 # surface its logs to THIS console instead of reporting a false "up".

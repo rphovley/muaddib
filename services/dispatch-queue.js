@@ -41,6 +41,11 @@ function markDispatched(ticketId) {
   saveDedup();
 }
 
+function unmarkDispatched(ticketId) {
+  dispatched.delete(ticketId);
+  saveDedup();
+}
+
 function enqueue(ticketId, entryPoint, workflowFile) {
   queue.push({ ticketId, entryPoint, workflowFile, enqueuedAt: new Date().toISOString() });
   saveQueue();
@@ -60,4 +65,4 @@ async function flush(trySpawn) {
   saveQueue();
 }
 
-module.exports = { isDispatched, markDispatched, enqueue, flush };
+module.exports = { isDispatched, markDispatched, unmarkDispatched, enqueue, flush };

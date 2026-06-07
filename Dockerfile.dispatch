@@ -34,4 +34,4 @@ RUN CF_ARCH=$(dpkg --print-architecture) \
 WORKDIR /repo
 ENV REPO_ROOT=/repo
 
-CMD ["node", "muaddib/services/dispatch-daemon.js"]
+CMD ["node", "services/dispatch-daemon.js"]

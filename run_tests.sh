@@ -57,6 +57,9 @@ docker run --rm \
         echo '=== services/test-dispatch-queue ==='
         node \$REPO/muaddib/services/__tests__/test-dispatch-queue.js
 
+        echo '=== services/test-dispatch-daemon ==='
+        node \$REPO/muaddib/services/__tests__/test-dispatch-daemon.js
+
         echo ''
         echo 'All test suites passed.'
     "
