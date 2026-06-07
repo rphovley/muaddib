@@ -5,7 +5,7 @@
 // 2. Reads the matching workflow definition from muaddib/workflows/.
 // 3. Starts background services declared in the definition.
 // 4. Delegates the implementation workflow to runner.js.
-// 5. Enters WATCHING state — responds to PR feedback and merge events.
+// 5. Enters FEEDBACK state — responds to PR feedback and merge events.
 
 const fs = require('fs');
 const path = require('path');
@@ -173,18 +173,18 @@ async function main() {
     process.exit(0);
   }
 
-  note('WATCHING');
+  note('FEEDBACK');
   await new Promise((resolve) => {
     const sub = subscribe(WORKER, (ev) => {
-      if (ev.job === 'webhook' && ev.event === 'feedback' && currentState === 'WATCHING') {
-        note('WATCHING_FEEDBACK');
+      if (ev.job === 'webhook' && ev.event === 'feedback' && currentState === 'FEEDBACK') {
+        note('FEEDBACK_WORKING');
         const feedbackCmd = MOCK_JOBS
           ? 'sleep 0.3'
           : `claude ${permFlag()} "/muaddib-feedback ${LINEAR_ISSUE}"`;
         startJob(WORKER, 'claude-feedback', feedbackCmd);
       }
-      if (ev.job === 'claude-feedback' && ev.event === 'done' && currentState === 'WATCHING_FEEDBACK') {
-        note('WATCHING');
+      if (ev.job === 'claude-feedback' && ev.event === 'done' && currentState === 'FEEDBACK_WORKING') {
+        note('FEEDBACK');
       }
       if (ev.job === 'webhook' && ev.event === 'merged') { sub.kill(); resolve(); }
     }, { fromEnd: true });

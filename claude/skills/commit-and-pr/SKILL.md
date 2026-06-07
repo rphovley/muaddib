@@ -99,7 +99,7 @@ $STATE_TICKET_URL
 | Homeowner | ${STATE_HO_URL}${HO_MAGIC_LINK} _(magic-link — open directly)_ |
 
 _Preview runs in a sandboxed Docker worker. Tear down with \`./muaddib/bin/teardown-worker.sh <N>\`._
-_Leave feedback on the PR — the agent is watching and will address it._
+_Leave feedback on the PR — the agent is in feedback mode and will address it._
 
 ## Test plan
 - [ ] ...
@@ -133,7 +133,7 @@ Call `mcp__linear__save_comment` on the ticket from `$ARGUMENTS` with:
 PR opened: <pr-url>
 Branch: $STATE_BRANCH
 Preview: ${STATE_PORTAL_URL:-(unavailable)} (Portal) · ${STATE_HO_URL:-(unavailable)} (Homeowner)
-Feedback: comment on the PR with /feedback — the agent is watching.
+Feedback: comment on the PR with /feedback — the agent is in feedback mode.
 ```
 
 ## Step 8 — Signal done

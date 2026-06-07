@@ -2,8 +2,8 @@
 'use strict';
 // Orchestrator integration test suite. Requires tmux.
 //
-// testBootSequence    — BOOTING → STARTING_SERVICES → RUNNING → WATCHING
-// testFeedbackCycle   — webhook:feedback → WATCHING_FEEDBACK → WATCHING
+// testBootSequence    — BOOTING → STARTING_SERVICES → RUNNING → FEEDBACK
+// testFeedbackCycle   — webhook:feedback → FEEDBACK_WORKING → FEEDBACK
 // testMergedExitsDone — webhook:merged → DONE_FINAL + orchestrator exits 0
 
 const fs = require('fs');
@@ -92,13 +92,13 @@ let orch; // shared orchestrator process used across the first three tests
 async function testBootSequence() {
   const { subscribe } = require('../events');
   const visited = [];
-  const EXPECTED = ['BOOTING', 'STARTING_SERVICES', 'RUNNING', 'WATCHING'];
+  const EXPECTED = ['BOOTING', 'STARTING_SERVICES', 'RUNNING', 'FEEDBACK'];
 
   await new Promise((resolve, reject) => {
     const sub = subscribe(WORKER, (ev) => {
       if (ev.job !== 'orchestrator' || ev.event !== 'state_changed') return;
       visited.push(ev.payload.state);
-      if (ev.payload.state === 'WATCHING') { sub.kill(); resolve(); }
+      if (ev.payload.state === 'FEEDBACK') { sub.kill(); resolve(); }
     });
     const timer = setTimeout(() => {
       sub.kill();
@@ -123,17 +123,17 @@ async function testBootSequence() {
 }
 
 async function testFeedbackCycle() {
-  if (readState() !== 'WATCHING') throw new Error('precondition: must be in WATCHING');
+  if (readState() !== 'FEEDBACK') throw new Error('precondition: must be in FEEDBACK');
   emitEvent('webhook', 'feedback', { prNumber: 42 });
-  await waitForState('WATCHING_FEEDBACK');
-  // Mock claude-feedback exits 0 after 0.3s → done event → back to WATCHING.
-  await waitForState('WATCHING', 10000);
+  await waitForState('FEEDBACK_WORKING');
+  // Mock claude-feedback exits 0 after 0.3s → done event → back to FEEDBACK.
+  await waitForState('FEEDBACK', 10000);
 }
 
-// webhook:merged in WATCHING → DONE_FINAL + orchestrator exits 0.
+// webhook:merged in FEEDBACK → DONE_FINAL + orchestrator exits 0.
 // Runs against the shared orchestrator (must follow testFeedbackCycle).
 async function testMergedExitsDone() {
-  if (readState() !== 'WATCHING') throw new Error('precondition: must be in WATCHING');
+  if (readState() !== 'FEEDBACK') throw new Error('precondition: must be in FEEDBACK');
 
   await new Promise((resolve, reject) => {
     const timer = setTimeout(
@@ -154,8 +154,8 @@ async function testMergedExitsDone() {
 
 async function main() {
   const tests = [
-    ['boot sequence: BOOTING → STARTING_SERVICES → RUNNING → WATCHING', testBootSequence],
-    ['feedback cycle: webhook:feedback → WATCHING_FEEDBACK → WATCHING',  testFeedbackCycle],
+    ['boot sequence: BOOTING → STARTING_SERVICES → RUNNING → FEEDBACK', testBootSequence],
+    ['feedback cycle: webhook:feedback → FEEDBACK_WORKING → FEEDBACK',  testFeedbackCycle],
     ['webhook:merged → DONE_FINAL + orchestrator exits 0',               testMergedExitsDone],
   ];
 

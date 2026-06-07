@@ -119,9 +119,9 @@ echo "→ provisioning (clone + deps + MCP)…"
 SECONDS=0
 while :; do
     # READY      = interactive mode (no TASK set)
-    # RUNNING / WATCHING* = task mode: orchestrator past provisioning
+    # RUNNING / FEEDBACK* = task mode: orchestrator past provisioning
     case "$(cut -d' ' -f1 "$STATE_FILE" 2>/dev/null || true)" in
-        READY|RUNNING|WATCHING|WATCHING_FEEDBACK) break ;;
+        READY|RUNNING|FEEDBACK|FEEDBACK_WORKING) break ;;
     esac
     if [ -z "$(docker ps -q --filter "label=com.docker.compose.project=${PROJECT}" --filter "name=worker")" ]; then
         {
@@ -175,8 +175,8 @@ EVENTS_FILE="$FLEET_DIR/status/worker-${WORKER}.events"
         case "$_state" in
             WAITING_FOR_INPUT) osascript -e "display notification \"Questions posted to Linear — needs your answers\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
             BLOCKED)           osascript -e "display notification \"Waiting for your input\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
-            WATCHING)          osascript -e "display notification \"Preview live — waiting for feedback\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
-            WATCHING_FEEDBACK) osascript -e "display notification \"Addressing PR feedback\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
+            FEEDBACK)         osascript -e "display notification \"Preview live — waiting for feedback\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
+            FEEDBACK_WORKING) osascript -e "display notification \"Addressing PR feedback\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
             DONE_FINAL)        osascript -e "display notification \"PR merged — preview torn down ✓\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
             FAILED)            osascript -e "display notification \"Worker ${WORKER} failed — check muaddib/status/ logs, then teardown-worker.sh ${WORKER}\" with title \"muaddib: worker-${WORKER}\" sound name \"Basso\"" 2>/dev/null || true ;;
         esac

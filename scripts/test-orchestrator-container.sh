@@ -6,8 +6,8 @@
 # real container runtime rather than just as host Node.js processes.
 #
 # Test coverage (mirrors orchestrator/__tests__/test-orchestrator.js):
-#   testBootSequence    — BOOTING → STARTING_SERVICES → RUNNING → WATCHING
-#   testFeedbackCycle   — webhook:feedback → WATCHING_FEEDBACK → WATCHING
+#   testBootSequence    — BOOTING → STARTING_SERVICES → RUNNING → FEEDBACK
+#   testFeedbackCycle   — webhook:feedback → FEEDBACK_WORKING → FEEDBACK
 #   testMergedExitsDone — webhook:merged → DONE_FINAL + orchestrator exits 0
 #
 # Requirements: Docker (with quotethat-worker:latest or ability to build it).

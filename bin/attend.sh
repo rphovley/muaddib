@@ -32,8 +32,8 @@ while true; do
                     DONE_FINAL)        notify "muaddib: $label" "PR merged — tearing down ✓" ;;
                     BLOCKED)           notify "muaddib: $label" "Waiting for your input" ;;
                     WAITING_FOR_INPUT) notify "muaddib: $label" "Questions posted to Linear — needs answers" ;;
-                    WATCHING)          notify "muaddib: $label" "Preview live — waiting for feedback" ;;
-                    WATCHING_FEEDBACK) notify "muaddib: $label" "Addressing PR feedback" ;;
+                    FEEDBACK)         notify "muaddib: $label" "Preview live — waiting for feedback" ;;
+                    FEEDBACK_WORKING) notify "muaddib: $label" "Addressing PR feedback" ;;
                     FAILED)            notify "muaddib: $label" "Worker failed — check logs" ;;
                 esac
                 prev_states[$label]="$state_word"
@@ -41,8 +41,8 @@ while true; do
 
             case "$state_word" in
                 WAITING_FOR_INPUT) printf '  %-12s ⏳ %s\n' "$label" "$state_line" ;;
-                WATCHING)          printf '  %-12s 🔭 %s\n' "$label" "$state_line" ;;
-                WATCHING_FEEDBACK) printf '  %-12s 🔧 %s\n' "$label" "$state_line" ;;
+                FEEDBACK)         printf '  %-12s 🔭 %s\n' "$label" "$state_line" ;;
+                FEEDBACK_WORKING) printf '  %-12s 🔧 %s\n' "$label" "$state_line" ;;
                 *)                 printf '  %-12s %s\n'    "$label" "$state_line" ;;
             esac
         done

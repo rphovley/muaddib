@@ -238,12 +238,12 @@ PR_NUMBER=$(gh pr view --json number --jq '.number')
 
 Print the PR URL as the final line of output.
 
-## Step 11 — Enter WATCHING mode (fleet only)
+## Step 11 — Enter FEEDBACK mode (fleet only)
 
 Skip if `WORKER_INDEX` is not set. Skip if `WORKER_INDEX` is set but the task has no associated Linear ticket (the feedback loop requires a Linear ticket for comment routing; leave a note in the PR body that feedback should be left as PR comments and the reviewer should re-run `/muaddib-task` manually).
 
 ```bash
-printf 'WATCHING %s\n' "$(date -u +%FT%TZ)" \
+printf 'FEEDBACK %s\n' "$(date -u +%FT%TZ)" \
     > "/var/run/agent-status/worker-${WORKER_INDEX}.state" 2>/dev/null || true
 
 PR_NUMBER="$PR_NUMBER" \

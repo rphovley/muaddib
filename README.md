@@ -163,14 +163,14 @@ no socket. Defaults are preserved, so local `npm test` on your Mac is unchanged.
 
 ## Preview feedback loop
 
-After opening the PR, each worker enters **WATCHING** mode:
+After opening the PR, each worker enters **FEEDBACK** mode:
 
 1. `watch-feedback.sh` starts a tiny Node.js webhook receiver (`webhook-receiver.js`) on port 9090 and opens a cloudflared tunnel to it.
 2. A Linear team webhook is registered pointing at the tunnel URL — fires on `Comment` events.
-3. When you post a comment on the Linear ticket, the receiver drops a flag file. The watcher spawns a `/muaddib-feedback` Claude session in a new tmux window to address it, then returns to WATCHING.
+3. When you post a comment on the Linear ticket, the receiver drops a flag file. The watcher spawns a `/muaddib-feedback` Claude session in a new tmux window to address it, then returns to FEEDBACK.
 4. The worker also polls the GitHub PR state every 30 s. When the PR is merged/closed, the webhook is deleted and the container is torn down.
 
-`bin/attend.sh` shows **🔭 WATCHING** and **🔧 WATCHING_FEEDBACK** states.
+`bin/attend.sh` shows **🔭 FEEDBACK** and **🔧 FEEDBACK_WORKING** states.
 
 ### Cleaning up stale webhooks
 
