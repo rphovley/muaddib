@@ -57,7 +57,7 @@ struct PinnedPanelView: View {
 
             // Worker pills — fan out on hover
             if isHovered && !monitor.workers.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 4) {
                     ForEach(monitor.workers) { worker in
                         WorkerPill(worker: worker)
                     }
