@@ -17,6 +17,7 @@ swift build -c release
 BINARY="$DIR/.build/release/MuaddibApp"
 APP="$DIR/MuaddibApp.app"
 
+rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 cp "$BINARY" "$APP/Contents/MacOS/MuaddibApp"
 cp "$DIR/Resources/MuaddibApp-Info.plist" "$APP/Contents/Info.plist"

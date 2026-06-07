@@ -1,6 +1,12 @@
 import AppKit
 
 enum TerminalLauncher {
+    static func copyAttachCommand(containerId: String, workerIndex: Int) {
+        let cmd = "docker exec -it \(containerId) tmux attach -t w\(workerIndex)"
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(cmd, forType: .string)
+    }
+
     static func attachToWorker(containerId: String, workerIndex: Int) {
         let cmd = "docker exec -it \(containerId) tmux attach -t w\(workerIndex)"
         if isWarpAvailable() {

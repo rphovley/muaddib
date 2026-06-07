@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     let monitor: WorkerMonitor
     let daemonManager: DispatchDaemonManager
+    let panelManager: PinnedPanelManager
     @State private var isPinned = false
     @State private var hostWindow: NSWindow?
     @State private var defaultWindowLevel: NSWindow.Level = .normal
