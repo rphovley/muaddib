@@ -55,10 +55,16 @@ done
 
 # --- 5. Portal and homeowner dev servers ---
 log "starting frontend dev servers..."
-VITE_API_URL="$API_TUNNEL_URL" nohup npm run portal:dev \
-    > /tmp/preview-portal.log 2>&1 &
-VITE_API_URL="$API_TUNNEL_URL" nohup npm run homeowner:dev \
-    > /tmp/preview-homeowner.log 2>&1 &
+(while true; do
+    VITE_API_URL="$API_TUNNEL_URL" npm run portal:dev >> /tmp/preview-portal.log 2>&1 || true
+    echo "[portal] exited, restarting in 2s..." >> /tmp/preview-portal.log
+    sleep 2
+done) &
+(while true; do
+    VITE_API_URL="$API_TUNNEL_URL" npm run homeowner:dev >> /tmp/preview-homeowner.log 2>&1 || true
+    echo "[homeowner] exited, restarting in 2s..." >> /tmp/preview-homeowner.log
+    sleep 2
+done) &
 
 for i in $(seq 1 60); do
     (echo > /dev/tcp/localhost/5173) 2>/dev/null && \
