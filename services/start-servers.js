@@ -76,7 +76,7 @@ function waitForPort(port, maxMs = 60_000) {
 // ── tunnel helpers ────────────────────────────────────────────────────────────
 
 const CF_URL_RE  = /https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/;
-const LR_URL_RE  = /https:\/\/[a-zA-Z0-9-]+\.lhr\.rocks/;
+const LR_URL_RE  = /https:\/\/[a-zA-Z0-9-]+\.lhr\.[a-z]+/;
 const CF_FAIL_RE = /429|error code: 1015|failed to unmarshal|failed to request/i;
 
 function tryCloudflared(port, logFile) {
