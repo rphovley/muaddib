@@ -116,6 +116,9 @@ function tryLocalhostRun(port, logFile) {
   return new Promise((resolve) => {
     log(`:${port} falling back to localhost.run...`);
     fs.writeFileSync(logFile, '');
+
+    const outFd = fs.openSync(logFile, 'a');
+    const errFd = fs.openSync(logFile, 'a');
     const proc = spawn('ssh', [
       '-R', `80:localhost:${port}`,
       '-o', 'StrictHostKeyChecking=no',
@@ -123,9 +126,9 @@ function tryLocalhostRun(port, logFile) {
       '-o', 'ExitOnForwardFailure=yes',
       '-o', 'ConnectTimeout=30',
       'nokey@localhost.run',
-    ], {
-      stdio: ['ignore', fs.openSync(logFile, 'a'), fs.openSync(logFile, 'a')],
-    });
+    ], { stdio: ['ignore', outFd, errFd] });
+    fs.closeSync(outFd);
+    fs.closeSync(errFd);
 
     let settled = false;
     const settle = (url) => {
@@ -136,6 +139,7 @@ function tryLocalhostRun(port, logFile) {
       resolve(url || '');
     };
 
+    proc.on('error', (err) => { log(`:${port} localhost.run spawn error: ${err.message}`); settle(null); });
     proc.on('exit', (code) => { log(`localhost.run exited (code=${code}) for :${port}`); settle(null); });
 
     const poll = setInterval(() => {
@@ -200,6 +204,7 @@ async function main() {
   log('starting frontend dev servers...');
   startWithRestart('npm', ['run', 'portal:dev'],    '/tmp/preview-portal.log',    { env: { VITE_API_URL: apiTunnelUrl } });
   startWithRestart('npm', ['run', 'homeowner:dev'], '/tmp/preview-homeowner.log', { env: { VITE_API_URL: apiTunnelUrl } });
+  log('waiting for frontend servers on :5173 and :5174 (up to 60 s)...');
   await Promise.all([waitForPort(5173), waitForPort(5174)]);
   log('frontend servers ready on :5173 and :5174');
 

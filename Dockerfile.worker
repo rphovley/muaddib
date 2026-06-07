@@ -6,9 +6,9 @@
 FROM node:22-bookworm
 
 # Toolchain: git (clone/push), tmux (attachable session), jq (orchestrate.sh),
-# psql client, ps (hooks/debug), wget (gh repo key).
+# psql client, ps (hooks/debug), wget (gh repo key), openssh-client (localhost.run fallback).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git tmux jq ca-certificates postgresql-client procps wget \
+        git tmux jq ca-certificates postgresql-client procps wget openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 # GitHub CLI — muaddib opens PRs via `gh` (auto-auths from GITHUB_TOKEN).
