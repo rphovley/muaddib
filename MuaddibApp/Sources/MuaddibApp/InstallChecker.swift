@@ -42,8 +42,32 @@ final class InstallChecker {
     }
 
     private nonisolated static func toolPath(_ name: String) -> String? {
-        ["/usr/local/bin/\(name)", "/opt/homebrew/bin/\(name)", "/usr/bin/\(name)"]
-            .first { FileManager.default.isExecutableFile(atPath: $0) }
+        let fixed = ["/usr/local/bin/\(name)", "/opt/homebrew/bin/\(name)", "/usr/bin/\(name)"]
+        if let found = fixed.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
+            return found
+        }
+        // Fallback: ask the login shell so nvm/custom PATH entries are honored.
+        return toolPathViaShell(name)
+    }
+
+    private nonisolated static func toolPathViaShell(_ name: String) -> String? {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        proc.arguments = ["-l", "-c", "which \(name)"]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = Pipe()
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+        } catch {
+            return nil
+        }
+        guard proc.terminationStatus == 0 else { return nil }
+        let path = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !path.isEmpty, FileManager.default.isExecutableFile(atPath: path) else { return nil }
+        return path
     }
 
     private nonisolated static func runExitCode(executable: String, args: [String]) -> Int32 {
@@ -119,9 +143,8 @@ final class InstallChecker {
             hint: ghOk ? "" : "brew install gh"
         ))
 
-        // 4. claude — only ships to /usr/local/bin or Homebrew
-        let claudeOk = ["/usr/local/bin/claude", "/opt/homebrew/bin/claude"]
-            .contains { FileManager.default.isExecutableFile(atPath: $0) }
+        // 4. claude
+        let claudeOk = toolPath("claude") != nil
         result.append(CheckItem(
             id: "claude",
             label: "claude CLI",
