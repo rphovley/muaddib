@@ -42,6 +42,9 @@ docker run --rm \
         echo '=== orchestrator/test-state ==='
         node \$REPO/muaddib/orchestrator/__tests__/test-state.js
 
+        echo '=== orchestrator/test-token-tracker ==='
+        node \$REPO/muaddib/orchestrator/__tests__/test-token-tracker.js
+
         echo '=== scripts/test-run-checks ==='
         bash \$REPO/muaddib/scripts/test-run-checks.sh
 

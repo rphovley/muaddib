@@ -13,6 +13,7 @@ const https = require('https');
 const { subscribe, emit } = require('./events');
 const { startJob } = require('./job');
 const { run } = require('./runner');
+const { getRunData, sumTotals, estimateCost, formatSummary, postRunRecord } = require('./token-tracker');
 
 const WORKER         = parseInt(process.env.WORKER_INDEX || '1', 10);
 const REPO           = process.env.REPO_DIR || '/home/worker/repo';
@@ -104,6 +105,47 @@ function startService(svc) {
 
 // ─── main ────────────────────────────────────────────────────────────────────
 
+async function recordAndPrintTokens(workType, runStartTime) {
+  const { steps } = getRunData(WORKER);
+  const totals = sumTotals(steps);
+  const costUsd = estimateCost(totals);
+  const finishedAt = new Date();
+  const durationMs = finishedAt.getTime() - runStartTime;
+
+  console.log(formatSummary(LINEAR_ISSUE, steps, totals, costUsd, durationMs));
+
+  const apiUrl = process.env.MUADDIB_API_URL;
+  const apiToken = process.env.MUADDIB_API_TOKEN;
+  if (apiUrl && apiToken) {
+    const ticketTitle = (() => {
+      try {
+        const s = require('./state');
+        return s.get(WORKER, 'ticket_title') || '';
+      } catch (_) { return ''; }
+    })();
+    await postRunRecord(
+      {
+        ticket_id: LINEAR_ISSUE || '',
+        ticket_title: ticketTitle,
+        work_type: workType,
+        worker_index: WORKER,
+        started_at: new Date(runStartTime).toISOString(),
+        finished_at: finishedAt.toISOString(),
+        steps,
+        input_tokens: totals.input,
+        output_tokens: totals.output,
+        cache_read_tokens: totals.cacheRead,
+        cache_create_tokens: totals.cacheCreate,
+        approx_cost_usd: costUsd,
+      },
+      apiUrl,
+      apiToken
+    );
+  } else {
+    console.log('[orchestrator] MUADDIB_API_URL / MUADDIB_API_TOKEN not set — skipping token record POST');
+  }
+}
+
 async function main() {
   note('BOOTING');
 
@@ -121,10 +163,12 @@ async function main() {
     await startService(svc);
   }
 
+  const runStartTime = Date.now();
   note('RUNNING');
   await run(WORKER, workflowFile, LINEAR_ISSUE);
 
   if (definition.skipWatching) {
+    await recordAndPrintTokens(workType, runStartTime);
     note('DONE_FINAL');
     process.exit(0);
   }
@@ -146,6 +190,7 @@ async function main() {
     }, { fromEnd: true });
   });
 
+  await recordAndPrintTokens(workType, runStartTime);
   note('DONE_FINAL');
   process.exit(0);
 }

@@ -19,6 +19,7 @@ const { spawnSync, spawn } = require('child_process');
 const { eventsFile, emit } = require('./events');
 const { startJob } = require('./job');
 const state = require('./state');
+const { recordStep } = require('./token-tracker');
 
 const REPO = process.env.REPO_DIR || '/home/worker/repo';
 const MOCK_JOBS = process.env.MOCK_JOBS === '1';
@@ -234,10 +235,18 @@ async function runClaudeTuiStep(worker, step, ticketId) {
   // the warn callback quickly without waiting 5 minutes.
   const warnMs = process.env.STEP_WARN_MS ? Number(process.env.STEP_WARN_MS) : 300_000;
 
+  const stepStartMs = Date.now();
+
   // Capture offset BEFORE startJob so the done event is never missed.
   const waitP = waitForJobCompletion(worker, step.id, { onWarn, warnMs });
   startJob(worker, step.id, cmd, extraEnv);
   await waitP;
+
+  if (!MOCK_JOBS) {
+    try {
+      recordStep(worker, step.id, stepStartMs);
+    } catch (_) {}
+  }
 }
 
 // ─── loop ────────────────────────────────────────────────────────────────────

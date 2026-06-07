@@ -15,12 +15,12 @@ Call `Skill(review)` with no args. Capture all output from the review agents.
 
 Triage the review output against this decision table:
 
-| Finding | Effect on verdict |
-|---|---|
-| Blocker | → `needs_fix` |
-| Major | → `needs_fix` |
-| Open question that requires a code change to resolve | → `needs_fix` |
-| Minor / Nit | Note for PR body — does not block |
+| Finding                                              | Effect on verdict                 |
+| ---------------------------------------------------- | --------------------------------- |
+| Blocker                                              | → `needs_fix`                     |
+| Major                                                | → `needs_fix`                     |
+| Open question that requires a code change to resolve | → `needs_fix`                     |
+| Minor / Nit                                          | Note for PR body — does not block |
 
 If there are no blockers, no majors, and no unresolved code-change questions: verdict is `approved`.
 
@@ -45,7 +45,7 @@ If the verdict is `approved`, clear any prior findings:
 node "$STATE_CLI" "$WORKER" set review_findings ""
 ```
 
-## Step 4 — Signal done
+## Step 5 — Signal done
 
 ```bash
 touch "$STEP_DONE_FILE"

@@ -67,6 +67,7 @@
       "id": "review",
       "type": "claude-tui",
       "skill": "review-fleet",
+      "stateReads": ["ticket_url", "ticket_identifier"],
       "stateWrites": ["review_status", "review_findings"]
     },
     {
