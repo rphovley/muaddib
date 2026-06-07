@@ -285,7 +285,7 @@ async function main() {
     // Check for /feedback comment flag
     try {
       fs.unlinkSync(COMMENT_FLAG);
-      log('new /feedback comment — emitting feedback event');
+      log('new feedback comment — emitting feedback event');
       emitEvent('webhook', 'feedback', {});
     } catch (_) {} // normal when flag absent
 

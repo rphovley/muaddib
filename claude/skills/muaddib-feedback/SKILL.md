@@ -1,26 +1,34 @@
 ---
 name: muaddib-feedback
-description: Apply Linear ticket review feedback. Reads new comments on the specified Linear ticket since the last feedback run, makes code changes to address them, commits and pushes to the existing branch, re-runs /check, and posts a reply comment on the ticket summarizing what was addressed. Never calls AskUserQuestion.
+description: Apply PR review feedback. Reads new comments on the GitHub PR since the last feedback run, makes code changes to address them, commits and pushes to the existing branch, re-runs /check, and posts a reply on the PR summarizing what was addressed. Never calls AskUserQuestion.
 ---
 
 # Muaddib Feedback
 
-Addresses reviewer feedback posted as comments on the Linear ticket. Called by `watch-feedback.sh` when a new comment arrives. **Never calls `AskUserQuestion`.** When feedback is ambiguous, make the most reasonable interpretation and document it in the reply.
+Addresses reviewer feedback posted as comments on the GitHub PR. Called by the orchestrator when a new `/feedback` comment arrives. **Never calls `AskUserQuestion`.** When feedback is ambiguous, make the most reasonable interpretation and document it in the reply.
 
-`$ARGUMENTS` is the Linear ticket identifier (e.g. `QUO-281`).
+`$ARGUMENTS` is the Linear ticket identifier (e.g. `QUO-281`), used only for posting the reply.
 
-## Step 1 — Read the ticket and new comments
+## Step 1 — Read new PR comments
 
-Call `mcp__linear__get_issue` with the identifier from `$ARGUMENTS`.
+Read the PR number:
+```bash
+cat /tmp/pr-number-${WORKER_INDEX:-1}
+```
 
-Call `mcp__linear__list_comments` for the same issue. Read `/tmp/last-feedback-ts` to find the cutoff:
+Fetch all comments on the PR using the GitHub CLI:
+```bash
+gh pr view <pr_number> --comments --json comments
+```
+
+Read `/tmp/last-feedback-ts` to find the cutoff:
 ```bash
 cat /tmp/last-feedback-ts 2>/dev/null || echo "0"
 ```
 
 The file contains a Unix timestamp (seconds). Focus on comments whose `createdAt` is newer than that timestamp. If the file is absent, treat all comments as new.
 
-Identify **actionable** comments: those describing bugs, incorrect behavior, missing functionality, or UI problems. Ignore automated bot comments, CI status comments, and comments that already have a subsequent agent reply.
+Identify **actionable** comments: those describing bugs, incorrect behavior, missing functionality, or UI problems — from human reviewers. Ignore automated bot comments, CI status comments, and comments that already have a subsequent agent reply.
 
 ## Step 2 — Confirm branch state
 
@@ -58,20 +66,19 @@ git push origin HEAD
 
 Never force-push. Stage files by name.
 
-## Step 6 — Post reply on the Linear ticket
+## Step 6 — Post reply on the PR
 
-Call `mcp__linear__save_comment` on the issue with a body like:
-
-```
+```bash
+gh pr comment <pr_number> --body "$(cat <<'EOF'
 ## Feedback addressed
 
 - <one bullet per actionable comment, describing what changed>
 
 <if anything was deferred or noted as out of scope, say so>
 
-PR: <read /tmp/pr-number and link: https://github.com/<repo>/pull/<n>>
-
 🤖 Auto-addressed via muaddib feedback loop
+EOF
+)"
 ```
 
 ## Step 7 — Update last-feedback timestamp

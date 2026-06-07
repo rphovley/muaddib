@@ -73,9 +73,20 @@ http.createServer((req, res) => {
             if (DEBUG) console.log(`[webhook-receiver:debug] comment on #${issueNumber}, watching #${PR_NUMBER} — ignored`);
             return;
         }
-        if (!body.trimStart().startsWith('/feedback')) return;
 
-        console.log(`[webhook-receiver] /feedback comment on PR #${issueNumber} — writing flag`);
+        // Ignore bot/app comments — only human users should trigger feedback.
+        const senderType = payload.sender && payload.sender.type;
+        if (senderType && senderType !== 'User') {
+            if (DEBUG) console.log(`[webhook-receiver:debug] sender type=${senderType} — ignored`);
+            return;
+        }
+
+        if (!body.includes('/feedback')) {
+            if (DEBUG) console.log('[webhook-receiver:debug] comment does not contain /feedback — ignored');
+            return;
+        }
+
+        console.log(`[webhook-receiver] feedback comment on PR #${issueNumber} — writing flag`);
         fs.writeFileSync(COMMENT_FLAG, String(Date.now()));
     });
 }).listen(PORT, () => {
