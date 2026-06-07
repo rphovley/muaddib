@@ -14,4 +14,8 @@ if [ -z "$cid" ]; then
     exit 1
 fi
 
-exec docker exec -it "$cid" tmux attach -t "w${N}"
+docker exec -it "$cid" tmux attach -t "w${N}" || true
+# Restore terminal state — tmux may not have sent its cleanup sequences if the
+# container was killed before the PTY flushed (leaves mouse tracking active).
+printf '\033[?1000l\033[?1002l\033[?1003l\033[?1005l\033[?1006l'
+stty sane 2>/dev/null || true

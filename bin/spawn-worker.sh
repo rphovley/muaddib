@@ -197,6 +197,10 @@ if [ "${MUADIB_NO_ATTACH:-0}" != "1" ] && [ -t 0 ] && [ -t 1 ]; then
     # so the user lands on the Claude session rather than the base shell window.
     docker exec "${WORKER_CID}" tmux select-window -t "w${WORKER}:{end}" 2>/dev/null || true
     docker exec -it "${WORKER_CID}" tmux attach -t "w${WORKER}" || true
+    # Restore terminal state — tmux may not have sent its cleanup sequences if the
+    # container was killed before the PTY flushed (leaves mouse tracking active).
+    printf '\033[?1000l\033[?1002l\033[?1003l\033[?1005l\033[?1006l'
+    stty sane 2>/dev/null || true
     # After detach or task completion, teardown immediately if the task is done.
     # (The background watcher above handles the no-attach case within ~5 s.)
     state="$(cut -d' ' -f1 "$FLEET_DIR/status/worker-${WORKER}.state" 2>/dev/null || echo "")"
