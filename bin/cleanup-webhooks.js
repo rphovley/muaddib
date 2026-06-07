@@ -1,18 +1,23 @@
 #!/usr/bin/env node
 'use strict';
 
-// Remove all stale muaddib GitHub webhooks from the repo.
+// Remove stale muaddib GitHub webhooks from the repo.
 // Muaddib webhooks are identified by their trycloudflare.com URL — the domain
 // used by cloudflared quick tunnels. Workers clean up their own webhook on exit;
 // this script handles the case where a worker crashed before cleanup.
 //
+// By default, webhooks tagged with ?pr=<N> are kept if that PR is still open.
+// Pass --force to delete all trycloudflare webhooks regardless of PR state.
+//
 // Usage (from anywhere with env set):
 //   GITHUB_TOKEN=<token> REPO_URL=<url> node muaddib/bin/cleanup-webhooks.js
+//   GITHUB_TOKEN=<token> REPO_URL=<url> node muaddib/bin/cleanup-webhooks.js --force
 
 const https = require('https');
 
 const GITHUB_TOKEN = (process.env.GITHUB_TOKEN || '').trim();
 const REPO_URL = (process.env.REPO_URL || '').trim();
+const FORCE = process.argv.includes('--force');
 
 const REPO = REPO_URL
   .replace(/^https?:\/\//, '')
@@ -53,37 +58,73 @@ function githubApi(method, endpoint) {
   });
 }
 
+async function getPrState(prNumber) {
+  try {
+    const pr = await githubApi('GET', `/pulls/${prNumber}`);
+    if (pr.merged) return 'MERGED';
+    if (pr.state === 'closed') return 'CLOSED';
+    return 'OPEN';
+  } catch (err) {
+    console.error(`  ! could not fetch PR #${prNumber}: ${err.message}`);
+    return 'UNKNOWN';
+  }
+}
+
 async function main() {
   console.log(`Fetching GitHub webhooks for ${REPO}...`);
+  if (FORCE) console.log('  --force: skipping PR state check, deleting all trycloudflare webhooks');
+
   const hooks = await githubApi('GET', '/hooks');
   if (!Array.isArray(hooks)) {
     console.error('Unexpected response:', JSON.stringify(hooks).slice(0, 300));
     process.exit(1);
   }
 
-  const stale = hooks.filter((h) => h.config?.url?.includes('trycloudflare.com'));
+  const cloudflareHooks = hooks.filter((h) => h.config?.url?.includes('trycloudflare.com'));
 
-  if (stale.length === 0) {
-    console.log('No stale muaddib webhooks found.');
+  if (cloudflareHooks.length === 0) {
+    console.log('No muaddib webhooks found.');
     return;
   }
 
-  console.log(`Found ${stale.length} stale webhook(s):`);
-  stale.forEach((h) => console.log(`  ${h.id} → ${h.config.url}`));
+  console.log(`\nFound ${cloudflareHooks.length} trycloudflare webhook(s):`);
+  cloudflareHooks.forEach((h) => console.log(`  ${h.id} → ${h.config.url}`));
   console.log();
 
+  let deleted = 0;
+  let skipped = 0;
+
   await Promise.all(
-    stale.map(async (h) => {
+    cloudflareHooks.map(async (h) => {
+      const url = h.config?.url || '';
+      const prMatch = url.match(/[?&]pr=(\d+)/);
+
+      if (!FORCE && prMatch) {
+        const pr = prMatch[1];
+        const state = await getPrState(pr);
+        if (state === 'OPEN' || state === 'UNKNOWN') {
+          console.log(`  ~ skipping ${h.id} — PR #${pr} is ${state}`);
+          skipped++;
+          return;
+        }
+        console.log(`  → deleting ${h.id} — PR #${pr} is ${state}`);
+      } else if (!FORCE) {
+        console.log(`  → deleting ${h.id} — no PR tag (legacy or pre-PR)`);
+      } else {
+        console.log(`  → deleting ${h.id} (--force)`);
+      }
+
       try {
         await githubApi('DELETE', `/hooks/${h.id}`);
         console.log(`  ✓ deleted ${h.id}`);
+        deleted++;
       } catch (err) {
         console.error(`  ✗ failed to delete ${h.id}: ${err.message}`);
       }
     })
   );
 
-  console.log(`\nDone — removed ${stale.length} muaddib webhook(s).`);
+  console.log(`\nDone — deleted ${deleted}, skipped ${skipped} (open PRs).`);
 }
 
 main().catch((err) => { console.error('Fatal:', err.message); process.exit(1); });

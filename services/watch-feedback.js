@@ -206,15 +206,30 @@ async function sweepStaleWebhooks() {
   try {
     const hooks = await githubApi('GET', '/hooks');
     if (!Array.isArray(hooks)) return;
-    const stale = hooks.filter((h) => h.config?.url?.includes('trycloudflare.com'));
-    if (stale.length === 0) return;
-    log(`sweeping ${stale.length} stale trycloudflare webhook(s)...`);
+    const cloudflareHooks = hooks.filter((h) => h.config?.url?.includes('trycloudflare.com'));
+    if (cloudflareHooks.length === 0) return;
+    log(`checking ${cloudflareHooks.length} trycloudflare webhook(s) for staleness...`);
+
     await Promise.all(
-      stale.map((h) =>
-        githubApi('DELETE', `/hooks/${h.id}`)
-          .then(() => log(`deleted stale webhook ${h.id} (${h.config.url})`))
-          .catch((err) => log(`failed to delete stale webhook ${h.id}: ${err.message}`))
-      )
+      cloudflareHooks.map(async (h) => {
+        const url = h.config?.url || '';
+        const prMatch = url.match(/[?&]pr=(\d+)/);
+        if (prMatch) {
+          const pr = prMatch[1];
+          // getPrState is defined below — hoisted as a function declaration.
+          const state = await getPrState(pr);
+          if (state === 'OPEN' || state === 'UNKNOWN') {
+            log(`skipping webhook ${h.id} — PR #${pr} is ${state}`);
+            return;
+          }
+          log(`deleting webhook ${h.id} — PR #${pr} is ${state}`);
+        } else {
+          log(`deleting webhook ${h.id} — no PR tag (legacy or pre-PR)`);
+        }
+        await githubApi('DELETE', `/hooks/${h.id}`)
+          .then(() => log(`deleted stale webhook ${h.id} (${url})`))
+          .catch((err) => log(`failed to delete stale webhook ${h.id}: ${err.message}`));
+      })
     );
   } catch (err) {
     log(`stale webhook sweep error: ${err.message}`);
@@ -223,7 +238,8 @@ async function sweepStaleWebhooks() {
 
 // ── Webhook registration with retries ────────────────────────────────────────
 
-async function registerWebhook(tunnelUrl) {
+async function registerWebhook(tunnelUrl, prNumber) {
+  const taggedUrl = prNumber ? `${tunnelUrl}?pr=${prNumber}` : tunnelUrl;
   await sweepStaleWebhooks();
   for (let attempt = 1; attempt <= 5; attempt++) {
     const delay = (attempt - 1) * 5000;
@@ -237,13 +253,13 @@ async function registerWebhook(tunnelUrl) {
         active: true,
         events: ['issue_comment'],
         config: {
-          url: tunnelUrl,
+          url: taggedUrl,
           content_type: 'json',
           secret: WEBHOOK_SECRET,
         },
       });
       if (hook && hook.id) {
-        log(`registered GitHub webhook ${hook.id}`);
+        log(`registered GitHub webhook ${hook.id} → ${taggedUrl}`);
         return hook.id;
       }
       log(`attempt ${attempt}: response has no id: ${JSON.stringify(hook).slice(0, 200)}`);
@@ -294,7 +310,7 @@ async function main() {
   await waitForPort(WEBHOOK_PORT);
 
   // 5. Register webhook
-  hookId = await registerWebhook(webhookUrl);
+  hookId = await registerWebhook(webhookUrl, prNumber);
   if (!hookId) {
     log('WARNING: webhook registration failed after 5 attempts — polling-only mode');
     log('/feedback comments will NOT be detected; merge/close polling still active');
