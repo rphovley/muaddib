@@ -44,7 +44,7 @@ log "branch name: $BRANCH"
 
 git checkout main
 git pull --rebase origin main
-git checkout -b "$BRANCH"
+git checkout -B "$BRANCH"
 
 # ── 4. Write state ───────────────────────────────────────────────────────────
 
