@@ -59,6 +59,7 @@ TASK=${TASK}
 CLAUDE_PERMISSION_MODE=${CLAUDE_PERMISSION_MODE:-bypassPermissions}
 NODE_ENV=development
 EOF
+[ -n "${WORKFLOW_FILE:-}" ] && echo "WORKFLOW_FILE=${WORKFLOW_FILE}" >>"$ENV_FILE"
 
 # Let LINEAR_API_KEY come from the shell env too (overrides non-prod.env if set).
 [ -n "${LINEAR_API_KEY:-}" ] && echo "LINEAR_API_KEY=${LINEAR_API_KEY}" >>"$ENV_FILE"

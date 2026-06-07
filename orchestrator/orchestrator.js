@@ -124,6 +124,11 @@ async function main() {
   note('RUNNING');
   await run(WORKER, workflowFile, LINEAR_ISSUE);
 
+  if (definition.skipWatching) {
+    note('DONE_FINAL');
+    process.exit(0);
+  }
+
   note('WATCHING');
   await new Promise((resolve) => {
     const sub = subscribe(WORKER, (ev) => {
