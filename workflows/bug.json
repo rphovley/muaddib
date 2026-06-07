@@ -4,7 +4,7 @@
     { "name": "webhook", "script": "services/watch-feedback.js" },
     {
       "name": "servers",
-      "script": "services/start-servers.sh",
+      "script": "services/start-servers.js",
       "readyEvent": "tunnel_ready"
     }
   ],
