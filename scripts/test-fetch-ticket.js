@@ -116,6 +116,14 @@ assert(
   'returns null for non-matching string',
   extractIdentifier('https://github.com/org/repo') === null
 );
+assert(
+  'extracts identifier at start of longer description',
+  extractIdentifier('QUO-7 Fix the login bug') === 'QUO-7'
+);
+assert(
+  'extracts identifier from middle of string',
+  extractIdentifier('Ticket QUO-7 needs fixing') === 'QUO-7'
+);
 
 console.log('\n── findPlanComment ────────────────────────────────────────────');
 

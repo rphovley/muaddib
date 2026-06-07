@@ -13,9 +13,11 @@ const state = require('../orchestrator/state');
 
 function extractIdentifier(task) {
   if (!task) return null;
+  // Full Linear URL: https://linear.app/team/issue/QUO-123/...
   const urlMatch = task.match(/\/issue\/([A-Z]+-\d+)/i);
   if (urlMatch) return urlMatch[1].toUpperCase();
-  const bareMatch = task.match(/^([A-Z]+-\d+)$/i);
+  // Identifier anywhere in the string: bare "QUO-123" or "QUO-123 some description"
+  const bareMatch = task.match(/\b([A-Z]+-\d+)\b/i);
   if (bareMatch) return bareMatch[1].toUpperCase();
   return null;
 }
