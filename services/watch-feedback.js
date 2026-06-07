@@ -200,9 +200,31 @@ function waitForPrNumber() {
   });
 }
 
+// ── Stale webhook sweep ───────────────────────────────────────────────────────
+
+async function sweepStaleWebhooks() {
+  try {
+    const hooks = await githubApi('GET', '/hooks');
+    if (!Array.isArray(hooks)) return;
+    const stale = hooks.filter((h) => h.config?.url?.includes('trycloudflare.com'));
+    if (stale.length === 0) return;
+    log(`sweeping ${stale.length} stale trycloudflare webhook(s)...`);
+    await Promise.all(
+      stale.map((h) =>
+        githubApi('DELETE', `/hooks/${h.id}`)
+          .then(() => log(`deleted stale webhook ${h.id} (${h.config.url})`))
+          .catch((err) => log(`failed to delete stale webhook ${h.id}: ${err.message}`))
+      )
+    );
+  } catch (err) {
+    log(`stale webhook sweep error: ${err.message}`);
+  }
+}
+
 // ── Webhook registration with retries ────────────────────────────────────────
 
 async function registerWebhook(tunnelUrl) {
+  await sweepStaleWebhooks();
   for (let attempt = 1; attempt <= 5; attempt++) {
     const delay = (attempt - 1) * 5000;
     if (delay > 0) {
