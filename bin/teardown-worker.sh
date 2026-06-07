@@ -22,7 +22,14 @@ export HOST_DESKTOP="$HOME/Desktop"
 WORKER_CID=$(docker compose -p "$PROJECT" -f "$FLEET_DIR/docker-compose.worker.yml" ps -q worker 2>/dev/null | head -1)
 if [ -n "$WORKER_CID" ]; then
     docker exec "$WORKER_CID" tmux detach-client -s "w${WORKER}" 2>/dev/null || true
-    sleep 1
+    # Poll until no clients remain (PTY has flushed its cleanup sequences) or we
+    # time out. This is the window where tmux sends \033[?1000l etc. to the host.
+    for _i in $(seq 1 20); do
+        clients=$(docker exec "$WORKER_CID" tmux list-clients -t "w${WORKER}" 2>/dev/null | wc -l || echo 0)
+        [ "$clients" -eq 0 ] && break
+        sleep 0.2
+    done
+    sleep 0.5  # small extra buffer for PTY buffer flush after last client drops
 fi
 
 docker compose -p "$PROJECT" -f "$FLEET_DIR/docker-compose.worker.yml" down -v
