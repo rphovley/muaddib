@@ -4,6 +4,9 @@ struct ContentView: View {
     let monitor: WorkerMonitor
     let daemonManager: DispatchDaemonManager
     let panelManager: PinnedPanelManager
+    let checker: InstallChecker
+    @State private var showSetup = false
+
     private var needsYouCount: Int {
         monitor.workers.filter { $0.statusCategory == .attention }.count
     }
@@ -12,7 +15,9 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 0) {
             headerBar
             Divider()
-            if monitor.workers.isEmpty {
+            if showSetup {
+                SetupView(checker: checker)
+            } else if monitor.workers.isEmpty {
                 emptyState
             } else {
                 workerList
@@ -66,6 +71,21 @@ struct ContentView: View {
             }
             .buttonStyle(.plain)
             .help(panelManager.isOpen ? "Unpin (close panel)" : "Pin (keep on screen)")
+
+            Button(action: { showSetup.toggle() }) {
+                Image(systemName: "wrench.and.screwdriver")
+                    .foregroundStyle(showSetup ? Color.accentColor : Color.primary)
+                    .overlay(alignment: .topTrailing) {
+                        if checker.hasFailure {
+                            Circle()
+                                .fill(Color(red: 0.92, green: 0.52, blue: 0.52))
+                                .frame(width: 6, height: 6)
+                                .offset(x: 4, y: -3)
+                        }
+                    }
+            }
+            .buttonStyle(.plain)
+            .help(showSetup ? "Close setup" : "Check install prerequisites")
 
             Button(action: { NSApplication.shared.terminate(nil) }) {
                 Image(systemName: "xmark")
