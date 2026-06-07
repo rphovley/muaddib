@@ -14,4 +14,4 @@ while [ "$N" -le 64 ] \
 done
 
 echo "→ muaddib:fast on worker ${N}: ${TICKET}"
-WORKFLOW_FILE="$DIR/workflows/feature-fast.json" exec "$DIR/bin/spawn-worker.sh" "$N" "/muaddib ${TICKET}"
+WORKFLOW_FILE="/home/worker/repo/muaddib/workflows/feature-fast.json" exec "$DIR/bin/spawn-worker.sh" "$N" "/muaddib ${TICKET}"

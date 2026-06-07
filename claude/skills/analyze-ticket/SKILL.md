@@ -31,26 +31,33 @@ Always write a plan, even if questions remain. Mark uncertain areas explicitly.
 ## Plan
 
 ### Diagnosis
+
 <What the ticket asks for and why. One paragraph.>
 
 ### Solution
+
 <How you will implement it. Name specific files, functions, table columns, API endpoints.>
 
 ### Work Streams
+
 <Dependency-ordered streams of concrete steps.>
 
 **Stream 1 — <name>**
+
 - Step A
 - Step B
 
-**Stream 2 — <name>**  
+**Stream 2 — <name>**
+
 - Step C
 
 ### Open Questions
+
 <Leave this section empty if the plan is clear. List only questions that would change the implementation approach — not implementation details you can decide yourself.>
 ```
 
 Write to:
+
 ```bash
 mkdir -p "${REPO_DIR:-/home/worker/repo}/.muaddib"
 # write the plan body above to .muaddib/plan.md
@@ -61,11 +68,12 @@ mkdir -p "${REPO_DIR:-/home/worker/repo}/.muaddib"
 Questions are needed only if the "Open Questions" section is non-empty — i.e., there are unknowns that would change the implementation approach. Questions are **not** needed for implementation details you can decide yourself.
 
 Write `needs_questions` to state:
-```bash
+
+````bash
 STATE_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/state-cli.js"
 WORKER="${WORKER_INDEX:-0}"
 node "$STATE_CLI" "$WORKER" set needs_questions "true"   # or "false"
-```
+```https://linear.app/quotethat/issue/QUO-327/speed-up-deploy
 
 ## Step 5a — No questions needed: post plan and finish
 
@@ -74,7 +82,7 @@ If `needs_questions=false`, post `.muaddib/plan.md` as a `## Plan` comment on th
 Then signal done:
 ```bash
 touch "$STEP_DONE_FILE"
-```
+````
 
 ## Step 5b — Questions needed: notify and stop
 
@@ -92,6 +100,7 @@ Questions before implementing — @<assignee>:
 ```
 
 **Fire macOS notify** via the event bus:
+
 ```bash
 node "${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/emit-cli.js" \
     "${WORKER_INDEX:-0}" claude notify \
@@ -99,6 +108,7 @@ node "${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/emit-cli.js" \
 ```
 
 Then signal done — the `ask-questions` step will handle the response:
+
 ```bash
 touch "$STEP_DONE_FILE"
 ```
