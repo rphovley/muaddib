@@ -4,6 +4,7 @@ struct ContentView: View {
     let monitor: WorkerMonitor
     let daemonManager: DispatchDaemonManager
     let panelManager: PinnedPanelManager
+    let newAgentPanelManager: NewAgentPanelManager
     let checker: InstallChecker
     @State private var showSetup = false
 
@@ -44,6 +45,22 @@ struct ContentView: View {
                 }
             }
             Spacer()
+            Button(action: { newAgentPanelManager.open() }) {
+                HStack(spacing: 3) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("New")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundStyle(newAgentPanelManager.isOpen ? Color.accentColor : Color.primary)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(newAgentPanelManager.isOpen ? Color.accentColor.opacity(0.15) : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+            .buttonStyle(.plain)
+            .help("New agent ticket")
+
             Button(action: { daemonManager.toggle() }) {
                 Image(systemName: daemonManager.isRunning ? "bolt.fill" : "bolt.slash")
                     .foregroundStyle(daemonManager.isRunning ? Color.green : Color.secondary)
