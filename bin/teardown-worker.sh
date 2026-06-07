@@ -25,7 +25,8 @@ if [ -n "$WORKER_CID" ]; then
     # Poll until no clients remain (PTY has flushed its cleanup sequences) or we
     # time out. This is the window where tmux sends \033[?1000l etc. to the host.
     for _i in $(seq 1 20); do
-        clients=$(docker exec "$WORKER_CID" tmux list-clients -t "w${WORKER}" 2>/dev/null | wc -l || echo 0)
+        clients=$(docker exec "$WORKER_CID" tmux list-clients -t "w${WORKER}" 2>/dev/null | wc -l) || clients=0
+        clients=$((clients + 0))
         [ "$clients" -eq 0 ] && break
         sleep 0.2
     done
