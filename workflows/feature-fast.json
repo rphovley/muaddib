@@ -1,0 +1,57 @@
+{
+  "name": "feature-fast",
+  "services": [
+    { "name": "servers", "script": "services/start-servers.sh", "readyEvent": "tunnel_ready" },
+    { "name": "webhook", "script": "services/watch-feedback.js" }
+  ],
+  "workflow": [
+    {
+      "id": "fetch-ticket",
+      "type": "script",
+      "script": "scripts/fetch-ticket.js",
+      "stateWrites": ["ticket_identifier", "ticket_url", "ticket_title", "plan_status"]
+    },
+    {
+      "id": "branch",
+      "type": "script",
+      "script": "scripts/branch.sh",
+      "stateReads": ["ticket_identifier", "ticket_title"],
+      "stateWrites": ["branch"]
+    },
+    {
+      "id": "implement",
+      "type": "claude-tui",
+      "skill": "implement",
+      "stateReads": ["branch", "ticket_identifier"]
+    },
+    {
+      "id": "implement-check-loop",
+      "type": "loop",
+      "minIterations": 1,
+      "maxIterations": 2,
+      "exitCondition": "state.check_status === 'pass'",
+      "steps": [
+        {
+          "id": "checks",
+          "type": "script",
+          "script": "scripts/run-checks.sh",
+          "stateWrites": ["check_status", "check_output"]
+        },
+        {
+          "id": "fix-checks",
+          "type": "claude-tui",
+          "skill": "fix-checks",
+          "runIf": "state.check_status === 'fail'",
+          "stateReads": ["check_output"]
+        }
+      ]
+    },
+    {
+      "id": "wrapup",
+      "type": "claude-tui",
+      "skill": "commit-and-pr",
+      "stateReads": ["branch", "ticket_url", "api_tunnel_url", "portal_url", "ho_url"],
+      "stateWrites": ["pr_number"]
+    }
+  ]
+}
