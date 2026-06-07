@@ -36,22 +36,30 @@
       "mockStateWrites": []
     },
     {
-      "id": "implement-loop",
+      "id": "implement-bug",
+      "type": "claude-tui",
+      "skill": "implement-bug",
+      "stateReads": ["branch", "ticket_identifier"]
+    },
+    {
+      "id": "implement-check-loop",
       "type": "loop",
+      "minIterations": 1,
       "maxIterations": 5,
       "exitCondition": "state.check_status === 'pass'",
       "steps": [
-        {
-          "id": "implement-bug",
-          "type": "claude-tui",
-          "skill": "implement-bug",
-          "stateReads": ["branch", "ticket_identifier", "check_status", "check_output"]
-        },
         {
           "id": "checks",
           "type": "script",
           "script": "scripts/run-checks.sh",
           "stateWrites": ["check_status", "check_output"]
+        },
+        {
+          "id": "fix-checks",
+          "type": "claude-tui",
+          "skill": "fix-checks",
+          "runIf": "state.check_status === 'fail'",
+          "stateReads": ["check_output"]
         }
       ]
     },
@@ -62,7 +70,14 @@
       "stateWrites": ["review_status", "review_findings"]
     },
     {
-      "id": "fix-loop",
+      "id": "fix-review",
+      "type": "claude-tui",
+      "skill": "fix-review",
+      "runIf": "state.review_status === 'needs_fix'",
+      "stateReads": ["review_findings"]
+    },
+    {
+      "id": "review-check-loop",
       "type": "loop",
       "minIterations": 1,
       "maxIterations": 5,
@@ -70,16 +85,17 @@
       "runIf": "state.review_status === 'needs_fix'",
       "steps": [
         {
-          "id": "fix",
-          "type": "claude-tui",
-          "skill": "implement-bug",
-          "stateReads": ["review_findings", "check_status", "check_output"]
-        },
-        {
           "id": "checks",
           "type": "script",
           "script": "scripts/run-checks.sh",
           "stateWrites": ["check_status", "check_output"]
+        },
+        {
+          "id": "fix-checks",
+          "type": "claude-tui",
+          "skill": "fix-checks",
+          "runIf": "state.check_status === 'fail'",
+          "stateReads": ["check_output"]
         }
       ]
     },
