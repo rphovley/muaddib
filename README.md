@@ -97,6 +97,7 @@ and answer `/grill-me`. **Ctrl-b then d** detaches and leaves the worker running
 
 - Re-attach (or attach a different worker): `npm run muaddib:attach 1` (or `./muaddib/bin/attach.sh 1`)
 - Monitor all workers at a glance: `./muaddib/bin/attend.sh` — bells when one is `BLOCKED` or `FAILED`
+- **Persistent status board (macOS app):** `open muaddib/MuaddibApp/MuaddibApp.app` — menu bar icon; build once with `./muaddib/MuaddibApp/build.sh` (requires Xcode Command Line Tools)
 - Fire-and-forget (don't auto-attach): `MUADIB_NO_ATTACH=1 npm run muaddib <ticket>`
 
 `bin/attend.sh` is only a status board — the actual back-and-forth happens in the
@@ -113,6 +114,39 @@ Lower-level controls (run from `muaddib/`):
 ./bin/attend.sh                              # fleet status board (bell on BLOCKED/FAILED)
 ./bin/teardown-worker.sh 1
 ```
+
+## MuaddibApp — menu bar status board
+
+A native macOS menu bar app (`muaddib/MuaddibApp/`) that replaces the
+`bin/attend.sh` terminal loop with a persistent, always-visible fleet view.
+
+**Build (once):**
+
+```bash
+# Requires Xcode Command Line Tools: xcode-select --install
+./muaddib/MuaddibApp/build.sh
+# → produces muaddib/MuaddibApp/MuaddibApp.app
+```
+
+**Run:**
+
+```bash
+open muaddib/MuaddibApp/MuaddibApp.app
+```
+
+A `cpu` icon appears in the menu bar. Click it to open the fleet panel:
+
+| Element | Behaviour |
+|---------|-----------|
+| Colored dot | Green = running/watching, Yellow = needs attention, Red = failed, Gray = idle |
+| **worker-N** + ticket ID | Worker number and Linear ticket (e.g. `QUO-335`) |
+| Status label | Human-readable state (`Running`, `Blocked — needs you`, …) |
+| **Attach** button | Opens a new tab in iTerm2 (if available) or Terminal.app running `docker exec -it <cid> tmux attach -t wN` |
+| Pin button (📌) | Promotes the panel to floating window level so it stays visible after you click elsewhere |
+| Refresh button (↺) | Forces an immediate poll (auto-polls every 2 s) |
+
+The app reads the same `muaddib/status/worker-N.state` files as `attend.sh`
+and discovers containers via `docker ps` (Docker Desktop must be running).
 
 ## ⚠ Two things to verify by hand before scaling past N=1
 
