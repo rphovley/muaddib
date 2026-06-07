@@ -31,6 +31,15 @@ const {
 const REPO_ROOT = process.env.REPO_ROOT || path.join(__dirname, "../..");
 const FLEET_DIR = path.join(REPO_ROOT, "muaddib");
 const SPAWN_WORKER = path.join(FLEET_DIR, "bin/spawn-worker.sh");
+
+const MUADDIB_CONFIG = (() => {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(REPO_ROOT, ".muaddib.json"), "utf8"));
+  } catch (_) {
+    return { projectName: "quotethat" };
+  }
+})();
+const PROJECT_NAME = MUADDIB_CONFIG.projectName || "quotethat";
 const TUNNEL_LOG = "/tmp/cf-dispatch.log";
 
 const PORT = parseInt(process.env.DISPATCH_PORT || "3999", 10);
@@ -114,8 +123,9 @@ function getActiveWorkerProjects() {
         return;
       }
       const projects = new Set();
+      const workerRe = new RegExp(`com\\.docker\\.compose\\.project=(${PROJECT_NAME}-w\\d+)`);
       for (const line of stdout.split("\n")) {
-        const m = line.match(/com\.docker\.compose\.project=(quotethat-w\d+)/);
+        const m = line.match(workerRe);
         if (m) projects.add(m[1]);
       }
       resolve(projects);
@@ -130,8 +140,9 @@ async function countActiveWorkers() {
 async function findNextFreeWorker() {
   const projects = await getActiveWorkerProjects();
   const used = new Set();
+  const indexRe = new RegExp(`${PROJECT_NAME}-w(\\d+)`);
   for (const p of projects) {
-    const m = p.match(/quotethat-w(\d+)/);
+    const m = p.match(indexRe);
     if (m) used.add(parseInt(m[1], 10));
   }
   let n = 1;

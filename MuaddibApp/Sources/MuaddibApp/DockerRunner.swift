@@ -14,6 +14,16 @@ enum DockerRunner {
             ?? candidatePaths[0]
     }
 
+    private static var repoPath: String {
+        URL(fileURLWithPath: Bundle.main.bundlePath)
+            .deletingLastPathComponent()   // MuaddibApp/
+            .deletingLastPathComponent()   // muaddib/
+            .deletingLastPathComponent()   // repo root
+            .path
+    }
+
+    private static var config: MuaddibConfig { MuaddibConfig.load(repoPath: repoPath) }
+
     private static func run(_ args: [String]) -> String? {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: executablePath)
@@ -58,9 +68,10 @@ enum DockerRunner {
             let project = parts[0]
             let workingDir = parts[1]
 
-            // Only consider quotethat-wN compose projects.
-            guard project.range(of: #"^quotethat-w\d+$"#, options: .regularExpression) != nil,
-                  let suffix = project.components(separatedBy: "quotethat-w").last,
+            // Only consider <projectName>-wN compose projects.
+            let projectPrefix = config.projectName
+            guard project.range(of: "^\(projectPrefix)-w\\d+$", options: .regularExpression) != nil,
+                  let suffix = project.components(separatedBy: "\(projectPrefix)-w").last,
                   let workerIndex = Int(suffix)
             else { return nil }
 
@@ -95,7 +106,7 @@ enum DockerRunner {
 
     static func isDispatchDaemonRunning() -> Bool {
         guard let raw = run(["ps",
-                             "--filter", "label=com.docker.compose.project=quotethat-dispatch",
+                             "--filter", "label=com.docker.compose.project=\(config.projectName)-dispatch",
                              "--format", "{{.ID}}"]) else { return false }
         return !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }

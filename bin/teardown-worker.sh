@@ -2,8 +2,9 @@
 # Stop a worker and remove its containers, volumes, env file, and status entry.
 set -euo pipefail
 FLEET_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+source "$FLEET_DIR/bin/read-config.sh"
 WORKER="${1:?usage: teardown-worker.sh <worker-number>}"
-PROJECT="quotethat-w${WORKER}"
+PROJECT="${MUADDIB_PROJECT_NAME}-w${WORKER}"
 
 # Compute the same values spawn-worker.sh uses so this script works standalone.
 export WORKER_API_PORT=$((8089 + WORKER))

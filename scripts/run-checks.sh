@@ -14,6 +14,7 @@ set -uo pipefail
 
 REPO="${REPO_DIR:-/home/worker/repo}"
 STATE_CLI="$REPO/muaddib/orchestrator/state-cli.js"
+CONFIG="$REPO/.muaddib.json"
 
 log() { echo "[run-checks w${WORKER_INDEX}] $*"; }
 
@@ -56,68 +57,27 @@ if [ -z "$CHANGED" ]; then
   exit 0
 fi
 
-# ─── bucket files by project ─────────────────────────────────────────────────
-
-has_api=0; has_portal=0; has_homeowner=0; has_app_install=0
-while IFS= read -r f; do
-  case "$f" in
-    projects/api/*)          has_api=1 ;;
-    projects/portal/*)       has_portal=1 ;;
-    projects/homeowner/*)    has_homeowner=1 ;;
-    projects/app_install/*)  has_app_install=1 ;;
-  esac
-done <<< "$CHANGED"
-
-# ─── run checks ──────────────────────────────────────────────────────────────
+# ─── run checks per project ───────────────────────────────────────────────────
 
 FAILED=0
 cd "$REPO"
 
-if [ "$has_api" -eq 1 ]; then
-  log "api: running checks..."
-  if capture "api:check" npm run api:check; then
-    log "api: PASS"
-  else
-    log "api: FAIL"
-    FAILED=1
-  fi
-fi
+while IFS= read -r project; do
+    NAME=$(printf '%s' "$project" | jq -r '.name')
+    PROJ_PATH=$(printf '%s' "$project" | jq -r '.path')
+    CHECK_SCRIPT=$(printf '%s' "$project" | jq -r '.checkScript // empty')
+    LINT_SCRIPT=$(printf '%s' "$project" | jq -r '.lintScript // empty')
+    TEST_SCRIPT=$(printf '%s' "$project" | jq -r '.testScript // empty')
 
-if [ "$has_portal" -eq 1 ]; then
-  log "portal: running lint + test..."
-  portal_ok=1
-  capture "portal:lint" npm --prefix projects/portal run lint || portal_ok=0
-  capture "portal:test" npm --prefix projects/portal run test || portal_ok=0
-  if [ "$portal_ok" -eq 1 ]; then
-    log "portal: PASS"
-  else
-    log "portal: FAIL"
-    FAILED=1
-  fi
-fi
+    echo "$CHANGED" | grep -q "^${PROJ_PATH}/" || continue
 
-if [ "$has_homeowner" -eq 1 ]; then
-  log "homeowner: running lint + test..."
-  homeowner_ok=1
-  capture "homeowner:lint" npm --prefix projects/homeowner run lint || homeowner_ok=0
-  capture "homeowner:test" npm --prefix projects/homeowner run test || homeowner_ok=0
-  if [ "$homeowner_ok" -eq 1 ]; then
-    log "homeowner: PASS"
-  else
-    log "homeowner: FAIL"
-    FAILED=1
-  fi
-fi
-
-if [ "$has_app_install" -eq 1 ]; then
-  log "app_install: running lint..."
-  if capture "app_install:lint" npm --prefix projects/app_install run lint; then
-    log "app_install: PASS"
-  else
-    log "app_install: FAIL"
-    FAILED=1
-  fi
-fi
+    log "${NAME}: running checks..."
+    ok=1
+    [ -n "$CHECK_SCRIPT" ] && { capture "${NAME}:check" npm run "$CHECK_SCRIPT" || ok=0; }
+    [ -n "$LINT_SCRIPT"  ] && { capture "${NAME}:lint"  npm run "$LINT_SCRIPT"  || ok=0; }
+    [ -n "$TEST_SCRIPT"  ] && { capture "${NAME}:test"  npm run "$TEST_SCRIPT"  || ok=0; }
+    [ "$ok" -eq 1 ] && log "${NAME}: PASS" || { log "${NAME}: FAIL"; FAILED=1; }
+done < <(jq -c '.projects[]' "$CONFIG")
 
 rm -f "$TMPOUT"
 

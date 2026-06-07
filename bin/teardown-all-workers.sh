@@ -3,15 +3,16 @@
 set -euo pipefail
 BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
 FLEET_DIR="$(cd "$BIN_DIR/.." && pwd)"
+source "$FLEET_DIR/bin/read-config.sh"
 
 # Collect worker numbers from running Docker projects AND leftover env files.
 workers=()
 
 while IFS= read -r project; do
-    n="${project#quotethat-w}"
+    n="${project#${MUADDIB_PROJECT_NAME}-w}"
     [[ "$n" =~ ^[0-9]+$ ]] && workers+=("$n")
 done < <(docker compose ls --format json 2>/dev/null \
-    | python3 -c "import sys,json; [print(p['Name']) for p in json.load(sys.stdin) if p['Name'].startswith('quotethat-w')]" 2>/dev/null || true)
+    | python3 -c "import sys,json; [print(p['Name']) for p in json.load(sys.stdin) if p['Name'].startswith(sys.argv[1])]" "${MUADDIB_PROJECT_NAME}-w" 2>/dev/null || true)
 
 for env_file in "$FLEET_DIR"/.worker-*.env; do
     [[ -f "$env_file" ]] || continue

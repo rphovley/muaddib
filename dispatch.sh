@@ -6,8 +6,10 @@
 set -euo pipefail
 
 FLEET_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$FLEET_DIR/bin/read-config.sh"
 COMPOSE_FILE="${FLEET_DIR}/docker-compose.dispatch.yml"
-PROJECT="quotethat-dispatch"
+PROJECT="${MUADDIB_PROJECT_NAME}-dispatch"
+export MUADDIB_DISPATCH_IMAGE="${MUADDIB_PROJECT_NAME}-dispatch:latest"
 
 # HOST_FLEET_DIR is the real host-filesystem path to muaddib/.
 # spawn-worker.sh uses it so `docker compose` resolves volume mounts on the

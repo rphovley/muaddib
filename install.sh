@@ -4,6 +4,7 @@
 set -euo pipefail
 
 FLEET_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$FLEET_DIR/bin/read-config.sh"
 REPO_ROOT="$(cd "$FLEET_DIR/.." && pwd)"
 ENV_EXAMPLE="$FLEET_DIR/non-prod.env.example"
 ENV_FILE="$FLEET_DIR/non-prod.env"
@@ -304,20 +305,21 @@ done
 step "5. Worker Docker image"
 
 if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
-    if docker image inspect quotethat-worker:latest &>/dev/null 2>&1; then
-        BUILT_AT=$(docker image inspect quotethat-worker:latest \
+    WORKER_IMAGE="${MUADDIB_PROJECT_NAME}-worker:latest"
+    if docker image inspect "$WORKER_IMAGE" &>/dev/null 2>&1; then
+        BUILT_AT=$(docker image inspect "$WORKER_IMAGE" \
             --format '{{.Created}}' 2>/dev/null | cut -c1-19 || echo "unknown")
-        ok "quotethat-worker:latest exists (built ${BUILT_AT})"
+        ok "${WORKER_IMAGE} exists (built ${BUILT_AT})"
         info "To rebuild after lockfile changes: npm run muaddib:build"
     else
-        note "quotethat-worker:latest not built yet"
+        note "${WORKER_IMAGE} not built yet"
         if [ -t 0 ]; then
             ask "Build it now? Takes ~3–5 min on first run. [y/N]"
             read -r _yn; echo
             if [[ "${_yn:-}" =~ ^[Yy]$ ]]; then
                 cd "$REPO_ROOT"
-                docker build -f muaddib/Dockerfile.worker -t quotethat-worker:latest .
-                ok "quotethat-worker:latest built"
+                docker build -f muaddib/Dockerfile.worker -t "$WORKER_IMAGE" .
+                ok "${WORKER_IMAGE} built"
             else
                 info "Build later: npm run muaddib:build"
             fi
@@ -347,5 +349,5 @@ printf "\n"
 printf "Dispatch daemon (requires LINEAR_API_KEY + LINEAR_TEAM_ID in shell):\n"
 printf "  Start : npm run muaddib:start\n"
 printf "  Stop  : npm run muaddib:stop\n"
-printf "  Logs  : docker compose -p quotethat-dispatch -f muaddib/docker-compose.dispatch.yml logs -f\n"
+printf "  Logs  : docker compose -p %s-dispatch -f muaddib/docker-compose.dispatch.yml logs -f\n" "${MUADDIB_PROJECT_NAME}"
 printf "\n"

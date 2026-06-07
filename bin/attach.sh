@@ -4,9 +4,12 @@
 # Ctrl-b then d detaches and leaves the worker running.
 set -euo pipefail
 
+FLEET_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+source "$FLEET_DIR/bin/read-config.sh"
+
 N="${1:?usage: attach.sh <worker-number>}"
 cid=$(docker ps -q \
-    --filter "label=com.docker.compose.project=quotethat-w${N}" \
+    --filter "label=com.docker.compose.project=${MUADDIB_PROJECT_NAME}-w${N}" \
     --filter "name=worker" | head -1)
 
 if [ -z "$cid" ]; then

@@ -30,10 +30,11 @@ git config user.name "agent-worker-${WORKER_INDEX}"
 git config user.email "agent+w${WORKER_INDEX}@quotethat.local"
 git fetch --depth 1 origin main
 git checkout -f -B "$BRANCH" FETCH_HEAD
+source "$WORKDIR/muaddib/bin/read-config.sh"
 
 # Refresh deps ONLY for projects whose lockfile drifted from the baked one
 # (the common case is no drift → zero work).
-for p in projects/api projects/portal projects/homeowner projects/app_install; do
+while IFS= read -r p; do
     [ -d "$p/node_modules" ] || continue
     baked="/home/worker/.deps-lock/$p/package-lock.json"
     if [ -f "$p/package-lock.json" ] && [ -f "$baked" ] \
@@ -41,7 +42,7 @@ for p in projects/api projects/portal projects/homeowner projects/app_install; d
         echo "→ lockfile drift in $p — running npm ci"
         (cd "$p" && npm ci)
     fi
-done
+done < <(jq -r '.projects[].path' "${MUADDIB_CONFIG_FILE:-$WORKDIR/.muaddib.json}")
 
 # Optional: materialize the dev Firebase service-account FILE (it's gitignored,
 # so it isn't in the fresh clone). Only needed when the agent runs the dev
@@ -86,7 +87,7 @@ if [ -n "${TASK:-}" ]; then
     tmux new-session -d -s "$SESSION"
     export REPO_DIR="$WORKDIR"
     echo "Worker ${WORKER_INDEX} starting orchestrator on branch ${BRANCH}."
-    echo "Attach: docker compose -p quotethat-w${WORKER_INDEX} exec worker tmux attach -t ${SESSION}"
+    echo "Attach: docker compose -p ${MUADDIB_PROJECT_NAME}-w${WORKER_INDEX} exec worker tmux attach -t ${SESSION}"
     exec node "$WORKDIR/muaddib/orchestrator/orchestrator.js"
 else
     # Interactive mode: drop to bash after Claude exits, keep container alive.
@@ -100,6 +101,6 @@ else
     tmux new-session -d -s "$SESSION" \
         "claude $PERM_FLAG; exec bash"
     echo "Worker ${WORKER_INDEX} ready (interactive) on branch ${BRANCH}."
-    echo "Attach: docker compose -p quotethat-w${WORKER_INDEX} exec worker tmux attach -t ${SESSION}"
+    echo "Attach: docker compose -p ${MUADDIB_PROJECT_NAME}-w${WORKER_INDEX} exec worker tmux attach -t ${SESSION}"
     tail -f /dev/null
 fi

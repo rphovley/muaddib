@@ -41,7 +41,9 @@ COPY --chown=worker:worker projects/api/package.json          projects/api/packa
 COPY --chown=worker:worker projects/portal/package.json       projects/portal/package-lock.json       projects/portal/
 COPY --chown=worker:worker projects/homeowner/package.json    projects/homeowner/package-lock.json    projects/homeowner/
 COPY --chown=worker:worker projects/app_install/package.json  projects/app_install/package-lock.json  projects/app_install/
-RUN for p in projects/api projects/portal projects/homeowner projects/app_install; do \
+COPY --chown=worker:worker .muaddib.json .muaddib.json
+ARG MUADDIB_PROJECTS="projects/api projects/portal projects/homeowner projects/app_install"
+RUN for p in $MUADDIB_PROJECTS; do \
         echo "== installing deps: $p ==" && npm --prefix "$p" ci \
         && mkdir -p "/home/worker/.deps-lock/$p" \
         && cp "$p/package-lock.json" "/home/worker/.deps-lock/$p/package-lock.json" ; \

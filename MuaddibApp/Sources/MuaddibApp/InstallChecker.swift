@@ -228,11 +228,14 @@ final class InstallChecker {
             hint: webhookOk ? "" : "Set DISPATCH_WEBHOOK_SECRET in non-prod.env"
         ))
 
-        // 13. quotethat-worker:latest image
-        let imageOk = runExitCode(executable: resolvedDocker, args: ["image", "inspect", "quotethat-worker:latest"]) == 0
+        // 13. <projectName>-worker:latest image
+        let repoPath = muaddibDir().deletingLastPathComponent().path
+        let muaddibConfig = MuaddibConfig.load(repoPath: repoPath)
+        let workerImage = "\(muaddibConfig.projectName)-worker:latest"
+        let imageOk = runExitCode(executable: resolvedDocker, args: ["image", "inspect", workerImage]) == 0
         result.append(CheckItem(
             id: "worker-image",
-            label: "quotethat-worker:latest",
+            label: workerImage,
             status: imageOk ? .ok : .failed,
             hint: imageOk ? "" : "Run install.sh to build the worker image"
         ))

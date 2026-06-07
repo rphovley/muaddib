@@ -16,7 +16,7 @@ services:
     build:
       context: ..
       dockerfile: muaddib/Dockerfile.dispatch
-    image: quotethat-dispatch:latest
+    image: ${MUADDIB_DISPATCH_IMAGE:-quotethat-dispatch:latest}
     restart: unless-stopped
     env_file:
       - non-prod.env

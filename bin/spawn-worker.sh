@@ -9,6 +9,7 @@ set -euo pipefail
 
 BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
 FLEET_DIR="$(cd "$BIN_DIR/.." && pwd)"
+source "$FLEET_DIR/bin/read-config.sh"
 REPO_ROOT="$(cd "$FLEET_DIR/.." && pwd)"
 cd "$FLEET_DIR"
 
@@ -25,7 +26,7 @@ TASK="${*:-}"
 
 API_PORT=$((8089 + WORKER)) # worker 1 -> 8090
 DB_PORT=$((5441 + WORKER))  # worker 1 -> 5442
-PROJECT="quotethat-w${WORKER}"
+PROJECT="${MUADDIB_PROJECT_NAME}-w${WORKER}"
 BRANCH="agent/w${WORKER}/$(date -u +%Y%m%d-%H%M%S)"
 
 # --- host-provided inputs ---
@@ -99,9 +100,10 @@ echo "→ Spawning ${PROJECT}: API :${API_PORT}  DB :${DB_PORT}  branch ${BRANCH
 # Build the shared worker image once if it doesn't exist. All workers share
 # quotethat-worker:latest — nothing worker-specific is baked in. To force a
 # rebuild (e.g. after lockfile changes): `docker rmi quotethat-worker:latest`.
-if ! docker image inspect quotethat-worker:latest >/dev/null 2>&1; then
+export MUADDIB_WORKER_IMAGE="${MUADDIB_PROJECT_NAME}-worker:latest"
+if ! docker image inspect "$MUADDIB_WORKER_IMAGE" >/dev/null 2>&1; then
     echo "→ Building worker image (first run or image removed)…"
-    docker build -f "$FLEET_DIR/Dockerfile.worker" -t quotethat-worker:latest "$REPO_ROOT"
+    docker build -f "$FLEET_DIR/Dockerfile.worker" -t "$MUADDIB_WORKER_IMAGE" "$REPO_ROOT"
 fi
 
 docker compose -p "$PROJECT" \
