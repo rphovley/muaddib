@@ -168,6 +168,94 @@ async function testRealWebhookNoLabels() {
   }
 }
 
+// ─── handleEvent: DISPATCH_ASSIGNEE_ID filtering ─────────────────────────────
+
+const ASSIGNED_BODY = Buffer.from(JSON.stringify({
+  action: 'update',
+  type: 'Issue',
+  data: {
+    identifier: 'QUO-400',
+    labelIds: ['c328c424-c60e-4c60-8f64-2ba5282e6090'],
+    labels: [{ id: 'c328c424-c60e-4c60-8f64-2ba5282e6090', color: '#4cb782', name: 'auto' }],
+    assignee: { id: 'user-aaa', name: 'Alice' },
+  },
+  updatedFrom: { labelIds: [], updatedAt: '2026-06-07T06:00:00.000Z' },
+}));
+
+const UNASSIGNED_BODY = Buffer.from(JSON.stringify({
+  action: 'update',
+  type: 'Issue',
+  data: {
+    identifier: 'QUO-401',
+    labelIds: ['c328c424-c60e-4c60-8f64-2ba5282e6090'],
+    labels: [{ id: 'c328c424-c60e-4c60-8f64-2ba5282e6090', color: '#4cb782', name: 'auto' }],
+  },
+  updatedFrom: { labelIds: [], updatedAt: '2026-06-07T06:00:00.000Z' },
+}));
+
+async function captureLog(fn) {
+  const lines = [];
+  const origWrite = process.stdout.write.bind(process.stdout);
+  process.stdout.write = (s) => { lines.push(s); return true; };
+  try {
+    await fn();
+  } finally {
+    process.stdout.write = origWrite;
+  }
+  return lines.join('');
+}
+
+async function testAssigneeFilterMatchingUser() {
+  // DISPATCH_ASSIGNEE_ID set and matches ticket assignee → should proceed past filter.
+  process.env.DISPATCH_ASSIGNEE_ID = 'user-aaa';
+  try {
+    const logged = await captureLog(() => handleEvent(ASSIGNED_BODY));
+    if (logged.includes('≠ DISPATCH_ASSIGNEE_ID')) {
+      throw new Error(`expected ticket to pass assignee filter, got: ${logged}`);
+    }
+  } finally {
+    delete process.env.DISPATCH_ASSIGNEE_ID;
+  }
+}
+
+async function testAssigneeFilterWrongUser() {
+  // DISPATCH_ASSIGNEE_ID set but ticket is assigned to a different user → skip.
+  process.env.DISPATCH_ASSIGNEE_ID = 'user-bbb';
+  try {
+    const logged = await captureLog(() => handleEvent(ASSIGNED_BODY));
+    if (!logged.includes('≠ DISPATCH_ASSIGNEE_ID')) {
+      throw new Error(`expected assignee mismatch skip, got: ${logged}`);
+    }
+    if (!logged.includes('QUO-400')) {
+      throw new Error(`expected identifier in log, got: ${logged}`);
+    }
+  } finally {
+    delete process.env.DISPATCH_ASSIGNEE_ID;
+  }
+}
+
+async function testAssigneeFilterUnassignedTicket() {
+  // DISPATCH_ASSIGNEE_ID set but ticket has no assignee → skip.
+  process.env.DISPATCH_ASSIGNEE_ID = 'user-aaa';
+  try {
+    const logged = await captureLog(() => handleEvent(UNASSIGNED_BODY));
+    if (!logged.includes('≠ DISPATCH_ASSIGNEE_ID')) {
+      throw new Error(`expected unassigned ticket to be skipped, got: ${logged}`);
+    }
+  } finally {
+    delete process.env.DISPATCH_ASSIGNEE_ID;
+  }
+}
+
+async function testAssigneeFilterNotSet() {
+  // DISPATCH_ASSIGNEE_ID not set → any ticket proceeds regardless of assignee.
+  delete process.env.DISPATCH_ASSIGNEE_ID;
+  const logged = await captureLog(() => handleEvent(ASSIGNED_BODY));
+  if (logged.includes('≠ DISPATCH_ASSIGNEE_ID')) {
+    throw new Error(`expected no assignee filter when env var unset, got: ${logged}`);
+  }
+}
+
 // ─── runner ──────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -186,6 +274,10 @@ async function main() {
     ['resolveRoute: labels must be pre-lowercased (case-sensitive match)', testLabelsCaseInsensitive],
     ['handleEvent: real webhook flat labels array → routes correctly', testRealWebhookAutoLabel],
     ['handleEvent: real webhook empty labels after change → no route matched', testRealWebhookNoLabels],
+    ['handleEvent: assignee filter — matching user proceeds', testAssigneeFilterMatchingUser],
+    ['handleEvent: assignee filter — wrong user skipped', testAssigneeFilterWrongUser],
+    ['handleEvent: assignee filter — unassigned ticket skipped', testAssigneeFilterUnassignedTicket],
+    ['handleEvent: assignee filter — unset env dispatches any ticket', testAssigneeFilterNotSet],
   ];
 
   let passed = 0;

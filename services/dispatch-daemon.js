@@ -246,6 +246,20 @@ async function handleEvent(rawBody) {
     }
   }
 
+  // Assignee guard: if DISPATCH_ASSIGNEE_ID is set, only dispatch tickets
+  // assigned to that Linear user. Prevents every machine from picking up the
+  // same ticket when multiple dispatchers are running.
+  const dispatchAssigneeId = process.env.DISPATCH_ASSIGNEE_ID || "";
+  if (dispatchAssigneeId) {
+    const assigneeId = data.assignee && data.assignee.id;
+    if (assigneeId !== dispatchAssigneeId) {
+      log(
+        `${identifier}: assignee ${assigneeId || "unset"} ≠ DISPATCH_ASSIGNEE_ID — skipped`,
+      );
+      return;
+    }
+  }
+
   const labelNodes = Array.isArray(data.labels)
     ? data.labels
     : (data.labels && data.labels.nodes) || [];
