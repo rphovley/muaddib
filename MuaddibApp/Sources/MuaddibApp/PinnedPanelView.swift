@@ -197,7 +197,13 @@ struct WorkerPill: View {
     }
 
     private var pillLabel: String {
-        worker.ticketId.isEmpty ? "w\(worker.id)" : worker.ticketId
+        let maxChars = 22
+        if !worker.ticketTitle.isEmpty {
+            let t = worker.ticketTitle
+            return t.count > maxChars ? String(t.prefix(maxChars)) + "…" : t
+        }
+        if !worker.ticketId.isEmpty { return worker.ticketId }
+        return "w\(worker.id)"
     }
 
     private func copy() {
