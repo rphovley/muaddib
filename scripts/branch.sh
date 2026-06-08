@@ -20,6 +20,9 @@ log() { echo "[branch w${WORKER}] $*"; }
 
 cd "$REPO"
 
+# Sync submodules so their state doesn't falsely trigger the dirty-tree guard
+git submodule update --init --recursive 2>/dev/null || true
+
 # ── 1. Guard: dirty tree ─────────────────────────────────────────────────────
 
 if ! git diff --quiet || ! git diff --cached --quiet; then
