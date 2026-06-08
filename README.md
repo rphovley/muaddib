@@ -1,8 +1,7 @@
 # muaddib
 
 Isolated, parallel Claude Code workers. Each worker is a sandboxed Docker
-container running an **interactive** Claude session (so it bills against your
-Max subscription's interactive limits, not the headless credit bucket), on its
+container running an **interactive** Claude session, on its
 own git branch, with its own throwaway Postgres. You stay in the loop for the
 genuinely-interactive moments (`/grill-me`, permission prompts); a status board
 tells you which worker needs you.
