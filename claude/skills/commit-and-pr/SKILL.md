@@ -28,26 +28,39 @@ printf 'BLOCKED %s\n' "$(date -u +%FT%TZ)" > "/var/run/agent-status/worker-${WOR
 
 ## Step 2 — Refresh preview credentials
 
-First apply any pending migrations so the seed script sees the current schema:
+First apply any pending migrations so the seed scripts see the current schema:
 
 ```bash
 REPO="${REPO_DIR:-/home/worker/repo}"
 (cd "$REPO/projects/api" && npm run migrate:up 2>&1) || true
 ```
 
-Then run the seed script to get credentials that reflect the current implementation:
+Then run the **baseline** seed to get the standard preview contractor credentials:
 
 ```bash
-SEED_SCRIPT="$REPO/projects/api/scripts/seed-preview-w${WORKER_INDEX:-0}.ts"
-SEED_JSON=$([ -f "$SEED_SCRIPT" ] && \
-    cd "$REPO" && npx --prefix projects/api tsx "$SEED_SCRIPT" 2>/dev/null | tail -1 \
-    || echo '{"email":"(unavailable)","password":"","homeowner_magic_link":null}')
+BASELINE_SEED="$REPO/projects/api/scripts/seed-preview.ts"
+SEED_JSON=$(cd "$REPO" && npx --prefix projects/api tsx "$BASELINE_SEED" 2>/dev/null | tail -1)
 PREVIEW_EMAIL=$(printf '%s' "$SEED_JSON" | jq -r '.email // "(unavailable)"')
 PREVIEW_PASSWORD=$(printf '%s' "$SEED_JSON" | jq -r '.password // ""')
 HO_MAGIC_LINK=$(printf '%s' "$SEED_JSON" | jq -r '.homeowner_magic_link // ""')
 ```
 
-If the worker's seed script does not exist (bug workflow or not yet written), skip and leave all credential vars as `(unavailable)`.
+If a **worker-specific** seed exists, run it on top to add feature-specific data or override credentials:
+
+```bash
+WORKER_SEED="$REPO/projects/api/scripts/seed-preview-w${WORKER_INDEX:-0}.ts"
+if [ -f "$WORKER_SEED" ]; then
+  W_JSON=$(cd "$REPO" && npx --prefix projects/api tsx "$WORKER_SEED" 2>/dev/null | tail -1)
+  W_EMAIL=$(printf '%s' "$W_JSON" | jq -r '.email // ""')
+  W_PASSWORD=$(printf '%s' "$W_JSON" | jq -r '.password // ""')
+  W_HO_MAGIC_LINK=$(printf '%s' "$W_JSON" | jq -r '.homeowner_magic_link // ""')
+  [ -n "$W_EMAIL" ]         && PREVIEW_EMAIL="$W_EMAIL"
+  [ -n "$W_PASSWORD" ]      && PREVIEW_PASSWORD="$W_PASSWORD"
+  [ -n "$W_HO_MAGIC_LINK" ] && HO_MAGIC_LINK="$W_HO_MAGIC_LINK"
+fi
+```
+
+The worker's seed script is optional — if it doesn't exist the baseline credentials are used. Workers write `seed-preview-w<N>.ts` only when their feature needs extra data beyond what the baseline provides.
 
 ## Step 3 — Commit
 
