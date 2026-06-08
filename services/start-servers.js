@@ -21,6 +21,22 @@ const STATE_CLI = path.join(REPO, 'muaddib/orchestrator/state-cli.js');
 
 function log(msg) { process.stdout.write(`[start-servers w${WORKER}] ${msg}\n`); }
 
+// ── config loading ────────────────────────────────────────────────────────────
+
+function loadConfig(repoDir) {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(repoDir, '.muaddib.json'), 'utf8'));
+  } catch (_) {
+    return {
+      projects: [
+        { name: 'api',       path: 'projects/api',       devScript: 'api:dev',       port: 8081, seedScript: 'projects/api/scripts/seed-preview.ts' },
+        { name: 'portal',    path: 'projects/portal',    devScript: 'portal:dev',    port: 5173 },
+        { name: 'homeowner', path: 'projects/homeowner', devScript: 'homeowner:dev', port: 5174 },
+      ],
+    };
+  }
+}
+
 // ── subprocess helpers ────────────────────────────────────────────────────────
 
 // Run a command synchronously; inherits stdio so output appears in the job log.
@@ -170,14 +186,19 @@ async function openTunnel(port, cfLog, lrLog) {
 // ── main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
+  const config = loadConfig(REPO);
+  const apiProject = config.projects.find((p) => p.seedScript);
+  if (!apiProject) throw new Error('No API project (with seedScript) found in .muaddib.json');
+  const frontendProjects = config.projects.filter((p) => !p.seedScript && p.devScript);
+
   // 1. Migrations
   log('running migrations...');
-  runSync('npm', ['run', '--prefix', 'projects/api', 'migrate:up']);
+  runSync('npm', ['run', '--prefix', apiProject.path, 'migrate:up']);
 
   // 2. Preview seed
   log('running preview seed...');
   const seedResult = spawnSync(
-    'npx', ['--prefix', 'projects/api', 'tsx', 'projects/api/scripts/seed-preview.ts'],
+    'npx', ['--prefix', apiProject.path, 'tsx', apiProject.seedScript],
     { cwd: REPO, stdio: ['ignore', 'pipe', 'pipe'], env: process.env },
   );
 
@@ -188,49 +209,66 @@ async function main() {
     if (seedResult.stderr) fs.writeFileSync('/tmp/seed-preview.log', seedResult.stderr);
     const lines = (seedResult.stdout || '').toString().trim().split('\n');
     const json = JSON.parse(lines[lines.length - 1]);
-    previewEmail   = json.email              || previewEmail;
-    previewPassword = json.password          || '';
-    hoMagicLink    = json.homeowner_magic_link || '';
+    previewEmail    = json.email               || previewEmail;
+    previewPassword = json.password            || '';
+    hoMagicLink     = json.homeowner_magic_link || '';
   } catch (_) {}
 
   // 3. API dev server
   log('starting API dev server...');
-  startWithRestart('npm', ['run', 'api:dev'], '/tmp/preview-api.log');
-  await waitForPort(8081);
-  log('API server ready on :8081');
+  startWithRestart('npm', ['run', apiProject.devScript], '/tmp/preview-api.log');
+  await waitForPort(apiProject.port);
+  log(`API server ready on :${apiProject.port}`);
 
   // 4. API tunnel (needed before frontends so VITE_API_URL is known)
-  const apiTunnelUrl = await openTunnel(8081, '/tmp/cf-api.log', '/tmp/lr-api.log');
+  const apiTunnelUrl = await openTunnel(apiProject.port, '/tmp/cf-api.log', '/tmp/lr-api.log');
 
   // 5. Frontend dev servers
-  log('starting frontend dev servers...');
-  startWithRestart('npm', ['run', 'portal:dev'],    '/tmp/preview-portal.log',    { env: { VITE_API_URL: apiTunnelUrl } });
-  startWithRestart('npm', ['run', 'homeowner:dev'], '/tmp/preview-homeowner.log', { env: { VITE_API_URL: apiTunnelUrl } });
-  log('waiting for frontend servers on :5173 and :5174 (up to 60 s)...');
-  await Promise.all([waitForPort(5173), waitForPort(5174)]);
-  log('frontend servers ready on :5173 and :5174');
+  if (frontendProjects.length > 0) {
+    log('starting frontend dev servers...');
+    for (const p of frontendProjects) {
+      startWithRestart('npm', ['run', p.devScript], `/tmp/preview-${p.name}.log`, { env: { VITE_API_URL: apiTunnelUrl } });
+    }
+    const frontendPorts = frontendProjects.filter((p) => p.port).map((p) => p.port);
+    if (frontendPorts.length > 0) {
+      log(`waiting for frontend servers on :${frontendPorts.join(' and :')} (up to 60 s)...`);
+      await Promise.all(frontendPorts.map((port) => waitForPort(port)));
+      log(`frontend servers ready on :${frontendPorts.join(' and :')}`);
+    }
+  }
 
   // 6. Frontend tunnels (parallel — independent ports)
-  const [portalUrl, hoUrl] = await Promise.all([
-    openTunnel(5173, '/tmp/cf-portal.log',    '/tmp/lr-portal.log'),
-    openTunnel(5174, '/tmp/cf-homeowner.log', '/tmp/lr-homeowner.log'),
-  ]);
+  const frontendUrlMap = new Map();
+  await Promise.all(
+    frontendProjects.filter((p) => p.port).map(async (p) => {
+      const url = await openTunnel(p.port, `/tmp/cf-${p.name}.log`, `/tmp/lr-${p.name}.log`);
+      frontendUrlMap.set(p.name, url);
+    }),
+  );
+
+  // Backwards-compat aliases for skills that reference portal_url / ho_url
+  const portalUrl = frontendUrlMap.get('portal') || '';
+  const hoUrl     = frontendUrlMap.get('homeowner') || '';
 
   // 7. Write shared env file and worker state
   const URLS_FILE = `/tmp/preview-urls-${WORKER}.env`;
-  fs.writeFileSync(URLS_FILE, [
-    `API_TUNNEL_URL=${apiTunnelUrl}`,
-    `PORTAL_URL=${portalUrl}`,
-    `HO_URL=${hoUrl}`,
-    `PREVIEW_EMAIL=${previewEmail}`,
-    `PREVIEW_PASSWORD=${previewPassword}`,
-    `HO_MAGIC_LINK=${hoMagicLink}`,
-  ].join('\n') + '\n');
+  const envLines = [`API_TUNNEL_URL=${apiTunnelUrl}`];
+  for (const p of frontendProjects.filter((fp) => fp.port)) {
+    envLines.push(`${p.name.toUpperCase()}_URL=${frontendUrlMap.get(p.name) || ''}`);
+  }
+  envLines.push(`HO_URL=${hoUrl}`);
+  envLines.push(`PREVIEW_EMAIL=${previewEmail}`);
+  envLines.push(`PREVIEW_PASSWORD=${previewPassword}`);
+  envLines.push(`HO_MAGIC_LINK=${hoMagicLink}`);
+  fs.writeFileSync(URLS_FILE, envLines.join('\n') + '\n');
   log(`wrote ${URLS_FILE}`);
 
-  for (const [key, val] of [['api_tunnel_url', apiTunnelUrl], ['portal_url', portalUrl], ['ho_url', hoUrl]]) {
-    spawnSync('node', [STATE_CLI, WORKER, 'set', key, val], { stdio: 'inherit' });
+  spawnSync('node', [STATE_CLI, WORKER, 'set', 'api_tunnel_url', apiTunnelUrl], { stdio: 'inherit' });
+  for (const p of frontendProjects.filter((fp) => fp.port)) {
+    spawnSync('node', [STATE_CLI, WORKER, 'set', `${p.name}_url`, frontendUrlMap.get(p.name) || ''], { stdio: 'inherit' });
   }
+  // ho_url aliases homeowner_url for existing skills
+  spawnSync('node', [STATE_CLI, WORKER, 'set', 'ho_url', hoUrl], { stdio: 'inherit' });
 
   // 8. Signal orchestrator
   log('emitting tunnel_ready');
@@ -243,7 +281,11 @@ async function main() {
   setInterval(() => {}, 30_000);
 }
 
-main().catch((err) => {
-  log(`FATAL: ${err.message}`);
-  process.exit(1);
-});
+module.exports = { _loadConfig: loadConfig };
+
+if (require.main === module) {
+  main().catch((err) => {
+    log(`FATAL: ${err.message}`);
+    process.exit(1);
+  });
+}

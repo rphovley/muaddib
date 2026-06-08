@@ -11,10 +11,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/bin/read-config.sh"
 
-if ! docker image inspect quotethat-worker:latest >/dev/null 2>&1; then
+WORKER_IMAGE="${MUADDIB_PROJECT_NAME}-worker:latest"
+
+if ! docker image inspect "$WORKER_IMAGE" >/dev/null 2>&1; then
     echo "→ Building worker image…"
-    docker build -f "$REPO_ROOT/muaddib/Dockerfile.worker" -t quotethat-worker:latest "$REPO_ROOT"
+    docker build -f "$REPO_ROOT/muaddib/Dockerfile.worker" -t "$WORKER_IMAGE" "$REPO_ROOT"
 fi
 
 echo "→ Running tests in container…"
@@ -22,7 +25,7 @@ docker run --rm \
     --entrypoint bash \
     -v "$REPO_ROOT:/home/worker/repo" \
     -e REPO_DIR=/home/worker/repo \
-    quotethat-worker:latest \
+    "$WORKER_IMAGE" \
     -c "
         set -e
         REPO=/home/worker/repo
@@ -59,6 +62,9 @@ docker run --rm \
 
         echo '=== services/test-dispatch-daemon ==='
         node \$REPO/muaddib/services/__tests__/test-dispatch-daemon.js
+
+        echo '=== services/test-start-servers-config ==='
+        node \$REPO/muaddib/services/__tests__/test-start-servers-config.js
 
         echo ''
         echo 'All test suites passed.'

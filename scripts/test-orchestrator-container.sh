@@ -17,6 +17,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+source "$SCRIPT_DIR/../bin/read-config.sh"
+
+WORKER_IMAGE="${MUADDIB_PROJECT_NAME}-worker:latest"
 
 # ─── pre-flight ───────────────────────────────────────────────────────────────
 
@@ -25,11 +28,11 @@ if ! command -v docker >/dev/null 2>&1; then
     exit 0
 fi
 
-if ! docker image inspect quotethat-worker:latest >/dev/null 2>&1; then
+if ! docker image inspect "$WORKER_IMAGE" >/dev/null 2>&1; then
     echo "→ Building worker image (this may take a while)…"
     docker build \
         -f "$REPO_ROOT/muaddib/Dockerfile.worker" \
-        -t quotethat-worker:latest \
+        -t "$WORKER_IMAGE" \
         "$REPO_ROOT"
 fi
 
@@ -41,7 +44,7 @@ docker run --rm \
     --entrypoint bash \
     -v "$REPO_ROOT:/home/worker/repo" \
     -e REPO_DIR=/home/worker/repo \
-    quotethat-worker:latest \
+    "$WORKER_IMAGE" \
     -c "
         set -e
         cd /home/worker/repo/muaddib/orchestrator

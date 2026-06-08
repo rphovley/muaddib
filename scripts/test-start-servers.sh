@@ -13,8 +13,11 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/../bin/read-config.sh"
+
 WORKER="${1:-1}"
-PROJECT="quotethat-w${WORKER}"
+PROJECT="${MUADDIB_PROJECT_NAME}-w${WORKER}"
 SEED_TIMEOUT="${SEED_TIMEOUT:-60}"
 
 log()  { echo "[test-start-servers] $*"; }

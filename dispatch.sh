@@ -11,6 +11,12 @@ COMPOSE_FILE="${FLEET_DIR}/docker-compose.dispatch.yml"
 PROJECT="${MUADDIB_PROJECT_NAME}-dispatch"
 export MUADDIB_DISPATCH_IMAGE="${MUADDIB_PROJECT_NAME}-dispatch:latest"
 
+# Derive DISPATCH_PORT: existing env override → .muaddib.json dispatchPort → default 3999.
+# Set dispatchPort in .muaddib.json (or export DISPATCH_PORT before running) to a unique
+# port per project when running two dispatch daemons on the same machine.
+DISPATCH_PORT="${DISPATCH_PORT:-$(jq -r '.dispatchPort // 3999' "${MUADDIB_CONFIG_FILE:-/dev/null}" 2>/dev/null || echo 3999)}"
+export DISPATCH_PORT
+
 # HOST_FLEET_DIR is the real host-filesystem path to muaddib/.
 # spawn-worker.sh uses it so `docker compose` resolves volume mounts on the
 # host rather than against the container's bind-mount path.
