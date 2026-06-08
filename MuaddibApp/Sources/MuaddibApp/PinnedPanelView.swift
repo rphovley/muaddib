@@ -112,7 +112,6 @@ struct PinnedPanelView: View {
                 .transition(.opacity)
             }
         }
-        .frame(minWidth: 280)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(Color(white: 0.12))
