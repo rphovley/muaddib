@@ -9,7 +9,7 @@ FROM node:22-slim
 
 # Toolchain: git (auto-detect REPO_URL from the mounted repo), bash + curl (scripts).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        bash ca-certificates curl git wget \
+        bash ca-certificates curl git openssh-client wget \
     && rm -rf /var/lib/apt/lists/*
 
 # docker CLI + compose plugin — daemon calls `docker ps`; spawn-worker.sh calls
