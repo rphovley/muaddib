@@ -27,7 +27,7 @@ WORKDIR=/home/worker/repo
 cd "$WORKDIR"
 git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@${REPO_URL}"
 git config user.name "agent-worker-${WORKER_INDEX}"
-git config user.email "agent+w${WORKER_INDEX}@quotethat.local"
+git config user.email "agent+w${WORKER_INDEX}@${MUADDIB_PROJECT_NAME:-quotethat}.local"
 git fetch --depth 1 origin main
 git checkout -f -B "$BRANCH" FETCH_HEAD
 source "$WORKDIR/muaddib/bin/read-config.sh"
@@ -49,11 +49,15 @@ done < <(jq -r '.projects[].path' "${MUADDIB_CONFIG_FILE:-$WORKDIR/.muaddib.json
 # server — test mode skips Firebase init. Provide it base64-encoded in the GCP
 # bundle as FIREBASE_DEV_SA_JSON_B64.
 if [ -n "${FIREBASE_DEV_SA_JSON_B64:-}" ]; then
-    KEYS_DIR="projects/api/src/config/keys"
-    FNAME="${FIREBASE_DEV_SA_FILENAME:-dev.quotethat-test-firebase-adminsdk-fbsvc-54518044be.json}"
-    mkdir -p "$KEYS_DIR"
-    printf '%s' "$FIREBASE_DEV_SA_JSON_B64" | base64 -d >"$KEYS_DIR/$FNAME"
-    echo "→ wrote dev Firebase service account to $KEYS_DIR/$FNAME"
+    KEYS_DIR="$(jq -r '.firebaseKeyPath // empty' "$WORKDIR/.muaddib.json" 2>/dev/null || true)"
+    if [ -n "$KEYS_DIR" ]; then
+        FNAME="${FIREBASE_DEV_SA_FILENAME:-dev.quotethat-test-firebase-adminsdk-fbsvc-54518044be.json}"
+        mkdir -p "$KEYS_DIR"
+        printf '%s' "$FIREBASE_DEV_SA_JSON_B64" | base64 -d >"$KEYS_DIR/$FNAME"
+        echo "→ wrote dev Firebase service account to $KEYS_DIR/$FNAME"
+    else
+        echo "→ no firebaseKeyPath in .muaddib.json — skipping Firebase SA materialization"
+    fi
 fi
 
 # Wire the Linear MCP via API key (Bearer header) — no OAuth/browser. Same

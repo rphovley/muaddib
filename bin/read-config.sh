@@ -3,8 +3,10 @@
 # Source this script — do not execute directly.
 
 _MUADDIB_BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-_MUADDIB_REPO_ROOT="$(cd "$_MUADDIB_BIN_DIR/../.." && pwd)"
-_MUADDIB_CONFIG="$_MUADDIB_REPO_ROOT/.muaddib.json"
+REPO_ROOT="${MUADDIB_REPO:-$(git -C "$_MUADDIB_BIN_DIR" rev-parse --show-toplevel 2>/dev/null)}"
+REPO_ROOT="${REPO_ROOT:-$(cd "$_MUADDIB_BIN_DIR/../.." && pwd)}"
+export REPO_ROOT
+_MUADDIB_CONFIG="$REPO_ROOT/.muaddib.json"
 
 if ! command -v jq &>/dev/null || [ ! -f "$_MUADDIB_CONFIG" ]; then
     export MUADDIB_PROJECT_NAME="quotethat"

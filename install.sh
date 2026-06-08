@@ -5,9 +5,8 @@ set -euo pipefail
 
 FLEET_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$FLEET_DIR/bin/read-config.sh"
-REPO_ROOT="$(cd "$FLEET_DIR/.." && pwd)"
-ENV_EXAMPLE="$FLEET_DIR/non-prod.env.example"
-ENV_FILE="$FLEET_DIR/non-prod.env"
+ENV_EXAMPLE="$REPO_ROOT/non-prod.env.example"
+ENV_FILE="$REPO_ROOT/non-prod.env"
 
 # ─── output helpers ───────────────────────────────────────────────────────────
 

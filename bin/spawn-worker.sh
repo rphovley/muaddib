@@ -10,7 +10,6 @@ set -euo pipefail
 BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
 FLEET_DIR="$(cd "$BIN_DIR/.." && pwd)"
 source "$FLEET_DIR/bin/read-config.sh"
-REPO_ROOT="$(cd "$FLEET_DIR/.." && pwd)"
 cd "$FLEET_DIR"
 
 # When spawn-worker.sh is called from inside the dispatch Docker container
@@ -47,12 +46,12 @@ CLAUDE_SKILLS_DIR="$HOST_FLEET_DIR/status/.skills-${WORKER}"
 : "${GITHUB_TOKEN:?export a repo-scoped GitHub token (push branches + open PRs only)}"
 
 # --- non-prod app secrets: a local dotenv file (dev/local values only) ---
-SHARED_ENV="${WORKER_SHARED_ENV:-$FLEET_DIR/non-prod.env}"
+SHARED_ENV="${WORKER_SHARED_ENV:-$REPO_ROOT/non-prod.env}"
 [ -f "$SHARED_ENV" ] || {
     echo "missing ${SHARED_ENV} — copy non-prod.env.example to non-prod.env and fill it in" >&2
     exit 1
 }
-ENV_FILE="$FLEET_DIR/.worker-${WORKER}.env"
+ENV_FILE="$REPO_ROOT/.worker-${WORKER}.env"
 cp "$SHARED_ENV" "$ENV_FILE"
 
 # Append worker-specific dynamic values. PG_*/DATABASE_URL are force-overridden
@@ -87,7 +86,7 @@ chmod 600 "$ENV_FILE"
 mkdir -p "$FLEET_DIR/status" && chmod 777 "$FLEET_DIR/status"
 
 export WORKER_API_PORT="$API_PORT" WORKER_DB_PORT="$DB_PORT" \
-    WORKER_ENV_FILE="$FLEET_DIR/.worker-${WORKER}.env" WORKER_INDEX="$WORKER" \
+    WORKER_ENV_FILE="$REPO_ROOT/.worker-${WORKER}.env" WORKER_INDEX="$WORKER" \
     CLAUDE_SKILLS_DIR="$CLAUDE_SKILLS_DIR" \
     HOST_TMPDIR="${HOST_TMPDIR:-${TMPDIR:-/tmp}}" \
     HOST_DESKTOP="${HOST_DESKTOP:-$HOME/Desktop}"

@@ -1,4 +1,4 @@
-# One isolated worker stack. Namespaced per worker via `docker compose -p quotethat-w<N>`.
+# One isolated worker stack. Namespaced per worker via `docker compose -p <projectName>-w<N>`.
 # Ports/env come from spawn-worker.sh. Deliberately NO docker.sock mount and no
 # host bind-mounts except the two narrow, intentional ones on `worker`.
 services:
@@ -8,7 +8,7 @@ services:
     image: postgres:18
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_DB: quotethat
+      POSTGRES_DB: ${MUADDIB_PROJECT_NAME:-quotethat}
       POSTGRES_HOST_AUTH_METHOD: trust
     ports:
       - "${WORKER_DB_PORT:?set WORKER_DB_PORT}:5432"
@@ -24,7 +24,7 @@ services:
     image: postgres:18
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_DB: quotethat
+      POSTGRES_DB: ${MUADDIB_PROJECT_NAME:-quotethat}
       POSTGRES_HOST_AUTH_METHOD: trust
     tmpfs:
       - /var/lib/postgresql
@@ -49,9 +49,9 @@ services:
       PG_PORT: "5432"
       PG_USER: postgres
       PG_PASSWORD: ""
-      PG_DATABASE: quotethat
+      PG_DATABASE: ${MUADDIB_PROJECT_NAME:-quotethat}
       PG_SSLMODE: disable
-      DATABASE_URL: "postgres://postgres@db:5432/quotethat"
+      DATABASE_URL: "postgres://postgres@db:5432/${MUADDIB_PROJECT_NAME:-quotethat}"
       # Integration tests target the throwaway test sidecar (no Docker socket).
       TEST_DB_HOST: db_test
       TEST_DB_PORT: "5432"
