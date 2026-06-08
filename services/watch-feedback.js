@@ -158,10 +158,17 @@ async function waitForPort(port, maxAttempts = 15) {
   throw new Error(`port ${port} not ready after ${maxAttempts}s`);
 }
 
-// ── cloudflared tunnel ────────────────────────────────────────────────────────
+// ── tunnel (cloudflared → localhost.run fallback) ─────────────────────────────
 
-function startCloudflared() {
-  return new Promise((resolve, reject) => {
+const CF_URL_RE  = /https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/;
+const LR_URL_RE  = /https:\/\/[a-zA-Z0-9-]+\.lhr\.[a-z]+/;
+const CF_FAIL_RE = /429|error code: 1015|failed to unmarshal|failed to request/i;
+const LR_LOG     = '/tmp/cf-webhook-lr.log';
+
+function tryCloudflared() {
+  return new Promise((resolve) => {
+    log('trying cloudflared...');
+    fs.writeFileSync(TUNNEL_LOG, '');
     const logFd = fs.openSync(TUNNEL_LOG, 'w');
     cloudflaredProc = spawn('cloudflared', [
       'tunnel', '--url', `http://localhost:${WEBHOOK_PORT}`,
@@ -169,22 +176,77 @@ function startCloudflared() {
     ], { stdio: ['ignore', logFd, logFd] });
     fs.closeSync(logFd);
 
-    cloudflaredProc.on('exit', (code) => log(`cloudflared exited (code=${code})`));
+    let settled = false;
+    const settle = (url) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(poll);
+      resolve(url);
+    };
 
-    const start = Date.now();
+    cloudflaredProc.on('exit', (code) => { log(`cloudflared exited (code=${code})`); settle(null); });
+
     const poll = setInterval(() => {
-      if (Date.now() - start > 60_000) {
-        clearInterval(poll);
-        reject(new Error('cloudflared tunnel URL not found after 60s'));
-        return;
-      }
       try {
         const content = fs.readFileSync(TUNNEL_LOG, 'utf8');
-        const m = content.match(/https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/);
-        if (m) { clearInterval(poll); resolve(m[0]); }
+        const urlMatch = content.match(CF_URL_RE);
+        if (urlMatch) { settle(urlMatch[0]); return; }
+        if (CF_FAIL_RE.test(content)) {
+          try { cloudflaredProc.kill(); } catch (_) {}
+          settle(null);
+        }
       } catch (_) {}
-    }, 1000);
+    }, 500);
   });
+}
+
+function tryLocalhostRun() {
+  return new Promise((resolve) => {
+    log('falling back to localhost.run...');
+    fs.writeFileSync(LR_LOG, '');
+    const outFd = fs.openSync(LR_LOG, 'a');
+    const errFd = fs.openSync(LR_LOG, 'a');
+    const lrProc = spawn('ssh', [
+      '-R', `80:localhost:${WEBHOOK_PORT}`,
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', 'BatchMode=yes',
+      '-o', 'ExitOnForwardFailure=yes',
+      '-o', 'ConnectTimeout=30',
+      'nokey@localhost.run',
+    ], { stdio: ['ignore', outFd, errFd] });
+    fs.closeSync(outFd);
+    fs.closeSync(errFd);
+
+    let settled = false;
+    const settle = (url) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(poll);
+      if (!url) log('WARNING: no localhost.run URL for webhook — proceeding without tunnel');
+      resolve(url || '');
+    };
+
+    lrProc.on('error', (err) => { log(`localhost.run spawn error: ${err.message}`); settle(null); });
+    lrProc.on('exit', (code) => { log(`localhost.run exited (code=${code})`); settle(null); });
+
+    const poll = setInterval(() => {
+      try {
+        const content = fs.readFileSync(LR_LOG, 'utf8');
+        const m = content.match(LR_URL_RE);
+        if (m) settle(m[0]);
+      } catch (_) {}
+    }, 500);
+
+    setTimeout(() => settle(null), 60_000);
+  });
+}
+
+async function openTunnel() {
+  const url = await tryCloudflared();
+  if (url) { log(`webhook tunnel: ${url} (cloudflared)`); return url; }
+  const fallback = await tryLocalhostRun();
+  if (fallback) log(`webhook tunnel: ${fallback} (localhost.run)`);
+  return fallback;
 }
 
 // ── PR number wait ────────────────────────────────────────────────────────────
@@ -206,7 +268,7 @@ async function sweepStaleWebhooks() {
   try {
     const hooks = await githubApi('GET', '/hooks');
     if (!Array.isArray(hooks)) return;
-    const cloudflareHooks = hooks.filter((h) => h.config?.url?.includes('trycloudflare.com'));
+    const cloudflareHooks = hooks.filter((h) => h.config?.url?.includes('trycloudflare.com') || h.config?.url?.includes('.lhr.'));
     if (cloudflareHooks.length === 0) return;
     log(`checking ${cloudflareHooks.length} trycloudflare webhook(s) for staleness...`);
 
@@ -295,10 +357,8 @@ async function main() {
   startReceiver(null);
   await waitForPort(WEBHOOK_PORT);
 
-  // 2. Start cloudflared tunnel
-  log('starting cloudflared tunnel...');
-  const webhookUrl = await startCloudflared();
-  log(`webhook tunnel: ${webhookUrl}`);
+  // 2. Open tunnel (cloudflared → localhost.run fallback)
+  const webhookUrl = await openTunnel();
 
   // 3. Wait for PR number
   log(`waiting for PR number at ${PR_NUMBER_FILE}...`);
@@ -309,11 +369,15 @@ async function main() {
   startReceiver(prNumber);
   await waitForPort(WEBHOOK_PORT);
 
-  // 5. Register webhook
-  hookId = await registerWebhook(webhookUrl, prNumber);
-  if (!hookId) {
-    log('WARNING: webhook registration failed after 5 attempts — polling-only mode');
-    log('/feedback comments will NOT be detected; merge/close polling still active');
+  // 5. Register webhook (skip if no tunnel URL)
+  if (webhookUrl) {
+    hookId = await registerWebhook(webhookUrl, prNumber);
+    if (!hookId) {
+      log('WARNING: webhook registration failed after 5 attempts — polling-only mode');
+      log('/feedback comments will NOT be detected; merge/close polling still active');
+    }
+  } else {
+    log('WARNING: no tunnel URL — skipping webhook registration, polling-only mode');
   }
 
   // 6. Main loop
