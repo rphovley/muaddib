@@ -53,9 +53,9 @@ struct PinnedPanelView: View {
 
     @ViewBuilder
     private var pillsRow: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: pillsAlignment, spacing: 0) {
             if openUpward {
-                Color.clear.frame(height: 68)
+                Color.clear.frame(width: 0, height: 68)
             }
             HStack(spacing: 4) {
                 ForEach(monitor.workers) { worker in
@@ -73,7 +73,7 @@ struct PinnedPanelView: View {
             .padding(.horizontal, 12)
             .padding(.bottom, 8)
             if !openUpward {
-                Color.clear.frame(height: 68)
+                Color.clear.frame(width: 0, height: 68)
             }
         }
     }
