@@ -52,7 +52,7 @@ async function testFallbackHasApiProject() {
     const api = cfg.projects.find((p) => p.seedScript);
     assert(api, 'fallback should have one API project with seedScript');
     assert(api.path === 'projects/api', `expected path=projects/api, got ${api.path}`);
-    assert(api.devScript === 'api:dev', `expected devScript=api:dev, got ${api.devScript}`);
+    assert(api.devScript === 'npm run api:dev', `expected devScript=npm run api:dev, got ${api.devScript}`);
     assert(api.port === 8081, `expected port=8081, got ${api.port}`);
   } finally {
     fs.rmSync(tmp, { recursive: true });

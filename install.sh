@@ -318,7 +318,11 @@ if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
             read -r _yn; echo
             if [[ "${_yn:-}" =~ ^[Yy]$ ]]; then
                 cd "$REPO_ROOT"
-                docker build -f muaddib/Dockerfile.worker -t "$WORKER_IMAGE" .
+                PROJECT_DOCKERFILE=".muaddib/Dockerfile.worker"
+                WORKER_DOCKERFILE="muaddib/Dockerfile.worker"
+                [ -f "$PROJECT_DOCKERFILE" ] && WORKER_DOCKERFILE="$PROJECT_DOCKERFILE"
+                docker build -f muaddib/Dockerfile.base -t muaddib-base:latest .
+                docker build -f "$WORKER_DOCKERFILE" -t "$WORKER_IMAGE" .
                 ok "${WORKER_IMAGE} built"
             else
                 info "Build later: npm run muaddib:build"

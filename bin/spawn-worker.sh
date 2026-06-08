@@ -102,7 +102,11 @@ echo "→ Spawning ${PROJECT}: API :${API_PORT}  DB :${DB_PORT}  branch ${BRANCH
 export MUADDIB_WORKER_IMAGE="${MUADDIB_PROJECT_NAME}-worker:latest"
 if ! docker image inspect "$MUADDIB_WORKER_IMAGE" >/dev/null 2>&1; then
     echo "→ Building worker image (first run or image removed)…"
-    docker build -f "$FLEET_DIR/Dockerfile.worker" -t "$MUADDIB_WORKER_IMAGE" "$REPO_ROOT"
+    PROJECT_DOCKERFILE="$REPO_ROOT/.muaddib/Dockerfile.worker"
+    WORKER_DOCKERFILE="$FLEET_DIR/Dockerfile.worker"
+    [ -f "$PROJECT_DOCKERFILE" ] && WORKER_DOCKERFILE="$PROJECT_DOCKERFILE"
+    docker build -f "$FLEET_DIR/Dockerfile.base" -t muaddib-base:latest "$REPO_ROOT"
+    docker build -f "$WORKER_DOCKERFILE" -t "$MUADDIB_WORKER_IMAGE" "$REPO_ROOT"
 fi
 
 docker compose -p "$PROJECT" \

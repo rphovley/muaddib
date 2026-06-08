@@ -29,9 +29,9 @@ function loadConfig(repoDir) {
   } catch (_) {
     return {
       projects: [
-        { name: 'api',       path: 'projects/api',       devScript: 'api:dev',       port: 8081, seedScript: 'projects/api/scripts/seed-preview.ts' },
-        { name: 'portal',    path: 'projects/portal',    devScript: 'portal:dev',    port: 5173 },
-        { name: 'homeowner', path: 'projects/homeowner', devScript: 'homeowner:dev', port: 5174 },
+        { name: 'api',       path: 'projects/api',       devScript: 'npm run api:dev',       port: 8081, seedScript: 'projects/api/scripts/seed-preview.ts' },
+        { name: 'portal',    path: 'projects/portal',    devScript: 'npm run portal:dev',    port: 5173 },
+        { name: 'homeowner', path: 'projects/homeowner', devScript: 'npm run homeowner:dev', port: 5174 },
       ],
     };
   }
@@ -217,7 +217,7 @@ async function main() {
 
   // 3. API dev server
   log('starting API dev server...');
-  startWithRestart('npm', ['run', apiProject.devScript], '/tmp/preview-api.log');
+  startWithRestart('sh', ['-c', apiProject.devScript], '/tmp/preview-api.log');
   await waitForPort(apiProject.port);
   log(`API server ready on :${apiProject.port}`);
 
@@ -228,7 +228,7 @@ async function main() {
   if (frontendProjects.length > 0) {
     log('starting frontend dev servers...');
     for (const p of frontendProjects) {
-      startWithRestart('npm', ['run', p.devScript], `/tmp/preview-${p.name}.log`, { env: { VITE_API_URL: apiTunnelUrl } });
+      startWithRestart('sh', ['-c', p.devScript], `/tmp/preview-${p.name}.log`, { env: { VITE_API_URL: apiTunnelUrl } });
     }
     const frontendPorts = frontendProjects.filter((p) => p.port).map((p) => p.port);
     if (frontendPorts.length > 0) {

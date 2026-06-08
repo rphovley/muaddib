@@ -1,0 +1,33 @@
+# Base image: Node.js toolchain + system tools + Claude Code CLI.
+# All workers (Node or not) extend this image. Project-specific runtimes and
+# deps go into Dockerfile.worker (or a project's .muaddib/Dockerfile.worker).
+#   docker build -f muaddib/Dockerfile.base -t muaddib-base:latest .
+FROM node:22-bookworm-slim
+
+# Toolchain: git (clone/push), tmux (attachable session), jq (orchestrate.sh),
+# psql client, ps (hooks/debug), wget (gh repo key), openssh-client (localhost.run fallback).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git tmux jq ca-certificates postgresql-client procps wget openssh-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# GitHub CLI — muaddib opens PRs via `gh` (auto-auths from GITHUB_TOKEN).
+RUN mkdir -p -m 755 /etc/apt/keyrings \
+    && wget -nv -O /etc/apt/keyrings/githubcli-archive-keyring.gpg https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+    && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/*
+
+# cloudflared — per-worker PR preview tunnels (quick tunnel, no account needed).
+RUN CF_ARCH=$(dpkg --print-architecture) \
+    && wget -nv -O /usr/local/bin/cloudflared \
+       "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CF_ARCH}" \
+    && chmod +x /usr/local/bin/cloudflared
+
+# Claude Code CLI.
+RUN npm install -g @anthropic-ai/claude-code
+
+RUN useradd -m -s /bin/bash worker
+USER worker
+RUN mkdir -p /home/worker/.claude /home/worker/repo

@@ -1,37 +1,8 @@
 # Worker image: an isolated, all-commands-enabled Claude Code session.
-# BUILD CONTEXT IS THE REPO ROOT, so project dependencies can be pre-installed:
-#   docker build -f muaddib/Dockerfile.worker -t quotethat-worker .
-# Runs inside Docker Desktop's Linux VM — no access to the macOS host beyond the
-# narrow mounts wired in docker-compose.worker.yml.
-FROM node:22-bookworm
-
-# Toolchain: git (clone/push), tmux (attachable session), jq (orchestrate.sh),
-# psql client, ps (hooks/debug), wget (gh repo key), openssh-client (localhost.run fallback).
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        git tmux jq ca-certificates postgresql-client procps wget openssh-client \
-    && rm -rf /var/lib/apt/lists/*
-
-# GitHub CLI — muaddib opens PRs via `gh` (auto-auths from GITHUB_TOKEN).
-RUN mkdir -p -m 755 /etc/apt/keyrings \
-    && wget -nv -O /etc/apt/keyrings/githubcli-archive-keyring.gpg https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-    && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-        > /etc/apt/sources.list.d/github-cli.list \
-    && apt-get update && apt-get install -y --no-install-recommends gh \
-    && rm -rf /var/lib/apt/lists/*
-
-# cloudflared — per-worker PR preview tunnels (quick tunnel, no account needed).
-RUN CF_ARCH=$(dpkg --print-architecture) \
-    && wget -nv -O /usr/local/bin/cloudflared \
-       "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CF_ARCH}" \
-    && chmod +x /usr/local/bin/cloudflared
-
-# Claude Code CLI.
-RUN npm install -g @anthropic-ai/claude-code
-
-RUN useradd -m -s /bin/bash worker
-USER worker
-RUN mkdir -p /home/worker/.claude /home/worker/repo
+# Extends muaddib-base:latest (toolchain layer). Build context is repo root.
+# Build both images with: npm run muaddib:build
+# Or use a project's .muaddib/Dockerfile.worker to override this file.
+FROM muaddib-base:latest
 
 # --- Pre-install project dependencies (Linux-native, layer-cached) -----------
 # Copy ONLY the manifests first so this layer re-runs only when lockfiles change.
