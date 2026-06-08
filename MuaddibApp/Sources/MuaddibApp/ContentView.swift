@@ -37,6 +37,7 @@ struct ContentView: View {
                     let suffix = needsYouCount > 0 ? " · \(needsYouCount) needs you" : ""
                     Text("\(monitor.workers.count) agent\(monitor.workers.count == 1 ? "" : "s")\(suffix)")
                         .font(.system(size: 11))
+                        .lineLimit(1)
                         .foregroundStyle(
                             needsYouCount > 0
                                 ? Color(red: 0.95, green: 0.78, blue: 0.35)
@@ -164,6 +165,7 @@ struct ContentView: View {
 struct WorkerRow: View {
     let worker: WorkerInfo
     @State private var copied = false
+    @State private var isTearingDown = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -224,10 +226,28 @@ struct WorkerRow: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+
+            Button(action: teardown) {
+                Image(systemName: isTearingDown ? "hourglass" : "trash")
+                    .font(.system(size: 11))
+                    .foregroundStyle(isTearingDown ? Color.secondary : Color(red: 0.92, green: 0.52, blue: 0.52))
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(isTearingDown)
+            .help("Teardown worker")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .contentShape(Rectangle())
+    }
+
+    private func teardown() {
+        isTearingDown = true
+        let id = worker.id
+        Task.detached(priority: .userInitiated) {
+            TerminalLauncher.teardownWorker(workerIndex: id)
+        }
     }
 
     private var statusColor: Color {

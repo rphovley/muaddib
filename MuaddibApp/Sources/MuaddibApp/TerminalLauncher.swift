@@ -68,4 +68,28 @@ enum TerminalLauncher {
         var error: NSDictionary?
         NSAppleScript(source: source)?.executeAndReturnError(&error)
     }
+
+    // Runs teardown-worker.sh <workerIndex> in the background.
+    // Blocks the calling thread until the script exits — call from a detached Task.
+    static func teardownWorker(workerIndex: Int) {
+        guard let script = teardownScriptPath() else { return }
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/bin/bash")
+        proc.arguments = [script, "\(workerIndex)"]
+        proc.standardOutput = Pipe()
+        proc.standardError = Pipe()
+        try? proc.run()
+        proc.waitUntilExit()
+    }
+
+    // Locates teardown-worker.sh relative to the app bundle:
+    // <repo>/muaddib/MuaddibApp/MuaddibApp.app → <repo>/muaddib/bin/teardown-worker.sh
+    private static func teardownScriptPath() -> String? {
+        let script = URL(fileURLWithPath: Bundle.main.bundlePath)
+            .deletingLastPathComponent()  // MuaddibApp/
+            .deletingLastPathComponent()  // muaddib/
+            .appendingPathComponent("bin/teardown-worker.sh")
+            .path
+        return FileManager.default.isExecutableFile(atPath: script) ? script : nil
+    }
 }
