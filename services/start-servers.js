@@ -180,6 +180,7 @@ async function openTunnel(port, cfLog, lrLog) {
   }
   const fallback = await tryLocalhostRun(port, lrLog);
   if (fallback) log(`:${port} → ${fallback} (localhost.run)`);
+  if (!fallback) log(`WARNING: :${port} — all tunnel methods failed, URL will be empty`);
   return fallback;
 }
 

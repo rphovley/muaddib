@@ -10,7 +10,7 @@ Fleet-safe wrapup step. **Never calls `AskUserQuestion`.**
 `$ARGUMENTS` is the Linear ticket identifier. The runner injects these STATE_* env vars from worker state:
 - `STATE_BRANCH` — the feature branch name
 - `STATE_TICKET_URL` — the Linear ticket URL
-- `STATE_API_TUNNEL_URL`, `STATE_PORTAL_URL`, `STATE_HO_URL` — preview tunnel URLs (empty in bug workflows)
+- `STATE_API_TUNNEL_URL`, `STATE_PORTAL_URL`, `STATE_HO_URL` — preview tunnel URLs
 
 ## Step 1 — Verify branch
 
@@ -94,6 +94,16 @@ git push -u origin "$STATE_BRANCH"
 
 Use STATE_* vars for preview URLs; fall back to `(unavailable)` for any empty value.
 
+Compute the homeowner credential before opening the PR — only combine the URL and magic-link when both are present:
+
+```bash
+if [ -n "$STATE_HO_URL" ] && [ -n "$HO_MAGIC_LINK" ]; then
+  HO_CREDENTIAL="${STATE_HO_URL}${HO_MAGIC_LINK} _(magic-link — open directly)_"
+else
+  HO_CREDENTIAL="(unavailable)"
+fi
+```
+
 ```bash
 REPO="${REPO_DIR:-/home/worker/repo}"
 gh pr create --base main \
@@ -116,7 +126,7 @@ $STATE_TICKET_URL
 | Role | Login |
 |------|-------|
 | Contractor (Portal) | **$PREVIEW_EMAIL** / $PREVIEW_PASSWORD |
-| Homeowner | ${STATE_HO_URL}${HO_MAGIC_LINK} _(magic-link — open directly)_ |
+| Homeowner | $HO_CREDENTIAL |
 
 _Preview runs in a sandboxed Docker worker. Tear down with \`./muaddib/bin/teardown-worker.sh <N>\`._
 _Leave feedback on the PR — the agent is in feedback mode and will address it._

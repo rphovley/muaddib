@@ -114,7 +114,7 @@
       "id": "wrapup",
       "type": "claude-tui",
       "skill": "commit-and-pr",
-      "stateReads": ["branch", "ticket_url"],
+      "stateReads": ["branch", "ticket_url", "api_tunnel_url", "portal_url", "ho_url"],
       "stateWrites": ["pr_number"]
     }
   ]
