@@ -41,6 +41,11 @@ const MUADDIB_CONFIG = (() => {
 })();
 const PROJECT_NAME = MUADDIB_CONFIG.projectName || "quotethat";
 const TUNNEL_LOG = "/tmp/cf-dispatch.log";
+const LR_LOG = "/tmp/lr-dispatch.log";
+
+const CF_URL_RE = /https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/;
+const LR_URL_RE = /https:\/\/[a-zA-Z0-9-]+\.lhr\.[a-z]+/;
+const CF_FAIL_RE = /429|error code: 1015|failed to unmarshal|failed to request/i;
 
 const PORT = parseInt(process.env.DISPATCH_PORT || "3999", 10);
 const SECRET =
@@ -50,7 +55,7 @@ const LINEAR_TEAM_ID = process.env.LINEAR_TEAM_ID || "";
 const MAX_WORKERS = parseInt(process.env.MAX_DISPATCH_WORKERS || "8", 10);
 
 let webhookId = null;
-let cloudflaredProc = null;
+let tunnelProc = null;
 let flushInterval = null;
 let server = null;
 
@@ -68,49 +73,102 @@ function validateEnv() {
     throw new Error(`Missing required env: ${missing.join(", ")}`);
 }
 
-// ─── cloudflared ──────────────────────────────────────────────────────────────
+// ─── tunnel (cloudflared with localhost.run fallback) ─────────────────────────
 
-function startCloudflared() {
-  return new Promise((resolve, reject) => {
-    try {
-      fs.unlinkSync(TUNNEL_LOG);
-    } catch (_) {}
-    const logFd = fs.openSync(TUNNEL_LOG, "w");
-    cloudflaredProc = spawn(
+function tryCloudflared(port, logFile) {
+  return new Promise((resolve) => {
+    log("trying cloudflared...");
+    fs.writeFileSync(logFile, "");
+    const logFd = fs.openSync(logFile, "w");
+    const proc = spawn(
       "cloudflared",
-      [
-        "tunnel",
-        "--url",
-        `http://localhost:${PORT}`,
-        "--no-autoupdate",
-        "--protocol",
-        "http2",
-      ],
+      ["tunnel", "--url", `http://localhost:${port}`, "--no-autoupdate", "--protocol", "http2"],
       { stdio: ["ignore", logFd, logFd] },
     );
     fs.closeSync(logFd);
+    tunnelProc = proc;
 
-    cloudflaredProc.on("exit", (code) =>
-      log(`cloudflared exited (code=${code})`),
-    );
+    let settled = false;
+    const settle = (url) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(poll);
+      resolve(url);
+    };
 
-    const start = Date.now();
+    proc.on("exit", (code) => {
+      log(`cloudflared exited (code=${code})`);
+      settle(null);
+    });
+
     const poll = setInterval(() => {
-      if (Date.now() - start > 60_000) {
-        clearInterval(poll);
-        reject(new Error("cloudflared tunnel URL not found after 60s"));
-        return;
-      }
       try {
-        const content = fs.readFileSync(TUNNEL_LOG, "utf8");
-        const m = content.match(/https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/);
-        if (m) {
-          clearInterval(poll);
-          resolve(m[0]);
+        const content = fs.readFileSync(logFile, "utf8");
+        const urlMatch = content.match(CF_URL_RE);
+        if (urlMatch) { settle(urlMatch[0]); return; }
+        if (CF_FAIL_RE.test(content)) {
+          try { proc.kill(); } catch (_) {}
+          settle(null);
         }
       } catch (_) {}
-    }, 1000);
+    }, 500);
   });
+}
+
+function tryLocalhostRun(port, logFile) {
+  return new Promise((resolve) => {
+    log("falling back to localhost.run...");
+    fs.writeFileSync(logFile, "");
+    const outFd = fs.openSync(logFile, "a");
+    const errFd = fs.openSync(logFile, "a");
+    const proc = spawn("ssh", [
+      "-R", `80:localhost:${port}`,
+      "-o", "StrictHostKeyChecking=no",
+      "-o", "BatchMode=yes",
+      "-o", "ExitOnForwardFailure=yes",
+      "-o", "ConnectTimeout=30",
+      "-o", "ServerAliveInterval=30",
+      "-o", "ServerAliveCountMax=3",
+      "nokey@localhost.run",
+    ], { stdio: ["ignore", outFd, errFd] });
+    fs.closeSync(outFd);
+    fs.closeSync(errFd);
+    tunnelProc = proc;
+
+    let settled = false;
+    const settle = (url) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(poll);
+      if (!url) log("WARNING: no localhost.run URL — proceeding empty");
+      resolve(url || "");
+    };
+
+    proc.on("error", (err) => { log(`localhost.run spawn error: ${err.message}`); settle(null); });
+    proc.on("exit", (code) => { log(`localhost.run exited (code=${code})`); settle(null); });
+
+    const poll = setInterval(() => {
+      try {
+        const content = fs.readFileSync(logFile, "utf8");
+        const m = content.match(LR_URL_RE);
+        if (m) settle(m[0]);
+      } catch (_) {}
+    }, 500);
+
+    setTimeout(() => settle(null), 60_000);
+  });
+}
+
+async function openTunnel(port, cfLog, lrLog) {
+  const url = await tryCloudflared(port, cfLog);
+  if (url) {
+    log(`tunnel: ${url} (cloudflared)`);
+    return url;
+  }
+  const fallback = await tryLocalhostRun(port, lrLog);
+  if (fallback) log(`tunnel: ${fallback} (localhost.run)`);
+  if (!fallback) log("WARNING: all tunnel methods failed — URL will be empty");
+  return fallback;
 }
 
 // ─── worker slot counting ─────────────────────────────────────────────────────
@@ -402,9 +460,9 @@ async function shutdown() {
       log(`deregisterWebhook error: ${err.message}`);
     }
   }
-  if (cloudflaredProc) {
+  if (tunnelProc) {
     try {
-      cloudflaredProc.kill();
+      tunnelProc.kill();
     } catch (_) {}
   }
   process.exit(0);
@@ -454,10 +512,9 @@ async function main() {
     });
   });
 
-  // 2. Start cloudflared tunnel
-  log("starting cloudflared tunnel...");
-  const tunnelUrl = await startCloudflared();
-  log(`tunnel: ${tunnelUrl}`);
+  // 2. Start tunnel (cloudflared with localhost.run fallback)
+  log("starting tunnel...");
+  const tunnelUrl = await openTunnel(PORT, TUNNEL_LOG, LR_LOG);
 
   // 3. Register Linear webhook
   log(`registering Linear webhook for team ${LINEAR_TEAM_ID}...`);
