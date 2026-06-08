@@ -8,10 +8,6 @@ tells you which worker needs you.
 
 ## Why it's built this way
 
-- **Interactive, not `claude -p`.** The June 15 2026 change routes `claude -p`
-  / Agent SDK usage to a separate, small subscription credit pool. Interactive
-  TUI sessions draw from the regular interactive limits, so each worker runs a
-  real `claude` session inside its container.
 - **Containerized for blast radius.** All-commands-on damage is contained to the
   container (inside Docker Desktop's Linux VM), never your Mac — provided we
   don't hand the container the keys to the host. So: **no docker.sock mount**,
@@ -23,6 +19,9 @@ tells you which worker needs you.
   file's contents: the compose force-overrides `PG_*` / `DATABASE_URL` to the
   local sidecar, so a worker can't connect to a cloud/prod database even if a
   prod URL were dropped into the env file by mistake.
+- **Easy to make interactive** When building with LLMs, often you need to come in and
+  make adjustments. This setup makes it easy to let the LLMs run uninterrupted
+  or jump in when needed for guidance
 
 ## `.muaddib/` project directory
 
