@@ -1,11 +1,15 @@
 import AppKit
 import SwiftUI
 
+private final class KeyablePanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+}
+
 @MainActor
 @Observable
 final class NewAgentPanelManager: NSObject, NSWindowDelegate {
     private(set) var isOpen = false
-    private var panel: NSPanel?
+    private var panel: KeyablePanel?
 
     func open() {
         if isOpen {
@@ -20,9 +24,9 @@ final class NewAgentPanelManager: NSObject, NSWindowDelegate {
         )
         hostingView.sizingOptions = .intrinsicContentSize
 
-        let p = NSPanel(
+        let p = KeyablePanel(
             contentRect: NSRect(x: 0, y: 0, width: 360, height: 10),
-            styleMask: [.borderless],
+            styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )

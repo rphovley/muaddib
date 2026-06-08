@@ -99,19 +99,63 @@ final class LinearService {
         }
     }
 
+    func fetchViewerId() async throws -> String {
+        let query = "query { viewer { id } }"
+        let response = try await graphql(query: query, variables: [:])
+        guard let data = response["data"] as? [String: Any],
+              let viewer = data["viewer"] as? [String: Any],
+              let id = viewer["id"] as? String else {
+            throw LinearError.parseError("Unexpected viewer response structure")
+        }
+        return id
+    }
+
+    func fetchTodoStateId(teamId: String) async throws -> String? {
+        let query = """
+        query TeamStates($teamId: String!) {
+          team(id: $teamId) {
+            states {
+              nodes {
+                id
+                name
+                type
+              }
+            }
+          }
+        }
+        """
+        let response = try await graphql(query: query, variables: ["teamId": teamId])
+        guard let data = response["data"] as? [String: Any],
+              let team = data["team"] as? [String: Any],
+              let states = team["states"] as? [String: Any],
+              let nodes = states["nodes"] as? [[String: Any]] else {
+            throw LinearError.parseError("Unexpected states response structure")
+        }
+        let todo = nodes.first {
+            ($0["type"] as? String) == "unstarted" &&
+            (($0["name"] as? String)?.lowercased() == "todo" ||
+             ($0["name"] as? String)?.lowercased() == "to do")
+        } ?? nodes.first { ($0["type"] as? String) == "unstarted" }
+        return todo?["id"] as? String
+    }
+
     func createIssue(
         title: String,
         description: String?,
         labelIds: [String],
-        teamId: String
+        teamId: String,
+        assigneeId: String? = nil,
+        stateId: String? = nil
     ) async throws -> String {
         let mutation = """
-        mutation CreateIssue($title: String!, $description: String, $labelIds: [String!], $teamId: String!) {
+        mutation CreateIssue($title: String!, $description: String, $labelIds: [String!], $teamId: String!, $assigneeId: String, $stateId: String) {
           issueCreate(input: {
             title: $title,
             description: $description,
             labelIds: $labelIds,
-            teamId: $teamId
+            teamId: $teamId,
+            assigneeId: $assigneeId,
+            stateId: $stateId
           }) {
             success
             issue {
@@ -130,6 +174,12 @@ final class LinearService {
         }
         if !labelIds.isEmpty {
             variables["labelIds"] = labelIds
+        }
+        if let assigneeId {
+            variables["assigneeId"] = assigneeId
+        }
+        if let stateId {
+            variables["stateId"] = stateId
         }
         let response = try await graphql(query: mutation, variables: variables)
 
@@ -198,7 +248,7 @@ final class LinearService {
     private func graphql(query: String, variables: [String: Any]) async throws -> [String: Any] {
         var request = URLRequest(url: LinearService.graphqlEndpoint)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue(apiKey, forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: ["query": query, "variables": variables])
 

@@ -189,7 +189,11 @@ struct NewAgentComposerView: View {
                     throw LinearService.LinearError.missingTeamId
                 }
 
-                let allLabels = try await service.fetchLabels(teamId: teamId)
+                async let labelsFetch = service.fetchLabels(teamId: teamId)
+                async let viewerFetch = service.fetchViewerId()
+                async let stateFetch = service.fetchTodoStateId(teamId: teamId)
+                let (allLabels, viewerId, todoStateId) = try await (labelsFetch, viewerFetch, stateFetch)
+
                 let wantedNames = Set(["auto", selectedType.rawValue])
                 let labelIds = allLabels
                     .filter { wantedNames.contains($0.name.lowercased()) }
@@ -209,7 +213,9 @@ struct NewAgentComposerView: View {
                     title: title.trimmingCharacters(in: .whitespaces),
                     description: finalDescription.isEmpty ? nil : finalDescription,
                     labelIds: labelIds,
-                    teamId: teamId
+                    teamId: teamId,
+                    assigneeId: viewerId,
+                    stateId: todoStateId
                 )
                 onDone()
             } catch {
