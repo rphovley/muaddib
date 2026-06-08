@@ -5,8 +5,8 @@ set -euo pipefail
 
 FLEET_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$FLEET_DIR/bin/read-config.sh"
-ENV_EXAMPLE="$REPO_ROOT/non-prod.env.example"
-ENV_FILE="$REPO_ROOT/non-prod.env"
+ENV_EXAMPLE="$REPO_ROOT/.muaddib/secrets.env.example"
+ENV_FILE="$REPO_ROOT/.muaddib/secrets.env"
 
 # ─── output helpers ───────────────────────────────────────────────────────────
 
@@ -68,7 +68,7 @@ linear_query() {
 # ─── header ───────────────────────────────────────────────────────────────────
 
 printf "\n${BOLD}muaddib — guided setup${RESET}\n"
-printf "Checks prerequisites, sets up non-prod.env, and builds the worker image.\n"
+printf "Checks prerequisites, sets up .muaddib/secrets.env, and builds the worker image.\n"
 printf "Safe to re-run at any time.\n"
 
 # ─── 1. prerequisites ─────────────────────────────────────────────────────────
@@ -134,7 +134,7 @@ check_shell_token CLAUDE_CODE_OAUTH_TOKEN \
 check_shell_token GITHUB_TOKEN \
     "Create a fine-grained PAT: github.com/settings/personal-access-tokens/new  (Contents r/w + Pull requests w)"
 
-# LINEAR_API_KEY in shell is required for dispatch; also used to populate non-prod.env below.
+# LINEAR_API_KEY in shell is required for dispatch; also used to populate .muaddib/secrets.env below.
 if [ -n "${LINEAR_API_KEY:-}" ]; then
     ok "LINEAR_API_KEY is set in shell"
 fi
@@ -143,15 +143,16 @@ if [ -n "${LINEAR_TEAM_ID:-}" ]; then
     ok "LINEAR_TEAM_ID is set in shell"
 fi
 
-# ─── 4. non-prod.env ──────────────────────────────────────────────────────────
+# ─── 4. .muaddib/secrets.env ──────────────────────────────────────────────────
 
-step "4. non-prod.env"
+step "4. .muaddib/secrets.env"
 
 if [ ! -f "$ENV_FILE" ]; then
+    mkdir -p "$REPO_ROOT/.muaddib"
     cp "$ENV_EXAMPLE" "$ENV_FILE"
-    ok "Created non-prod.env from template"
+    ok "Created .muaddib/secrets.env from template"
 else
-    ok "non-prod.env exists"
+    ok ".muaddib/secrets.env exists"
 fi
 
 # Resolve the best API key we have: shell env takes precedence over file.
@@ -173,7 +174,7 @@ else
         read -rs BEST_API_KEY; echo
         if ! is_placeholder "$BEST_API_KEY"; then
             env_set LINEAR_API_KEY "$BEST_API_KEY"
-            ok "LINEAR_API_KEY saved to non-prod.env"
+            ok "LINEAR_API_KEY saved to .muaddib/secrets.env"
         else
             info "Skipped — workers and dispatch won't be able to read/post to Linear."
         fi
@@ -252,7 +253,7 @@ elif [ "$HAS_JQ" -eq 1 ] && ! is_placeholder "$BEST_API_KEY"; then
         read -r _input; echo
         if ! is_placeholder "$_input"; then
             env_set LINEAR_TEAM_ID "$_input"
-            ok "LINEAR_TEAM_ID saved to non-prod.env"
+            ok "LINEAR_TEAM_ID saved to .muaddib/secrets.env"
             BEST_TEAM="$_input"
         fi
     else
@@ -293,7 +294,7 @@ for _var in LINEAR_API_KEY LINEAR_TEAM_ID; do
         _val="$(env_get LINEAR_TEAM_ID)"
     fi
     if ! is_placeholder "$_val"; then
-        info "export ${_var}=${_val:0:12}…  ← set in non-prod.env; also add to your shell profile"
+        info "export ${_var}=${_val:0:12}…  ← set in .muaddib/secrets.env; also add to your shell profile"
     else
         note "${_var} must be exported before running npm run muaddib:start"
     fi

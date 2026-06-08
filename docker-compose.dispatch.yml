@@ -9,7 +9,7 @@
 # Prerequisites — export in shell before muaddib:start:
 #   CLAUDE_CODE_OAUTH_TOKEN  (claude setup-token)
 #   GITHUB_TOKEN             (repo-scoped PAT for opening PRs)
-# Dispatch-specific config goes in muaddib/non-prod.env (see non-prod.env.example).
+# Dispatch-specific config goes in .muaddib/secrets.env (see .muaddib/secrets.env.example).
 
 services:
   dispatch:
@@ -19,7 +19,7 @@ services:
     image: ${MUADDIB_DISPATCH_IMAGE:-quotethat-dispatch:latest}
     restart: unless-stopped
     env_file:
-      - non-prod.env
+      - ../.muaddib/secrets.env
     environment:
       REPO_ROOT: /repo
       # HOST_FLEET_DIR: real path of muaddib/ on the host machine.

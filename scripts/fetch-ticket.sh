@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-: "${LINEAR_API_KEY:?LINEAR_API_KEY not set — add it to non-prod.env}"
+: "${LINEAR_API_KEY:?LINEAR_API_KEY not set — add it to .muaddib/secrets.env}"
 : "${TASK:?TASK not set}"
 : "${WORKER_INDEX:?WORKER_INDEX not set}"
 

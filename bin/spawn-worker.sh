@@ -4,7 +4,7 @@
 #
 # Ports (per your spec): API = 8090 + (N-1), Postgres = 5442 + (N-1).
 # Secrets: subscription + GitHub tokens come from your shell env; non-prod app
-# secrets come from a local non-prod.env, injected as VALUES into the container.
+# secrets come from a local .muaddib/secrets.env, injected as VALUES into the container.
 set -euo pipefail
 
 BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -46,12 +46,12 @@ CLAUDE_SKILLS_DIR="$HOST_FLEET_DIR/status/.skills-${WORKER}"
 : "${GITHUB_TOKEN:?export a repo-scoped GitHub token (push branches + open PRs only)}"
 
 # --- non-prod app secrets: a local dotenv file (dev/local values only) ---
-SHARED_ENV="${WORKER_SHARED_ENV:-$REPO_ROOT/non-prod.env}"
+SHARED_ENV="${WORKER_SHARED_ENV:-$REPO_ROOT/.muaddib/secrets.env}"
 [ -f "$SHARED_ENV" ] || {
-    echo "missing ${SHARED_ENV} — copy non-prod.env.example to non-prod.env and fill it in" >&2
+    echo "missing ${SHARED_ENV} — copy .muaddib/secrets.env.example to .muaddib/secrets.env and fill it in" >&2
     exit 1
 }
-ENV_FILE="$REPO_ROOT/.worker-${WORKER}.env"
+ENV_FILE="$REPO_ROOT/.muaddib/.worker-${WORKER}.env"
 cp "$SHARED_ENV" "$ENV_FILE"
 
 # Append worker-specific dynamic values. PG_*/DATABASE_URL are force-overridden
@@ -78,15 +78,15 @@ if [ -n "${WORKFLOW_FILE:-}" ]; then
   esac
 fi
 
-# Let LINEAR_API_KEY come from the shell env too (overrides non-prod.env if set).
+# Let LINEAR_API_KEY come from the shell env too (overrides .muaddib/secrets.env if set).
 [ -n "${LINEAR_API_KEY:-}" ] && echo "LINEAR_API_KEY=${LINEAR_API_KEY}" >>"$ENV_FILE"
 
 chmod 600 "$ENV_FILE"
 
-mkdir -p "$FLEET_DIR/status" && chmod 777 "$FLEET_DIR/status"
+mkdir -p "$REPO_ROOT/.muaddib" && mkdir -p "$FLEET_DIR/status" && chmod 777 "$FLEET_DIR/status"
 
 export WORKER_API_PORT="$API_PORT" WORKER_DB_PORT="$DB_PORT" \
-    WORKER_ENV_FILE="$REPO_ROOT/.worker-${WORKER}.env" WORKER_INDEX="$WORKER" \
+    WORKER_ENV_FILE="$REPO_ROOT/.muaddib/.worker-${WORKER}.env" WORKER_INDEX="$WORKER" \
     CLAUDE_SKILLS_DIR="$CLAUDE_SKILLS_DIR" \
     HOST_TMPDIR="${HOST_TMPDIR:-${TMPDIR:-/tmp}}" \
     HOST_DESKTOP="${HOST_DESKTOP:-$HOME/Desktop}"

@@ -44,20 +44,12 @@ while IFS= read -r p; do
     fi
 done < <(jq -r '.projects[].path' "${MUADDIB_CONFIG_FILE:-$WORKDIR/.muaddib.json}")
 
-# Optional: materialize the dev Firebase service-account FILE (it's gitignored,
-# so it isn't in the fresh clone). Only needed when the agent runs the dev
-# server — test mode skips Firebase init. Provide it base64-encoded in the GCP
-# bundle as FIREBASE_DEV_SA_JSON_B64.
-if [ -n "${FIREBASE_DEV_SA_JSON_B64:-}" ]; then
-    KEYS_DIR="$(jq -r '.firebaseKeyPath // empty' "$WORKDIR/.muaddib.json" 2>/dev/null || true)"
-    if [ -n "$KEYS_DIR" ]; then
-        FNAME="${FIREBASE_DEV_SA_FILENAME:-dev.quotethat-test-firebase-adminsdk-fbsvc-54518044be.json}"
-        mkdir -p "$KEYS_DIR"
-        printf '%s' "$FIREBASE_DEV_SA_JSON_B64" | base64 -d >"$KEYS_DIR/$FNAME"
-        echo "→ wrote dev Firebase service account to $KEYS_DIR/$FNAME"
-    else
-        echo "→ no firebaseKeyPath in .muaddib.json — skipping Firebase SA materialization"
-    fi
+# Run the project hook (if present). Projects drop their own setup logic here
+# (e.g. materializing secrets, writing config files) instead of baking it into
+# this entrypoint. The hook receives the full worker env.
+HOOK="$WORKDIR/.muaddib/hooks/on-worker-start.sh"
+if [ -x "$HOOK" ]; then
+    bash "$HOOK"
 fi
 
 # Wire the Linear MCP via API key (Bearer header) — no OAuth/browser. Same

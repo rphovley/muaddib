@@ -19,11 +19,36 @@ tells you which worker needs you.
   **no host bind-mounts** except two narrow, intentional ones (`status/` rw,
   your `~/.claude/skills` ro), non-root user, and CPU/mem/pids caps.
 - **Local dev secrets, prod unreachable by construction.** App secrets come from
-  a local `non-prod.env` (dev/local values only) loaded straight into the
+  a local `.muaddib/secrets.env` (dev/local values only) loaded straight into the
   container — no secret-manager indirection. The DB is safe regardless of the
   file's contents: the compose force-overrides `PG_*` / `DATABASE_URL` to the
   local sidecar, so a worker can't connect to a cloud/prod database even if a
   prod URL were dropped into the env file by mistake.
+
+## `.muaddib/` project directory
+
+The `.muaddib/` directory at the repo root is the single place for
+project-owned muaddib config and setup. muaddib itself owns nothing
+project-specific — all customisation lives here.
+
+| Path | Purpose |
+|------|---------|
+| `.muaddib/secrets.env.example` | Committed template for the secrets bundle (gitignored: `.muaddib/secrets.env`) |
+| `.muaddib/secrets.env` | Your filled-in secrets (gitignored). Copy from `secrets.env.example`. |
+| `.muaddib/hooks/on-worker-start.sh` | Project hook run by the worker entrypoint after env is loaded. Executable; receives the full worker env. |
+| `.muaddib/.worker-N.env` | Per-worker ephemeral env file (gitignored). Written by `spawn-worker.sh`; never edit by hand. |
+| `.muaddib/plan.md` | Current implementation plan written by the muaddib fleet agent. Not tracked by git. |
+
+### Hook contract
+
+`worker-entrypoint.sh` does exactly two things for project setup:
+
+1. Sources `.muaddib/secrets.env` verbatim into the worker environment.
+2. If `.muaddib/hooks/on-worker-start.sh` exists and is executable, runs it with `bash`.
+
+The hook receives the full worker env (all vars from `secrets.env` plus dynamic
+values like `WORKER_INDEX`, `BRANCH`, `REPO_URL`). Use it for anything that must
+happen on every worker start — materialising secret files, writing config, etc.
 
 ## Port scheme
 
@@ -46,7 +71,7 @@ collide across workers.
 3. **App secrets:** copy the template and fill in dev/local values:
 
    ```bash
-   cp non-prod.env.example non-prod.env    # gitignored; loaded directly by spawn-worker.sh
+   cp .muaddib/secrets.env.example .muaddib/secrets.env    # gitignored; loaded directly by spawn-worker.sh
    ```
 
    The template documents exactly which vars the API requires and the two value
@@ -187,7 +212,7 @@ no socket. Defaults are preserved, so local `npm test` on your Mac is unchanged.
   boundary), so muaddib runs `npm`/`git`/`gh` unattended. Override per-spawn with
   `CLAUDE_PERMISSION_MODE=acceptEdits` to re-gate bash.
 - `gh` is in the image and auto-auths from `GITHUB_TOKEN`, so the PR step works.
-- **Linear MCP** is wired via API key: set `LINEAR_API_KEY` in `non-prod.env` and
+- **Linear MCP** is wired via API key: set `LINEAR_API_KEY` in `.muaddib/secrets.env` and
   the entrypoint registers the official `https://mcp.linear.app/mcp` server with a
   Bearer header (no OAuth/browser). Same tool names as the host setup, so muaddib's
   ticket read/post-back works unchanged. The key acts in Linear as you — scope it
