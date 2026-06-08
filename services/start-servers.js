@@ -125,6 +125,8 @@ function tryLocalhostRun(port, logFile) {
       '-o', 'BatchMode=yes',
       '-o', 'ExitOnForwardFailure=yes',
       '-o', 'ConnectTimeout=30',
+      '-o', 'ServerAliveInterval=30',
+      '-o', 'ServerAliveCountMax=3',
       'nokey@localhost.run',
     ], { stdio: ['ignore', outFd, errFd] });
     fs.closeSync(outFd);
