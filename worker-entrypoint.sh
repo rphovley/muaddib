@@ -30,6 +30,9 @@ git config user.name "agent-worker-${WORKER_INDEX}"
 git config user.email "agent+w${WORKER_INDEX}@${MUADDIB_PROJECT_NAME:-quotethat}.local"
 git fetch --depth 1 origin main
 git checkout -f -B "$BRANCH" FETCH_HEAD
+# Rewrite SSH submodule URLs to HTTPS so the GitHub token works (no SSH key in container).
+git config url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
+git submodule update --init --recursive
 source "$WORKDIR/muaddib/bin/read-config.sh"
 
 # Refresh deps ONLY for projects whose lockfile drifted from the baked one

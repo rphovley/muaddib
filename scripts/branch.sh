@@ -20,8 +20,10 @@ log() { echo "[branch w${WORKER}] $*"; }
 
 cd "$REPO"
 
-# Sync submodules so their state doesn't falsely trigger the dirty-tree guard
-git submodule update --init --recursive 2>/dev/null || true
+# Sync submodules so their state doesn't falsely trigger the dirty-tree guard.
+# --no-fetch: entrypoint already fetched + synced submodules with HTTPS creds;
+# this step only needs a local checkout (no network required).
+git submodule update --init --recursive --no-fetch 2>/dev/null || true
 
 # ── 1. Guard: dirty tree ─────────────────────────────────────────────────────
 
