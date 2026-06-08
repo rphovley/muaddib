@@ -150,6 +150,87 @@ async function findNextFreeWorker() {
   return n;
 }
 
+// ─── status-file cleanup ─────────────────────────────────────────────────────
+
+function _getWorkerIndicesInDir(statusDir) {
+  const indices = new Set();
+  let entries;
+  try {
+    entries = fs.readdirSync(statusDir);
+  } catch (_) {
+    return indices;
+  }
+  const re = /^(?:worker-(\d+)[-.]|\.skills-(\d+)$)/;
+  for (const entry of entries) {
+    const m = entry.match(re);
+    if (!m) continue;
+    const n = parseInt(m[1] !== undefined ? m[1] : m[2], 10);
+    indices.add(n);
+  }
+  return indices;
+}
+
+function _getWorkerFiles(statusDir, n) {
+  let entries;
+  try {
+    entries = fs.readdirSync(statusDir);
+  } catch (_) {
+    return [];
+  }
+  const re = new RegExp(`^(?:worker-${n}[-.]|\\.skills-${n}$)`);
+  return entries
+    .filter((e) => re.test(e))
+    .map((e) => path.join(statusDir, e));
+}
+
+function cleanupWorkerFiles(statusDir, activeIndices) {
+  const allIndices = _getWorkerIndicesInDir(statusDir);
+  for (const n of allIndices) {
+    if (activeIndices.has(n)) continue;
+    const stateFile = path.join(statusDir, `worker-${n}.state`);
+    let state = "";
+    try {
+      state = (fs.readFileSync(stateFile, "utf8").trim().split(/\s+/)[0] || "");
+    } catch (_) {}
+    const workerFiles = _getWorkerFiles(statusDir, n);
+    if (state === "FAILED") {
+      const d = new Date();
+      const pad = (x) => String(x).padStart(2, "0");
+      const ts = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+      const dest = path.join(statusDir, "failed", `worker-${n}-${ts}`);
+      fs.mkdirSync(dest, { recursive: true });
+      for (const f of workerFiles) {
+        try {
+          fs.renameSync(f, path.join(dest, path.basename(f)));
+        } catch (_) {}
+      }
+    } else {
+      for (const f of workerFiles) {
+        try {
+          const stat = fs.statSync(f);
+          if (stat.isDirectory()) {
+            fs.rmSync(f, { recursive: true, force: true });
+          } else {
+            fs.unlinkSync(f);
+          }
+        } catch (_) {}
+      }
+    }
+  }
+}
+
+async function cleanupOrphanedStatusFiles() {
+  const statusDir = path.join(FLEET_DIR, "status");
+  const activeProjects = await getActiveWorkerProjects();
+  const indexRe = new RegExp(`${PROJECT_NAME}-w(\\d+)`);
+  const activeIndices = new Set();
+  for (const p of activeProjects) {
+    const m = p.match(indexRe);
+    if (m) activeIndices.add(parseInt(m[1], 10));
+  }
+  cleanupWorkerFiles(statusDir, activeIndices);
+}
+
 // ─── routing table ────────────────────────────────────────────────────────────
 
 function resolveRoute(labels) {
@@ -387,12 +468,15 @@ async function main() {
   // 4. Start overflow-queue flush interval (every 30 s)
   flushInterval = setInterval(() => {
     flush(trySpawn).catch((err) => log(`flush error: ${err.message}`));
+    cleanupOrphanedStatusFiles().catch((err) =>
+      log(`cleanup error: ${err.message}`),
+    );
   }, 30_000);
 
   log(`ready — port ${PORT}, max workers ${MAX_WORKERS}`);
 }
 
-module.exports = { resolveRoute, handleEvent };
+module.exports = { resolveRoute, handleEvent, cleanupWorkerFiles, cleanupOrphanedStatusFiles };
 
 if (require.main === module) {
   main().catch((err) => {

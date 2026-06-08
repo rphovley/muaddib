@@ -15,7 +15,10 @@
 // testBugTakesPrecedence     — auto + bug + fast → bug workflow (bug wins)
 // testLabelsCaseInsensitive  — mixed-case label names are normalised
 
-const { resolveRoute, handleEvent } = require("../dispatch-daemon");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const { resolveRoute, handleEvent, cleanupWorkerFiles } = require("../dispatch-daemon");
 
 function assertRoute(labels, expectedEntryPoint) {
   const route = resolveRoute(labels);
@@ -321,6 +324,96 @@ async function testAssigneeFilterNotSet() {
   }
 }
 
+// ─── cleanupWorkerFiles ───────────────────────────────────────────────────────
+
+async function testCleanupDeletesDoneOrphan() {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "muaddib-test-"));
+  try {
+    fs.writeFileSync(path.join(tmpDir, "worker-1.state"), "DONE");
+    fs.writeFileSync(path.join(tmpDir, "worker-1.events"), "{}");
+    fs.writeFileSync(path.join(tmpDir, "worker-1-branch.log"), "branch");
+    fs.mkdirSync(path.join(tmpDir, ".skills-1"));
+
+    cleanupWorkerFiles(tmpDir, new Set());
+
+    if (fs.existsSync(path.join(tmpDir, "worker-1.state")))
+      throw new Error("worker-1.state should have been deleted");
+    if (fs.existsSync(path.join(tmpDir, "worker-1.events")))
+      throw new Error("worker-1.events should have been deleted");
+    if (fs.existsSync(path.join(tmpDir, "worker-1-branch.log")))
+      throw new Error("worker-1-branch.log should have been deleted");
+    if (fs.existsSync(path.join(tmpDir, ".skills-1")))
+      throw new Error(".skills-1 should have been deleted");
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+async function testCleanupMovesFailedOrphan() {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "muaddib-test-"));
+  try {
+    fs.writeFileSync(path.join(tmpDir, "worker-2.state"), "FAILED");
+    fs.writeFileSync(path.join(tmpDir, "worker-2.events"), "{}");
+    fs.writeFileSync(path.join(tmpDir, "worker-2-branch.log"), "branch");
+
+    cleanupWorkerFiles(tmpDir, new Set());
+
+    if (fs.existsSync(path.join(tmpDir, "worker-2.state")))
+      throw new Error("worker-2.state should have been moved out");
+    const failedDir = path.join(tmpDir, "failed");
+    if (!fs.existsSync(failedDir))
+      throw new Error("failed/ directory was not created");
+    const workerDirs = fs.readdirSync(failedDir).filter((e) =>
+      e.startsWith("worker-2-"),
+    );
+    if (workerDirs.length === 0)
+      throw new Error("no failed/worker-2-* directory created");
+    const dest = path.join(failedDir, workerDirs[0]);
+    if (!fs.existsSync(path.join(dest, "worker-2.state")))
+      throw new Error("worker-2.state not found in failed dir");
+    if (!fs.existsSync(path.join(dest, "worker-2.events")))
+      throw new Error("worker-2.events not found in failed dir");
+    if (!fs.existsSync(path.join(dest, "worker-2-branch.log")))
+      throw new Error("worker-2-branch.log not found in failed dir");
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+async function testCleanupSkipsActiveWorker() {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "muaddib-test-"));
+  try {
+    fs.writeFileSync(path.join(tmpDir, "worker-3.state"), "DONE");
+    fs.writeFileSync(path.join(tmpDir, "worker-3.events"), "{}");
+
+    cleanupWorkerFiles(tmpDir, new Set([3]));
+
+    if (!fs.existsSync(path.join(tmpDir, "worker-3.state")))
+      throw new Error("worker-3.state should have been preserved (active)");
+    if (!fs.existsSync(path.join(tmpDir, "worker-3.events")))
+      throw new Error("worker-3.events should have been preserved (active)");
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+async function testCleanupNoStateFile() {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "muaddib-test-"));
+  try {
+    fs.writeFileSync(path.join(tmpDir, "worker-4.events"), "{}");
+    fs.writeFileSync(path.join(tmpDir, "worker-4-branch.log"), "branch");
+
+    cleanupWorkerFiles(tmpDir, new Set());
+
+    if (fs.existsSync(path.join(tmpDir, "worker-4.events")))
+      throw new Error("worker-4.events should have been deleted");
+    if (fs.existsSync(path.join(tmpDir, "worker-4-branch.log")))
+      throw new Error("worker-4-branch.log should have been deleted");
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 // ─── runner ──────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -366,6 +459,22 @@ async function main() {
     [
       "handleEvent: assignee filter — unset env dispatches any ticket",
       testAssigneeFilterNotSet,
+    ],
+    [
+      "cleanupWorkerFiles: deletes all files for orphan with DONE state",
+      testCleanupDeletesDoneOrphan,
+    ],
+    [
+      "cleanupWorkerFiles: moves files to failed/ for FAILED orphan",
+      testCleanupMovesFailedOrphan,
+    ],
+    [
+      "cleanupWorkerFiles: skips files for active worker",
+      testCleanupSkipsActiveWorker,
+    ],
+    [
+      "cleanupWorkerFiles: deletes files when state file is missing",
+      testCleanupNoStateFile,
     ],
   ];
 

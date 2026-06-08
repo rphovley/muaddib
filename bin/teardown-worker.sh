@@ -15,6 +15,11 @@ export CLAUDE_SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
 export HOST_TMPDIR="${TMPDIR:-/tmp}"
 export HOST_DESKTOP="$HOME/Desktop"
 
+STATUS_DIR="$FLEET_DIR/status"
+
+# Read the worker's state before bringing the container down.
+CURRENT_STATE="$(cut -d' ' -f1 "$STATUS_DIR/worker-${WORKER}.state" 2>/dev/null || true)"
+
 # Detach any attached tmux clients before killing the container so tmux can
 # send its own cleanup sequences and leave the host terminal in a clean state.
 # Then wait for the docker exec process to exit before bringing the container
@@ -35,7 +40,36 @@ if [ -n "$WORKER_CID" ]; then
 fi
 
 docker compose -p "$PROJECT" -f "$FLEET_DIR/docker-compose.worker.yml" down -v
-rm -f "$FLEET_DIR/.worker-${WORKER}.env" \
-    "$FLEET_DIR/status/worker-${WORKER}.state"
-rm -rf "$FLEET_DIR/status/.skills-${WORKER}"
-echo "✓ tore down ${PROJECT}"
+
+# Remove env file (always).
+rm -f "$FLEET_DIR/.worker-${WORKER}.env"
+
+if [ "$CURRENT_STATE" = "FAILED" ]; then
+    TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
+    DEST="$STATUS_DIR/failed/worker-${WORKER}-${TIMESTAMP}"
+    mkdir -p "$DEST"
+    for f in \
+        "worker-${WORKER}.state" \
+        "worker-${WORKER}.events" \
+        "worker-${WORKER}-branch.log" \
+        "worker-${WORKER}-fetch-ticket.log" \
+        "worker-${WORKER}-servers.log" \
+        "worker-${WORKER}-webhook.log" \
+        "worker-${WORKER}-checks.log" \
+        "worker-${WORKER}-tokens.json"; do
+        [ -f "$STATUS_DIR/$f" ] && mv "$STATUS_DIR/$f" "$DEST/" || true
+    done
+    [ -d "$STATUS_DIR/.skills-${WORKER}" ] && mv "$STATUS_DIR/.skills-${WORKER}" "$DEST/" || true
+    echo "✓ tore down ${PROJECT} — artifacts preserved at ${DEST}"
+else
+    rm -f "$STATUS_DIR/worker-${WORKER}.state" \
+        "$STATUS_DIR/worker-${WORKER}.events" \
+        "$STATUS_DIR/worker-${WORKER}-branch.log" \
+        "$STATUS_DIR/worker-${WORKER}-fetch-ticket.log" \
+        "$STATUS_DIR/worker-${WORKER}-servers.log" \
+        "$STATUS_DIR/worker-${WORKER}-webhook.log" \
+        "$STATUS_DIR/worker-${WORKER}-checks.log" \
+        "$STATUS_DIR/worker-${WORKER}-tokens.json"
+    rm -rf "$STATUS_DIR/.skills-${WORKER}"
+    echo "✓ tore down ${PROJECT}"
+fi
