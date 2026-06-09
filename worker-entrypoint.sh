@@ -31,7 +31,7 @@ git config user.email "agent+w${WORKER_INDEX}@${MUADDIB_PROJECT_NAME:-quotethat}
 git fetch --depth 1 origin main
 git checkout -f -B "$BRANCH" FETCH_HEAD
 # Rewrite SSH submodule URLs to HTTPS so the GitHub token works (no SSH key in container).
-git config url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
+git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
 git submodule update --init --recursive
 source "$WORKDIR/muaddib/bin/read-config.sh"
 
