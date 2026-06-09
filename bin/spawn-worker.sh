@@ -2,7 +2,7 @@
 # Provision and launch one isolated worker.
 #   ./spawn-worker.sh <worker-number> [initial task prompt...]
 #
-# Ports (per your spec): API = 8090 + (N-1), Postgres = 5442 + (N-1).
+# Ports (per your spec): API = 8090 + (N-1), Postgres = 5443 + (N-1).
 # Secrets: subscription + GitHub tokens come from your shell env; non-prod app
 # secrets come from a local .muaddib/secrets.env, injected as VALUES into the container.
 set -euo pipefail
@@ -24,7 +24,7 @@ TASK="${*:-}"
 [[ "$WORKER" =~ ^[0-9]+$ ]] || { echo "worker number must be an integer" >&2; exit 1; }
 
 API_PORT=$((8089 + WORKER)) # worker 1 -> 8090
-DB_PORT=$((5441 + WORKER))  # worker 1 -> 5442
+DB_PORT=$((5442 + WORKER))  # worker 1 -> 5443
 PROJECT="${MUADDIB_PROJECT_NAME}-w${WORKER}"
 BRANCH="agent/w${WORKER}/$(date -u +%Y%m%d-%H%M%S)"
 

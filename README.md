@@ -55,7 +55,7 @@ Worker `N` (1-based):
 | Service             | Host port    | Worker 1 | Worker 2 |
 | ------------------- | ------------ | -------- | -------- |
 | API (`npm run dev`) | `8090 + N-1` | 8090     | 8091     |
-| Postgres (dev)      | `5442 + N-1` | 5442     | 5443     |
+| Postgres (dev)      | `5443 + N-1` | 5443     | 5444     |
 | Postgres (test)     | not published — internal `db_test:5432` |
 
 Compose project is namespaced `quotethat-w<N>`, so containers/volumes never

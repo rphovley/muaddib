@@ -8,7 +8,7 @@ PROJECT="${MUADDIB_PROJECT_NAME}-w${WORKER}"
 
 # Compute the same values spawn-worker.sh uses so this script works standalone.
 export WORKER_API_PORT=$((8089 + WORKER))
-export WORKER_DB_PORT=$((5441 + WORKER))
+export WORKER_DB_PORT=$((5442 + WORKER))
 export WORKER_ENV_FILE="$FLEET_DIR/.worker-${WORKER}.env"
 export WORKER_INDEX="$WORKER"
 export CLAUDE_SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
