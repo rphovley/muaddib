@@ -27,6 +27,7 @@ COPY --chown=worker:worker . /home/worker/repo/
 
 WORKDIR /home/worker
 COPY --chown=worker:worker muaddib/claude/settings.json /home/worker/.claude/settings.json
+COPY --chown=worker:worker muaddib/claude/skills/ /home/worker/.claude/skills/
 # Pre-seed onboarding state so claude skips the theme picker / welcome / trust
 # dialog and goes straight to the task. The entrypoint's `claude mcp add` merges
 # mcpServers into this same file at runtime.
