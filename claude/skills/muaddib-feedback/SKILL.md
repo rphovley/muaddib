@@ -56,13 +56,30 @@ Call `Skill(check)` with no args. Fix all blockers. Loop until clean or until 3 
 
 ## Step 5 — Commit and push
 
+Check whether there are changes to commit:
+
+```bash
+git status --porcelain
+```
+
+If the output is non-empty, stage and commit the changed files by name — never `git add -A` or `git add .`:
+
 ```bash
 git add <specific files>
 git commit -m "address review feedback: <brief summary>
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
+```
+
+Then push:
+
+```bash
 git push origin HEAD
 ```
+
+If `git push` exits non-zero, include the push failure in the PR reply (Step 6) so the reviewer knows the branch was not updated.
+
+If `git status --porcelain` was empty (no changes to commit), skip the commit/push and note that in the Step 6 reply.
 
 Never force-push. Stage files by name.
 
@@ -74,7 +91,7 @@ gh pr comment <pr_number> --body "$(cat <<'EOF'
 
 - <one bullet per actionable comment, describing what changed>
 
-<if anything was deferred or noted as out of scope, say so>
+<if anything was deferred, out of scope, or if the push failed, say so>
 
 🤖 Auto-addressed via muaddib feedback loop
 EOF
@@ -85,4 +102,10 @@ EOF
 
 ```bash
 date -u +%s > /tmp/last-feedback-ts
+```
+
+## Step 8 — Signal done
+
+```bash
+touch "$STEP_DONE_FILE"
 ```
