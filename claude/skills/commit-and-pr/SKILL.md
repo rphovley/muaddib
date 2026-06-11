@@ -7,7 +7,8 @@ description: Fleet wrapup step. Commits implementation changes, pushes the branc
 
 Fleet-safe wrapup step. **Never calls `AskUserQuestion`.**
 
-`$ARGUMENTS` is the Linear ticket identifier. The runner injects these STATE_* env vars from worker state:
+`$ARGUMENTS` is the Linear ticket identifier. The runner injects these STATE\_\* env vars from worker state:
+
 - `STATE_BRANCH` — the feature branch name
 - `STATE_TICKET_URL` — the Linear ticket URL
 - `STATE_API_TUNNEL_URL`, `STATE_PORTAL_URL`, `STATE_HO_URL` — preview tunnel URLs
@@ -92,7 +93,7 @@ git push -u origin "$STATE_BRANCH"
 
 ## Step 5 — Open PR
 
-Use STATE_* vars for preview URLs; fall back to `(unavailable)` for any empty value.
+Use STATE\_\* vars for preview URLs; fall back to `(unavailable)` for any empty value.
 
 Compute the homeowner credential before opening the PR — only combine the URL and magic-link when both are present:
 
@@ -119,7 +120,7 @@ $STATE_TICKET_URL
 | Service | URL |
 |---------|-----|
 | API | ${STATE_API_TUNNEL_URL:-(unavailable)} |
-| Portal | ${STATE_PORTAL_URL:-(unavailable)}?email=${PREVIEW_EMAIL}&password=${PREVIEW_PASSWORD} |
+| Portal | ${STATE_PORTAL_URL:-(unavailable)}?is_preview=true |
 | Homeowner | ${STATE_HO_URL:-(unavailable)} |
 
 ## Preview credentials
