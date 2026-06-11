@@ -119,7 +119,7 @@ $STATE_TICKET_URL
 | Service | URL |
 |---------|-----|
 | API | ${STATE_API_TUNNEL_URL:-(unavailable)} |
-| Portal | ${STATE_PORTAL_URL:-(unavailable)} |
+| Portal | ${STATE_PORTAL_URL:-(unavailable)}?email=${PREVIEW_EMAIL}&password=${PREVIEW_PASSWORD} |
 | Homeowner | ${STATE_HO_URL:-(unavailable)} |
 
 ## Preview credentials
