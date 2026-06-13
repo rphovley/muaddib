@@ -12,6 +12,7 @@
 const fs = require('fs');
 const path = require('path');
 const net = require('net');
+const https = require('https');
 const { spawn, spawnSync } = require('child_process');
 
 const WORKER = process.env.WORKER_INDEX || '1';
@@ -128,25 +129,55 @@ function tryCloudflared(port, logFile) {
   });
 }
 
+// Probe a tunnel URL via HTTPS (retries up to maxMs). Returns true if reachable.
+function probeTunnel(url, maxMs = 30_000) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const attempt = () => {
+      const req = https.request(url, { method: 'GET', timeout: 5000 }, (res) => {
+        res.resume();
+        resolve(true);
+      });
+      req.on('error', () => {
+        if (Date.now() - start >= maxMs) return resolve(false);
+        setTimeout(attempt, 1000);
+      });
+      req.on('timeout', () => { req.destroy(); });
+      req.end();
+    };
+    attempt();
+  });
+}
+
+function spawnLocalhostRunSsh(port, logFile) {
+  // If LOCALHOST_RUN_SSH_KEY_FILE is set (path to a private key registered at
+  // https://admin.localhost.run/), localhost.run will assign a *stable* custom
+  // subdomain so URL stays the same across SSH reconnects.
+  // Without a key, each connection gets a new random lhr.life subdomain.
+  const keyFile = process.env.LOCALHOST_RUN_SSH_KEY_FILE || '';
+  const sshArgs = [
+    '-R', `80:localhost:${port}`,
+    '-o', 'StrictHostKeyChecking=no',
+    '-o', 'BatchMode=yes',
+    '-o', 'ExitOnForwardFailure=yes',
+    '-o', 'ConnectTimeout=30',
+    '-o', 'ServerAliveInterval=30',
+    '-o', 'ServerAliveCountMax=3',
+  ];
+  if (keyFile) sshArgs.push('-i', keyFile);
+  sshArgs.push('nokey@localhost.run');
+  const outFd = fs.openSync(logFile, 'a');
+  const proc = spawn('ssh', sshArgs, { stdio: ['ignore', outFd, outFd] });
+  fs.closeSync(outFd);
+  return proc;
+}
+
 function tryLocalhostRun(port, logFile) {
   return new Promise((resolve) => {
     log(`:${port} falling back to localhost.run...`);
     fs.writeFileSync(logFile, '');
 
-    const outFd = fs.openSync(logFile, 'a');
-    const errFd = fs.openSync(logFile, 'a');
-    const proc = spawn('ssh', [
-      '-R', `80:localhost:${port}`,
-      '-o', 'StrictHostKeyChecking=no',
-      '-o', 'BatchMode=yes',
-      '-o', 'ExitOnForwardFailure=yes',
-      '-o', 'ConnectTimeout=30',
-      '-o', 'ServerAliveInterval=30',
-      '-o', 'ServerAliveCountMax=3',
-      'nokey@localhost.run',
-    ], { stdio: ['ignore', outFd, errFd] });
-    fs.closeSync(outFd);
-    fs.closeSync(errFd);
+    const proc = spawnLocalhostRunSsh(port, logFile);
 
     let settled = false;
     const settle = (url) => {
@@ -157,8 +188,25 @@ function tryLocalhostRun(port, logFile) {
       resolve(url || '');
     };
 
+    // If SSH exits before we find a URL, give up immediately.
     proc.on('error', (err) => { log(`:${port} localhost.run spawn error: ${err.message}`); settle(null); });
-    proc.on('exit', (code) => { log(`localhost.run exited (code=${code}) for :${port}`); settle(null); });
+    proc.on('exit', (code) => {
+      if (!settled) {
+        log(`localhost.run exited (code=${code}) for :${port} before URL was found`);
+        settle(null);
+      } else {
+        // URL already resolved — SSH died after handoff. Restart to keep the
+        // pipe alive. NOTE: localhost.run with nokey assigns a new random URL
+        // each time, so the URL already in the PR/env will be stale after this
+        // restart. A registered SSH key would give a stable subdomain instead.
+        log(`:${port} localhost.run SSH exited (code=${code}) after URL was found — restarting (new URL will differ)`);
+        fs.appendFileSync(logFile, `\n[restart after exit code=${code}]\n`);
+        const next = spawnLocalhostRunSsh(port, logFile);
+        next.on('exit', (c) => {
+          log(`:${port} localhost.run SSH restart exited (code=${c})`);
+        });
+      }
+    });
 
     const poll = setInterval(() => {
       try {
@@ -178,9 +226,21 @@ async function openTunnel(port, cfLog, lrLog) {
     log(`:${port} → ${url} (cloudflared)`);
     return url;
   }
+
   const fallback = await tryLocalhostRun(port, lrLog);
-  if (fallback) log(`:${port} → ${fallback} (localhost.run)`);
-  if (!fallback) log(`WARNING: :${port} — all tunnel methods failed, URL will be empty`);
+  if (!fallback) {
+    log(`WARNING: :${port} — all tunnel methods failed, URL will be empty`);
+    return fallback;
+  }
+
+  // Verify the HTTPS URL actually works before declaring it ready.
+  log(`:${port} probing localhost.run HTTPS URL (up to 30s)...`);
+  const ok = await probeTunnel(fallback, 30_000);
+  if (ok) {
+    log(`:${port} → ${fallback} (localhost.run, HTTPS verified)`);
+  } else {
+    log(`WARNING: :${port} → ${fallback} (localhost.run, HTTPS probe FAILED — SSL or routing issue)`);
+  }
   return fallback;
 }
 
