@@ -330,6 +330,10 @@ async function trySpawn(entry) {
 
   const env = { ...process.env, MUADIB_NO_ATTACH: "1" };
   if (entry.workflowFile) env.WORKFLOW_FILE = entry.workflowFile;
+  // Pin the model from .muaddib.json. The dispatch image has no jq, so
+  // read-config.sh inside spawn-worker.sh can't derive MUADDIB_MODEL itself —
+  // inject it here (parsed in JS) so spawn-worker.sh writes ANTHROPIC_MODEL.
+  if (MUADDIB_CONFIG.model) env.MUADDIB_MODEL = MUADDIB_CONFIG.model;
 
   // spawn-worker.sh blocks until the container reaches READY/RUNNING (up to 5 min).
   // Run it detached so the daemon stays responsive to incoming events.
