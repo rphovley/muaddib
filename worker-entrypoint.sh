@@ -32,7 +32,7 @@ git fetch --depth 1 origin main
 git checkout -f -B "$BRANCH" FETCH_HEAD
 # Rewrite SSH submodule URLs to HTTPS so the GitHub token works (no SSH key in container).
 git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
-git submodule update --init --recursive
+git submodule update --init --recursive --force
 source "$WORKDIR/muaddib/bin/read-config.sh"
 
 # Refresh deps ONLY for projects whose lockfile drifted from the baked one
