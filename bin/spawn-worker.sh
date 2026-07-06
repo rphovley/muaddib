@@ -23,8 +23,9 @@ shift || true
 TASK="${*:-}"
 [[ "$WORKER" =~ ^[0-9]+$ ]] || { echo "worker number must be an integer" >&2; exit 1; }
 
-API_PORT=$((8089 + WORKER)) # worker 1 -> 8090
-DB_PORT=$((5442 + WORKER))  # worker 1 -> 5443
+API_PORT=$((8089 + WORKER))    # worker 1 -> 8090
+DB_PORT=$((5442 + WORKER))     # worker 1 -> 5443
+SKETCH_PORT=$((4386 + WORKER)) # worker 1 -> 4387 (lavish-axi's own default)
 PROJECT="${MUADDIB_PROJECT_NAME}-w${WORKER}"
 BRANCH="agent/w${WORKER}/$(date -u +%Y%m%d-%H%M%S)"
 
@@ -90,7 +91,7 @@ chmod 600 "$ENV_FILE"
 
 mkdir -p "$REPO_ROOT/.muaddib" && mkdir -p "$FLEET_DIR/status" && chmod 777 "$FLEET_DIR/status"
 
-export WORKER_API_PORT="$API_PORT" WORKER_DB_PORT="$DB_PORT" \
+export WORKER_API_PORT="$API_PORT" WORKER_DB_PORT="$DB_PORT" WORKER_SKETCH_PORT="$SKETCH_PORT" \
     WORKER_ENV_FILE="$REPO_ROOT/.muaddib/.worker-${WORKER}.env" WORKER_INDEX="$WORKER" \
     CLAUDE_SKILLS_DIR="$CLAUDE_SKILLS_DIR" \
     HOST_TMPDIR="${HOST_TMPDIR:-${TMPDIR:-/tmp}}" \
@@ -99,7 +100,7 @@ export WORKER_API_PORT="$API_PORT" WORKER_DB_PORT="$DB_PORT" \
 STATE_FILE="$FLEET_DIR/status/worker-${WORKER}.state"
 : >"$STATE_FILE" # clear any stale state from a previous run
 
-echo "→ Spawning ${PROJECT}: API :${API_PORT}  DB :${DB_PORT}  branch ${BRANCH}"
+echo "→ Spawning ${PROJECT}: API :${API_PORT}  DB :${DB_PORT}  sketch :${SKETCH_PORT}  branch ${BRANCH}"
 
 # Build the shared worker image once if it doesn't exist. All workers share
 # quotethat-worker:latest — nothing worker-specific is baked in. To force a
@@ -187,6 +188,8 @@ EVENTS_FILE="$FLEET_DIR/status/worker-${WORKER}.events"
             BLOCKED)           osascript -e "display notification \"Waiting for your input\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
             FEEDBACK)         osascript -e "display notification \"Preview live — waiting for feedback\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
             FEEDBACK_WORKING) osascript -e "display notification \"Addressing PR feedback\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
+            SKETCH_REVIEW)         osascript -e "display notification \"Sketch ready — waiting for your review\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
+            SKETCH_REVIEW_WORKING) osascript -e "display notification \"Applying sketch feedback\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
             DONE_FINAL)        osascript -e "display notification \"PR merged — preview torn down ✓\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
             FAILED)            osascript -e "display notification \"Worker ${WORKER} failed — check muaddib/status/ logs, then teardown-worker.sh ${WORKER}\" with title \"muaddib: worker-${WORKER}\" sound name \"Basso\"" 2>/dev/null || true ;;
         esac
@@ -213,6 +216,7 @@ disown $!
 if [ "${MUADIB_NO_ATTACH:-0}" != "1" ] && [ -t 0 ] && [ -t 1 ]; then
     echo "  Attaching — Ctrl-b then d to detach (worker keeps running)."
     echo "  Re-attach: ./bin/attach.sh ${WORKER}  ·  Monitor: ./bin/attend.sh  ·  Stop: ./bin/teardown-worker.sh ${WORKER}"
+    echo "  Sketch (UI/UX prototyping): when the agent opens one, view it at http://localhost:${SKETCH_PORT}"
     # Switch to the most recently created window (current job) before attaching,
     # so the user lands on the Claude session rather than the base shell window.
     docker exec "${WORKER_CID}" tmux select-window -t "w${WORKER}:{end}" 2>/dev/null || true
@@ -235,4 +239,5 @@ cat <<EOF
   Attach    : ./bin/attach.sh ${WORKER}
   Monitor   : ./bin/attend.sh
   Tear down : ./bin/teardown-worker.sh ${WORKER}
+  Sketch    : http://localhost:${SKETCH_PORT} (once the agent opens a session)
 EOF

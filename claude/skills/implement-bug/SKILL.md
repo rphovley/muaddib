@@ -15,6 +15,10 @@ Fleet implementation step for bug fixes. Never commits. Does not write a preview
 
 Read `.muaddib/plan.md` in the repo root — this is the authoritative plan written by `analyze-ticket` / `ask-questions`. If that file does not exist, fall back to finding the `## Plan` comment via `mcp__linear__get_issue` on `$ARGUMENTS` (or its parent).
 
+If `.muaddib/sketch/` contains an HTML prototype, a `sketch` step already ran in this container and the operator gave feedback on it — treat that prototype as the authoritative visual/structural reference for the UI, alongside the plan.
+
+More commonly, `sketch` ran during an earlier **planning** run (`plan.json`, a different worker/container), so nothing is on disk here. In that case look for a `## Sketch` comment via `mcp__linear__get_issue` on `$ARGUMENTS` (or its parent — same fallback as the plan). If found, extract the embedded HTML into `.muaddib/sketch/<name>.html` locally and treat it the same as a local prototype.
+
 Read `CLAUDE.md` (root and per-project for the affected area). Read the files referenced in the plan.
 
 ## Step 2 — Implement

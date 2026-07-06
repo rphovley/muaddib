@@ -13,6 +13,8 @@ const https = require('https');
 const { subscribe, emit } = require('./events');
 const { startJob } = require('./job');
 const { run } = require('./runner');
+const state = require('./state');
+const { runSketchReview } = require('./sketch-review');
 const { getRunData, sumTotals, estimateCost, formatSummary, postRunRecord } = require('./token-tracker');
 
 const WORKER         = parseInt(process.env.WORKER_INDEX || '1', 10);
@@ -166,6 +168,14 @@ async function main() {
   const runStartTime = Date.now();
   note('RUNNING');
   await run(WORKER, workflowFile, LINEAR_ISSUE);
+
+  // Only workflows that actually declare a `sketch` step (currently plan.json)
+  // can run the review loop — analyze-ticket writes needs_sketch unconditionally
+  // (it's shared by feature/bug/plan), so gate on the workflow shape too.
+  const hasSketchStep = (definition.workflow || []).some((s) => s.id === 'sketch');
+  if (hasSketchStep && state.get(WORKER, 'needs_sketch') === 'true') {
+    await runSketchReview(WORKER, LINEAR_ISSUE, note);
+  }
 
   if (definition.skipWatching) {
     await recordAndPrintTokens(workType, runStartTime);

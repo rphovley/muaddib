@@ -34,6 +34,8 @@ while true; do
                     WAITING_FOR_INPUT) notify "muaddib: $label" "Questions posted to Linear — needs answers" ;;
                     FEEDBACK)         notify "muaddib: $label" "Preview live — waiting for feedback" ;;
                     FEEDBACK_WORKING) notify "muaddib: $label" "Addressing PR feedback" ;;
+                    SKETCH_REVIEW)         notify "muaddib: $label" "Sketch ready — waiting for your review" ;;
+                    SKETCH_REVIEW_WORKING) notify "muaddib: $label" "Applying sketch feedback" ;;
                     FAILED)            notify "muaddib: $label" "Worker failed — check logs" ;;
                 esac
                 prev_states[$label]="$state_word"
@@ -43,6 +45,8 @@ while true; do
                 WAITING_FOR_INPUT) printf '  %-12s ⏳ %s\n' "$label" "$state_line" ;;
                 FEEDBACK)         printf '  %-12s 🔭 %s\n' "$label" "$state_line" ;;
                 FEEDBACK_WORKING) printf '  %-12s 🔧 %s\n' "$label" "$state_line" ;;
+                SKETCH_REVIEW)         printf '  %-12s 🎨 %s\n' "$label" "$state_line" ;;
+                SKETCH_REVIEW_WORKING) printf '  %-12s 🔧 %s\n' "$label" "$state_line" ;;
                 *)                 printf '  %-12s %s\n'    "$label" "$state_line" ;;
             esac
         done

@@ -16,6 +16,9 @@ struct WorkerInfo: Identifiable {
         case "WATCHING_FEEDBACK": return "Reviewing feedback"
         case "FEEDBACK":          return "Awaiting review"
         case "FEEDBACK_WORKING":  return "Fixing feedback"
+        case "SKETCH_REVIEW":         return "Sketch awaiting review"
+        case "SKETCH_REVIEW_WORKING": return "Applying sketch feedback"
+        case "SKETCH_FINALIZING":    return "Finalizing sketch"
         case "BLOCKED":           return "Blocked — needs you"
         case "WAITING_FOR_INPUT": return "Waiting for input"
         case "FAILED":            return "Failed"
@@ -29,9 +32,9 @@ struct WorkerInfo: Identifiable {
 
     var statusCategory: StatusCategory {
         switch state {
-        case "RUNNING", "WATCHING", "FEEDBACK_WORKING", "PROVISIONING": return .ok
+        case "RUNNING", "WATCHING", "FEEDBACK_WORKING", "PROVISIONING", "SKETCH_REVIEW_WORKING", "SKETCH_FINALIZING": return .ok
         case "WATCHING_FEEDBACK":                                        return .pr
-        case "BLOCKED", "WAITING_FOR_INPUT", "FEEDBACK":                 return .attention
+        case "BLOCKED", "WAITING_FOR_INPUT", "FEEDBACK", "SKETCH_REVIEW": return .attention
         case "FAILED":                                                   return .error
         default:                                                         return .idle
         }

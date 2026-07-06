@@ -1,6 +1,6 @@
 ---
 name: analyze-ticket
-description: Fleet planning step. Reads a Linear ticket and the codebase, generates a draft plan written to .muaddib/plan.md, decides whether clarifying questions are needed, and writes needs_questions to worker state. Posts the final plan to Linear if no questions are needed.
+description: Fleet planning step. Reads a Linear ticket and the codebase, generates a draft plan written to .muaddib/plan.md, decides whether clarifying questions or a UI/UX sketch loop are needed, and writes needs_questions / needs_sketch to worker state. Posts the final plan to Linear if no questions are needed.
 ---
 
 # Analyze Ticket
@@ -69,20 +69,47 @@ Questions are needed only if the "Open Questions" section is non-empty — i.e.,
 
 Write `needs_questions` to state:
 
-````bash
+```bash
 STATE_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/state-cli.js"
 WORKER="${WORKER_INDEX:-0}"
 node "$STATE_CLI" "$WORKER" set needs_questions "true"   # or "false"
-```https://linear.app/quotethat/issue/QUO-327/speed-up-deploy
+```
 
-## Step 5a — No questions needed: post plan and finish
+## Step 4b — Decide if a sketch loop is needed
 
-If `needs_questions=false`, post `.muaddib/plan.md` as a `## Plan` comment on the Linear ticket using `mcp__linear__save_comment`.
+Needed whenever the ticket explicitly asks to visualize, mock up, or iterate
+on something visual before building the real thing — this is **not** limited
+to Portal/Homeowner app screens. A ticket asking to prototype a dashboard,
+chart, funnel, diagram, or any other visual artifact "in HTML first" before
+building it for real (in this repo or a third-party tool) needs a sketch pass
+just as much as a new app screen would. Also needed when the plan's solution
+meaningfully adds or changes a Portal or Homeowner screen/component where a
+quick visual mock-and-feedback pass would reduce rework.
 
-Then signal done:
+Not needed for backend-only work, copy tweaks, or changes with an obvious
+existing pattern to follow and no visual deliverable at all. Default to
+`false` only when the ticket has no visual/exploratory component whatsoever —
+read the ticket's own words for an explicit ask before excluding it on the
+basis of the *category* of work (e.g. "this is a dashboard/config ticket") —
+the category doesn't override an explicit request to visualize it first.
+
+Write `needs_sketch` to state:
+
+```bash
+STATE_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/state-cli.js"
+WORKER="${WORKER_INDEX:-0}"
+node "$STATE_CLI" "$WORKER" set needs_sketch "true"   # or "false"
+```
+
+## Step 5a — No questions needed: post plan (unless sketch is pending) and finish
+
+If `needs_questions=false` and `needs_sketch=false`, post `.muaddib/plan.md` as a `## Plan` comment on the Linear ticket using `mcp__linear__save_comment`, then signal done.
+
+If `needs_questions=false` but `needs_sketch=true`, **do not post `## Plan` yet** — the plan isn't final until the operator has reviewed and approved the prototype. The `sketch` step posts the (possibly revised) `## Plan` itself once that happens. Just signal done here so the workflow moves on to `sketch`:
+
 ```bash
 touch "$STEP_DONE_FILE"
-````
+```
 
 ## Step 5b — Questions needed: notify and stop
 

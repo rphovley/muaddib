@@ -15,7 +15,7 @@
       "skill": "analyze-ticket",
       "runIf": "state.plan_status !== 'found'",
       "stateReads": ["ticket_identifier", "ticket_url", "ticket_title"],
-      "stateWrites": ["needs_questions"]
+      "stateWrites": ["needs_questions", "needs_sketch"]
     },
     {
       "id": "ask-questions",
@@ -24,6 +24,14 @@
       "runIf": "state.needs_questions === 'true'",
       "stateReads": ["ticket_identifier", "ticket_url"],
       "stateWrites": []
+    },
+    {
+      "id": "sketch",
+      "type": "claude-tui",
+      "skill": "sketch",
+      "runIf": "state.needs_sketch === 'true'",
+      "stateReads": ["ticket_identifier", "ticket_url"],
+      "stateWrites": ["sketch_file"]
     }
   ]
 }

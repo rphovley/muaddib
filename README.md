@@ -57,6 +57,7 @@ Worker `N` (1-based):
 | API (`npm run dev`) | `8090 + N-1` | 8090     | 8091     |
 | Postgres (dev)      | `5443 + N-1` | 5443     | 5444     |
 | Postgres (test)     | not published — internal `db_test:5432` |
+| Sketch (UI/UX prototyping loop) | `4387 + N-1` | 4387 | 4388 |
 
 Compose project is namespaced `quotethat-w<N>`, so containers/volumes never
 collide across workers.
@@ -242,6 +243,47 @@ This lists and deletes all Linear webhooks whose URL contains `trycloudflare.com
 ### Token scope note
 
 The `LINEAR_API_KEY` needs write access to webhooks — no change required to the GitHub PAT.
+
+## Sketch: UI/UX prototyping loop
+
+Lives in the **planning** phase, not implementation: on a `plan.json` worker
+(`npm run muaddib:plan <ticket>`, or any ticket carrying the `plan` Linear
+label), the agent can prototype a screen, dashboard, or any other visual
+artifact as an HTML mock and hand it to you for direct review — annotate
+elements/text, or submit a comment through a review button built into the
+prototype — instead of a single round of "what do you think?". Built on
+[lavish-axi](https://github.com/kunchenguid/lavish-axi) under the hood.
+
+The review loop is real orchestrator control flow, not a skill that waits
+forever in prose — it mirrors the existing PR `FEEDBACK ⇄ FEEDBACK_WORKING`
+state machine, just driven by `lavish-axi poll`'s own signals instead of a
+GitHub webhook (no tunnel needed — the reviewer is local):
+
+- `analyze-ticket` (shared by `plan`/`feature`/`bug` workflows) decides
+  whether a ticket needs a sketch pass and writes `needs_sketch` to worker
+  state; only `plan.json` (the workflow that actually has a `sketch` step)
+  acts on it.
+- `sketch` (`muaddib/claude/skills/sketch/`) is setup-only: discovers the
+  target project's real design system (Mantine v8 for Portal/Homeowner
+  today, not a generic Tailwind/DaisyUI default), builds the prototype with
+  an explicit "Submit Review" control, opens it (`--no-open`, since the
+  container has no display — the URL is published per worker at
+  `http://localhost:4386 + N`, worker 1 → `4387`), and notifies you via
+  Linear + macOS.
+- The orchestrator (`orchestrator/sketch-review.js`) then loops:
+  `SKETCH_REVIEW` runs `sketch-poll` (one bounded `lavish-axi poll` call) →
+  feedback submitted → `SKETCH_REVIEW_WORKING` runs `sketch-feedback` (applies
+  it, revises the prototype and `.muaddib/plan.md` if the approach changed) →
+  back to `SKETCH_REVIEW`. Submitting with no changes (or ending the session)
+  is approval.
+- **Persistence is the point.** On approval, `SKETCH_FINALIZING` runs
+  `sketch-finalize`, which exports the prototype and posts `## Plan` +
+  `## Sketch` to the Linear ticket — `analyze-ticket` deliberately holds off
+  posting `## Plan` itself when a sketch pass is pending. `implement`/
+  `implement-bug` (running later, in a different worker/container) read the
+  prototype back from that `## Sketch` comment — falling back to the ticket's
+  parent, same as the plan fallback — since nothing on the planning worker's
+  filesystem survives to the implementation run.
 
 ## Not yet wired (later layers)
 

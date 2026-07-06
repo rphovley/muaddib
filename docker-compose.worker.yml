@@ -62,8 +62,15 @@ services:
       # mode via test-preload regardless, so this is safe for `npm run check`.
       ENV: dev
       WORKER_INDEX: "${WORKER_INDEX:?set WORKER_INDEX}"
+      # sketch (UI/UX prototyping loop, powered by lavish-axi under the hood) binds
+      # loopback-only by default, which is unreachable from the host through
+      # Docker's network namespace. 0.0.0.0 is safe here: the published port below
+      # follows the same no-host-IP-prefix pattern as the API/DB ports
+      # (LAN-reachable, not internet-reachable).
+      LAVISH_AXI_HOST: "0.0.0.0"
     ports:
       - "${WORKER_API_PORT:?set WORKER_API_PORT}:8081" # agent's `npm run dev`
+      - "${WORKER_SKETCH_PORT:?set WORKER_SKETCH_PORT}:4387" # sketch UI/UX prototyping loop
     volumes:
       # The ONLY host mounts. Both narrow and intentional:
       #  - status/ : tiny state files the hooks write, host watches (rw)
