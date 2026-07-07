@@ -45,40 +45,65 @@ rather than annotating piecemeal with no clear "I'm done" action. The
 operator can still use freeform element/text annotation on top of this if
 they prefer — the submit button is the guaranteed, obvious path.
 
-## Step 3 — Write and open the artifact
+## Step 3 — Write and open the artifact, and capture the real URL
 
 Write it under `.muaddib/sketch/<name>.html` in the repo checkout, then open
 it — always pass `--no-open` (the container has no display):
 
 ```bash
-npx -y lavish-axi <html-file> --no-open
+OPEN_OUTPUT="$(npx -y lavish-axi <html-file> --no-open)"
+echo "$OPEN_OUTPUT"
 ```
 
-## Step 4 — Record the file path for the orchestrator
+**The URL is per-session, not derivable from the port alone.** Lavish serves
+each session at its own path (e.g. `http://127.0.0.1:4387/session/<key>`),
+printed in `$OPEN_OUTPUT` — it is not just `http://localhost:<port>/`
+(that 404s). Extract the path and rebuild it with the *host*-reachable port:
+the container always listens on lavish's own default (4387) regardless of
+worker number, but the port published to the operator's Mac is
+`4386 + WORKER_INDEX`, which only equals 4387 for worker 1. Concretely:
+
+```bash
+WORKER="${WORKER_INDEX:-0}"
+SESSION_PATH="$(echo "$OPEN_OUTPUT" | grep -oE '/session/[A-Za-z0-9]+' | head -1)"
+SKETCH_URL="http://localhost:$((4386 + WORKER))${SESSION_PATH}"
+echo "Operator URL: $SKETCH_URL"
+```
+
+If `$SESSION_PATH` comes back empty, read `~/.lavish-axi/state.json` instead
+— its `sessions.<key>.url` field has the same path, keyed by the most
+recently opened session for this file.
+
+## Step 4 — Record the file path and URL for the orchestrator and operator
 
 ```bash
 STATE_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/state-cli.js"
-WORKER="${WORKER_INDEX:-0}"
 node "$STATE_CLI" "$WORKER" set sketch_file "<absolute path to html-file>"
+node "$STATE_CLI" "$WORKER" set sketch_url "$SKETCH_URL"
 ```
 
-## Step 5 — Notify the operator
+## Step 5 — Notify the operator with the actual URL
 
 Post to Linear (`@mention` the assignee) and fire a macOS notify, same
-pattern as `analyze-ticket` Step 5b — the operator may not be attached yet:
+pattern as `analyze-ticket` Step 5b — the operator may not be attached yet.
+**Include `$SKETCH_URL` directly in the comment** — don't defer to "check
+tmux": by the time anyone reads this, the orchestrator has already moved the
+tmux window on to `sketch-poll`, and the `sketch` step's own window (where
+this URL was printed) closes automatically once this step finishes.
 
 ```
 @<assignee> — a prototype is ready for your review on <ticket>:
 
-Attach to the worker to view and annotate it, or watch for the URL in its
-tmux session. Leave feedback and keep iterating, or submit with no changes
-to approve it — the plan finalizes once you do.
+<$SKETCH_URL>
+
+Leave feedback and keep iterating, or submit with no changes to approve it —
+the plan finalizes once you do.
 ```
 
 ```bash
 node "${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/emit-cli.js" \
     "${WORKER_INDEX:-0}" claude notify \
-    "{\"msg\":\"${STATE_TICKET_IDENTIFIER:-$ARGUMENTS} prototype ready for your review\"}"
+    "{\"msg\":\"${STATE_TICKET_IDENTIFIER:-$ARGUMENTS} prototype ready: ${SKETCH_URL}\"}"
 ```
 
 ## Step 6 — Signal done
