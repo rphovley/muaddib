@@ -12,11 +12,29 @@ the "wait, then decide what happens next" looping.
 
 `$ARGUMENTS` is the Linear ticket identifier.
 
-## Step 1 — Poll
+## Step 0 — Print the review URL before blocking
+
+This step's window is the one the operator lands on — and the poll below
+blocks *silently*, so if we don't print the URL here it appears nowhere on
+screen (it only lives in the earlier `sketch` step's now-closed window, the
+Linear @mention, the macOS notify, and worker state). Echo the recorded
+`sketch_url` as a banner so it's always visible no matter when the operator
+attaches. This reprints every round since the orchestrator loops this skill.
 
 ```bash
 STATE_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/state-cli.js"
 WORKER="${WORKER_INDEX:-0}"
+SKETCH_URL="$(node "$STATE_CLI" "$WORKER" get sketch_url)"
+echo "──────────────────────────────────────────────────────────"
+echo " Prototype ready for review — open in your browser:"
+echo "   ${SKETCH_URL:-<sketch_url not recorded; check the sketch step>}"
+echo " Submit feedback or end the session to continue."
+echo "──────────────────────────────────────────────────────────"
+```
+
+## Step 1 — Poll
+
+```bash
 SKETCH_FILE="$(node "$STATE_CLI" "$WORKER" get sketch_file)"
 
 REPLY_FILE="/tmp/sketch-reply-${WORKER}.txt"
@@ -31,6 +49,11 @@ rm -f "$REPLY_FILE"
 This blocks (no timeout) until the operator submits feedback, ends the
 session, or the browser reports a layout warning. That's expected — the
 orchestrator isn't waiting on anything else in the meantime.
+
+If your harness caps how long a foreground command may run, the poll may be
+killed before the operator acts. That's harmless — just re-run it (as a
+background task if you can). Queued feedback is never lost, so re-print the
+Step 0 banner and poll again.
 
 ## Step 2 — Handle layout_warnings without involving the operator
 
