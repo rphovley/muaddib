@@ -26,7 +26,10 @@ CONFIG="$REPO/.muaddib.json"
 STATE_CLI="$REPO/muaddib/orchestrator/state-cli.js"
 EMIT_CLI="$REPO/muaddib/orchestrator/emit-cli.js"
 
-log()  { echo "[retunnel w${WORKER}] $*"; }
+# NOTE: log/warn MUST write to stderr. open_tunnel() returns its URL on stdout
+# via command substitution ($(open_tunnel ...)); anything these helpers print to
+# stdout would be captured into the URL and corrupt it.
+log()  { echo "[retunnel w${WORKER}] $*" >&2; }
 warn() { echo "[retunnel w${WORKER}] WARNING: $*" >&2; }
 
 CF_URL_RE='https://[a-zA-Z0-9-]+\.trycloudflare\.com'
@@ -45,12 +48,21 @@ log "API port: ${API_PORT}"
 log "frontend projects: ${FRONTEND_NAMES[*]:-none}"
 
 # ── 1. Kill existing tunnel processes ─────────────────────────────────────────
+# Only kill tunnels for the ports WE manage (API + frontends). A blanket
+# `pkill -f "cloudflared tunnel"` also kills the webhook receiver's tunnel on
+# :9090 (owned by watch-feedback.js), which silently breaks /feedback delivery
+# until the container is rebuilt. Scope the kill to our managed ports instead.
 
-log "killing cloudflared tunnel processes..."
-pkill -f "cloudflared tunnel" 2>/dev/null && log "killed cloudflared" || log "no cloudflared processes found"
-
-log "killing localhost.run SSH processes..."
-pkill -f "nokey@localhost.run" 2>/dev/null && log "killed localhost.run SSH" || log "no localhost.run SSH processes found"
+MANAGED_PORTS=("$API_PORT" "${FRONTEND_PORTS[@]:-}")
+for port in "${MANAGED_PORTS[@]}"; do
+  [ -z "$port" ] && continue
+  log "killing tunnels for :${port}..."
+  pkill -f "cloudflared tunnel --url http://localhost:${port}" 2>/dev/null \
+    && log "killed cloudflared for :${port}" || log "no cloudflared for :${port}"
+  # localhost.run fallback uses an SSH remote-forward "80:localhost:<port>"
+  pkill -f "80:localhost:${port}" 2>/dev/null \
+    && log "killed localhost.run SSH for :${port}" || true
+done
 
 sleep 1
 
@@ -81,6 +93,30 @@ for port in "${FRONTEND_PORTS[@]:-}"; do
 done
 
 sleep 1
+
+# ── 3b. Ensure the API dev server is running ──────────────────────────────────
+# Step 2 killed start-servers.js, which was supervising the API dev server.
+# If the API origin is down, a freshly opened tunnel just returns HTTP 502.
+# Restart it under a self-healing loop when it's not listening; leave a healthy
+# one alone (a cold `tsx watch` restart costs ~a minute of API downtime).
+
+port_up() { (echo > "/dev/tcp/localhost/$1") 2>/dev/null; }
+
+if port_up "$API_PORT"; then
+  log "API already listening on :${API_PORT} — leaving it running"
+else
+  log "API not listening on :${API_PORT} — starting: ${API_DEV_SCRIPT}"
+  ( while true; do
+      sh -c "$API_DEV_SCRIPT" >> /tmp/preview-api.log 2>&1
+      echo "[api] exited, restarting in 2s..." >> /tmp/preview-api.log
+      sleep 2
+    done ) &
+  for i in $(seq 1 90); do
+    port_up "$API_PORT" && { log "API ready on :${API_PORT}"; break; }
+    sleep 1
+  done
+  port_up "$API_PORT" || warn "API still not listening on :${API_PORT} after 90s — tunnel will 502"
+fi
 
 # ── 4. Open new API tunnel ────────────────────────────────────────────────────
 
