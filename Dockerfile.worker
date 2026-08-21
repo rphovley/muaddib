@@ -4,26 +4,31 @@
 # Or use a project's .muaddib/Dockerfile.worker to override this file.
 FROM muaddib-base:latest
 
-# --- Pre-install project dependencies (Linux-native, layer-cached) -----------
-# Copy ONLY the manifests first so this layer re-runs only when lockfiles change.
-# Each baked lockfile is stashed under ~/.deps-lock for drift detection at startup.
 WORKDIR /home/worker/repo
-COPY --chown=worker:worker projects/api/package.json          projects/api/package-lock.json          projects/api/
-COPY --chown=worker:worker projects/portal/package.json       projects/portal/package-lock.json       projects/portal/
-COPY --chown=worker:worker projects/homeowner/package.json    projects/homeowner/package-lock.json    projects/homeowner/
-COPY --chown=worker:worker projects/app_install/package.json  projects/app_install/package-lock.json  projects/app_install/
-COPY --chown=worker:worker .muaddib.json .muaddib.json
-ARG MUADDIB_PROJECTS="projects/api projects/portal projects/homeowner projects/app_install"
-RUN for p in $MUADDIB_PROJECTS; do \
-        echo "== installing deps: $p ==" && npm --prefix "$p" ci \
-        && mkdir -p "/home/worker/.deps-lock/$p" \
-        && cp "$p/package-lock.json" "/home/worker/.deps-lock/$p/package-lock.json" ; \
-    done
 
 # Bake the full repo source + .git into the image so startup only needs a
 # fast `git fetch --depth 1` (just the delta since the image was built) instead
 # of cloning from GitHub from scratch. node_modules is excluded via dockerignore.
 COPY --chown=worker:worker . /home/worker/repo/
+
+# --- Pre-install project dependencies (Linux-native) -------------------------
+# The project list is never hardcoded here — it's read from the project's own
+# .muaddib.json (baked in above via the full-repo COPY), the same config
+# worker-entrypoint.sh reads for lockfile-drift checks at spawn time. Projects
+# that aren't npm packages (no package.json) are skipped. Each baked lockfile
+# is stashed under ~/.deps-lock for drift detection at startup.
+RUN test -f .muaddib.json || (echo "missing .muaddib.json at repo root — see muaddib/README.md" >&2 && exit 1)
+RUN set -e; \
+    PROJECT_PATHS="$(jq -r '.projects[].path' .muaddib.json)" \
+        || { echo "failed to read .projects[].path from .muaddib.json" >&2; exit 1; }; \
+    [ -n "$PROJECT_PATHS" ] || { echo "no projects[] entries found in .muaddib.json" >&2; exit 1; }; \
+    for p in $PROJECT_PATHS; do \
+        [ -f "$p/package.json" ] || continue; \
+        echo "== installing deps: $p =="; \
+        npm --prefix "$p" ci; \
+        mkdir -p "/home/worker/.deps-lock/$p"; \
+        cp "$p/package-lock.json" "/home/worker/.deps-lock/$p/package-lock.json"; \
+    done
 
 WORKDIR /home/worker
 COPY --chown=worker:worker muaddib/claude/settings.json /home/worker/.claude/settings.json

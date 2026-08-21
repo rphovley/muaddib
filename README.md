@@ -95,14 +95,16 @@ docker build -f muaddib/Dockerfile.worker -t quotethat-worker .
 `spawn-worker.sh` also builds via `compose up --build`, but layer caching makes
 that near-instant unless something changed.
 
-**Dependencies are pre-installed into the image** (Linux-native `npm ci` for all
-four `projects/*`), at the final repo path. At spawn the entrypoint `git fetch`es
-source *over* the baked `node_modules` (which is gitignored, so it survives
-checkout) — so a spawn does **no install and no copy**, just git deltas. Deps
-refresh only when a project's `package-lock.json` drifts from the baked one, in
-which case just that project runs `npm ci`. Rebuild the image to pick up new
-lockfiles (the deps layer is cached on the lockfiles, so it only re-installs what
-changed).
+**Dependencies are pre-installed into the image** (Linux-native `npm ci` for every
+project listed in `.muaddib.json`'s `projects[].path`), at the final repo path.
+At spawn the entrypoint `git fetch`es source *over* the baked `node_modules`
+(which is gitignored, so it survives checkout) — so a spawn does **no install and
+no copy**, just git deltas. Deps refresh only when a project's
+`package-lock.json` drifts from the baked one, in which case just that project
+runs `npm ci`. Rebuild the image to pick up new lockfiles — the deps-install
+layer is keyed to the full repo copy (not just the lockfiles), so any file
+change forces a rebuild of that layer, but a no-op rebuild still hits Docker's
+cache entirely.
 
 ## Usage
 
