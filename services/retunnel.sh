@@ -219,9 +219,6 @@ for i in "${!FRONTEND_NAMES[@]}"; do
   TUNNEL_URLS[$name]=$(open_tunnel "$port" "/tmp/cf-${name}.log" "/tmp/lr-${name}.log")
 done
 
-PORTAL_URL="${TUNNEL_URLS[portal]:-}"
-HO_URL="${TUNNEL_URLS[homeowner]:-}"
-
 # ── 7. Update env file and worker state ───────────────────────────────────────
 
 # Preserve existing seed credentials from the original env file.
@@ -238,8 +235,6 @@ HO_MAGIC_LINK=$(grep '^HO_MAGIC_LINK=' "$URLS_FILE" 2>/dev/null | cut -d= -f2- |
     [ -z "$port" ] && continue
     printf '%s_URL=%s\n' "$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')" "${TUNNEL_URLS[$name]:-}"
   done
-  printf 'PORTAL_URL=%s\n'       "${PORTAL_URL:-}"
-  printf 'HO_URL=%s\n'           "${HO_URL:-}"
   printf 'PREVIEW_EMAIL=%s\n'    "${PREVIEW_EMAIL:-}"
   printf 'PREVIEW_PASSWORD=%s\n' "${PREVIEW_PASSWORD:-}"
   printf 'HO_MAGIC_LINK=%s\n'    "${HO_MAGIC_LINK:-}"
@@ -247,8 +242,6 @@ HO_MAGIC_LINK=$(grep '^HO_MAGIC_LINK=' "$URLS_FILE" 2>/dev/null | cut -d= -f2- |
 log "updated $URLS_FILE"
 
 node "$STATE_CLI" "$WORKER" set api_tunnel_url "${API_TUNNEL_URL:-}"
-node "$STATE_CLI" "$WORKER" set portal_url     "${PORTAL_URL:-}"
-node "$STATE_CLI" "$WORKER" set ho_url         "${HO_URL:-}"
 for i in "${!FRONTEND_NAMES[@]}"; do
   name="${FRONTEND_NAMES[$i]}"
   port="${FRONTEND_PORTS[$i]:-}"
@@ -257,9 +250,23 @@ for i in "${!FRONTEND_NAMES[@]}"; do
 done
 
 # ── 8. Re-emit tunnel_ready so skills that source the env file get new URLs ───
+# Nested, not spread — a frontend project literally named "api" (a
+# misconfiguration: devScript+port but no seedScript) would otherwise
+# silently clobber the real API tunnel URL at the top level. Built in a
+# single jq call (name/url pairs piped in as raw lines) rather than spawning
+# one jq process per frontend project.
+
+FRONTEND_JSON=$(
+  for i in "${!FRONTEND_NAMES[@]}"; do
+    name="${FRONTEND_NAMES[$i]}"
+    port="${FRONTEND_PORTS[$i]:-}"
+    [ -z "$port" ] && continue
+    printf '%s\n%s\n' "$name" "${TUNNEL_URLS[$name]:-}"
+  done | jq -R -n '[inputs] | . as $lines | reduce range(0; length; 2) as $i ({}; . + {($lines[$i]): $lines[$i+1]})'
+)
 
 node "$EMIT_CLI" "$WORKER" servers tunnel_ready \
-  "{\"api\":\"${API_TUNNEL_URL:-}\",\"portal\":\"${PORTAL_URL:-}\",\"homeowner\":\"${HO_URL:-}\"}"
+  "$(jq -n --arg api "${API_TUNNEL_URL:-}" --argjson frontends "$FRONTEND_JSON" '{api: $api, frontends: $frontends}')"
 
 # ── 9. Print summary ──────────────────────────────────────────────────────────
 

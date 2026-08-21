@@ -95,6 +95,23 @@ collide across workers.
 they come from quotethat's DB compose overlay (see "Project compose overlay").
 A project without a DB overlay has no `db`/`db_test` services at all.
 
+## Preview server config (`services/start-servers.js`, `dispatch-daemon.js`)
+
+Both read `.muaddib.json` directly (not through `read-config.sh`, since they
+run as Node jobs rather than shell scripts) and have no built-in fallback — a
+missing `.muaddib.json`, a `.muaddib.json` with no `projects` array, or one
+missing `projectName` is a clear startup error, not a silent quotethat-shaped
+guess. `start-servers.js` picks the API project by `seedScript` presence and
+frontend projects by `devScript` presence (no project named "api"/"portal"/
+"homeowner" anywhere in its own logic) — `dispatch-daemon.js` needs
+`projectName` to find this project's worker containers by their compose
+project label.
+
+`start-servers.js` writes each frontend project's tunnel URL to worker state
+as `<project-name>_url` (e.g. `portal_url`, `homeowner_url`) — skills that
+want a preview link read the state key matching the project's own name in
+`.muaddib.json`, not a separately-configured alias.
+
 ## Prerequisites (one-time)
 
 1. **Subscription token:** `claude setup-token` → `export CLAUDE_CODE_OAUTH_TOKEN=…`

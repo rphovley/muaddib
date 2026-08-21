@@ -14,10 +14,20 @@
 // testMuaddibPlanLabel       — auto + muaddib:plan → plan workflow
 // testBugTakesPrecedence     — auto + bug + fast → bug workflow (bug wins)
 // testLabelsCaseInsensitive  — mixed-case label names are normalised
+// testThrowsWhenConfigMissing      — getProjectName() with missing .muaddib.json → clear error, no quotethat fallback
+// testThrowsWhenProjectNameMissing — getProjectName() with .muaddib.json missing "projectName" → clear error
+// testInvalidConfigThrowsOnEveryCall — an invalid config throws on every getProjectName() call,
+//                                    not just the first (a broken config must never get cached
+//                                    as if it were valid)
+// testRequireAloneDoesNotThrow     — require() alone (no getProjectName() call) succeeds with no config at all
+// testRealStartupFailsCleanlyOnBadConfig — running as the real entry point (require.main===module)
+//                                    with bad config fails fast with a clean FATAL log, not an
+//                                    uncaught exception from inside an async callback
 
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const { spawnSync } = require("child_process");
 const { resolveRoute, handleEvent, cleanupWorkerFiles } = require("../dispatch-daemon");
 
 function assertRoute(labels, expectedEntryPoint) {
@@ -414,6 +424,143 @@ async function testCleanupNoStateFile() {
   }
 }
 
+// ─── config validation (lazy) ─────────────────────────────────────────────────
+// dispatch-daemon.js reads .muaddib.json lazily — only when something actually
+// needs the project name (getProjectName()), not merely on require(). That's
+// deliberate: it keeps the module importable in isolation (as this whole test
+// file already does at the top, via a real .muaddib.json two directories up)
+// without every unrelated test needing a valid config. So these two tests call
+// getProjectName() explicitly, in a subprocess so the thrown error doesn't take
+// this whole test process down.
+
+const DISPATCH_DAEMON_PATH = path.join(__dirname, "../dispatch-daemon.js");
+
+function callGetProjectNameInSubprocess(repoRoot) {
+  return spawnSync(
+    process.execPath,
+    ["-e", `require(${JSON.stringify(DISPATCH_DAEMON_PATH)}).getProjectName()`],
+    { encoding: "utf8", env: { ...process.env, REPO_ROOT: repoRoot } },
+  );
+}
+
+async function testThrowsWhenConfigMissing() {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "muaddib-test-"));
+  try {
+    const r = callGetProjectNameInSubprocess(tmpDir);
+    if (r.status === 0) throw new Error("expected non-zero exit when .muaddib.json is missing — got a silent quotethat-shaped default instead");
+    if (!r.stderr.includes(".muaddib.json")) throw new Error(`error should name the missing file, got: ${r.stderr}`);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+async function testThrowsWhenProjectNameMissing() {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "muaddib-test-"));
+  try {
+    fs.writeFileSync(path.join(tmpDir, ".muaddib.json"), JSON.stringify({}));
+    const r = callGetProjectNameInSubprocess(tmpDir);
+    if (r.status === 0) throw new Error('expected non-zero exit when "projectName" is missing — got a silent "quotethat" default instead');
+    if (!r.stderr.includes("projectName")) throw new Error(`error should mention projectName, got: ${r.stderr}`);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+// Regression test: getConfig() used to cache the parsed config BEFORE
+// validating "projectName", so an invalid config threw only on the first
+// call — every later call silently returned the invalid (projectName:
+// undefined) config instead of throwing again. Only masked in production
+// because main()'s sole caller exits the process on the first failure; any
+// other caller (a retry, a longer-lived reuse of the module) would have hit
+// the silent-undefined path. Calls getProjectName() twice in one process and
+// asserts both throw.
+async function testInvalidConfigThrowsOnEveryCall() {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "muaddib-test-"));
+  try {
+    fs.writeFileSync(path.join(tmpDir, ".muaddib.json"), JSON.stringify({}));
+    const r = spawnSync(
+      process.execPath,
+      ["-e", `
+        const { getProjectName } = require(${JSON.stringify(DISPATCH_DAEMON_PATH)});
+        let firstThrew = false, secondThrew = false, secondValue;
+        try { getProjectName(); } catch (_) { firstThrew = true; }
+        try { secondValue = getProjectName(); } catch (_) { secondThrew = true; }
+        console.log(JSON.stringify({ firstThrew, secondThrew, secondValue }));
+      `],
+      { encoding: "utf8", env: { ...process.env, REPO_ROOT: tmpDir } },
+    );
+    if (r.status !== 0) throw new Error(`subprocess itself failed: ${r.stderr}`);
+    const result = JSON.parse(r.stdout);
+    if (!result.firstThrew) throw new Error("expected the first call to throw");
+    if (!result.secondThrew) {
+      throw new Error(`expected the second call to also throw, but it returned projectName=${JSON.stringify(result.secondValue)} silently`);
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+async function testRequireAloneDoesNotThrow() {
+  // The point of laziness: importing the module (without calling
+  // getProjectName()) must succeed even with no .muaddib.json at all —
+  // otherwise every test/tool that only needs resolveRoute/handleEvent would
+  // be forced to supply a valid config just to require() this file.
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "muaddib-test-"));
+  try {
+    const r = spawnSync(
+      process.execPath,
+      ["-e", `require(${JSON.stringify(DISPATCH_DAEMON_PATH)}); console.log("ok")`],
+      { encoding: "utf8", env: { ...process.env, REPO_ROOT: tmpDir } },
+    );
+    if (r.status !== 0) throw new Error(`expected require() alone to succeed with no .muaddib.json, got exit ${r.status}: ${r.stderr}`);
+    if (!r.stdout.includes("ok")) throw new Error(`expected "ok" on stdout, got: ${r.stdout}`);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+// Regression test: getConfig()/getProjectName() are lazy so require() alone
+// is safe (see testRequireAloneDoesNotThrow above) — but a lazy throw from
+// inside an async callback (e.g. execFile's callback in
+// getActiveWorkerProjects()) would be UNCAUGHT there, crashing the process
+// ungracefully well after startup instead of failing fast and cleanly. The
+// fix: main() forces getConfig() synchronously, before anything async
+// starts, so by the time any callback could call it, it's already cached
+// and can't throw. Runs the daemon as the real entry point (require.main
+// === module), not via require() — that's the only path that exercises this.
+async function testRealStartupFailsCleanlyOnBadConfig() {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "muaddib-test-"));
+  try {
+    const r = spawnSync(
+      process.execPath,
+      [DISPATCH_DAEMON_PATH],
+      {
+        encoding: "utf8",
+        timeout: 10_000,
+        env: {
+          ...process.env,
+          REPO_ROOT: tmpDir,
+          LINEAR_API_KEY: "test-key",
+          LINEAR_TEAM_ID: "test-team",
+          DISPATCH_PORT: "0",
+        },
+      },
+    );
+    if (r.status === 0) throw new Error("expected the daemon to exit non-zero on missing config, got exit 0 (still running / hung?)");
+    if (r.signal) throw new Error(`daemon was killed by signal ${r.signal} — likely hung instead of failing fast (timeout=${r.error && r.error.code === "ETIMEDOUT"})`);
+    if (!r.stdout.includes("FATAL") && !r.stderr.includes("FATAL")) {
+      throw new Error(`expected a clean "FATAL: ..." startup error, got stdout=${JSON.stringify(r.stdout)} stderr=${JSON.stringify(r.stderr)}`);
+    }
+    // Must not show a raw uncaught-exception stack trace — that's exactly
+    // the ungraceful crash this test guards against.
+    if (r.stderr.includes("Uncaught") || r.stderr.includes("uncaughtException")) {
+      throw new Error(`daemon crashed with an uncaught exception instead of failing cleanly: ${r.stderr}`);
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 // ─── runner ──────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -475,6 +622,26 @@ async function main() {
     [
       "cleanupWorkerFiles: deletes files when state file is missing",
       testCleanupNoStateFile,
+    ],
+    [
+      "config: missing .muaddib.json throws a clear error (no quotethat fallback)",
+      testThrowsWhenConfigMissing,
+    ],
+    [
+      "config: missing projectName throws a clear error (no quotethat fallback)",
+      testThrowsWhenProjectNameMissing,
+    ],
+    [
+      "config: invalid config throws on every call, not just the first",
+      testInvalidConfigThrowsOnEveryCall,
+    ],
+    [
+      "config: require() alone does not throw even with no config (lazy)",
+      testRequireAloneDoesNotThrow,
+    ],
+    [
+      "config: real startup (require.main) fails cleanly on bad config, not an uncaught exception",
+      testRealStartupFailsCleanlyOnBadConfig,
     ],
   ];
 

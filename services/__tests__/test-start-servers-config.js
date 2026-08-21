@@ -2,9 +2,9 @@
 'use strict';
 // start-servers.js config loading test suite.
 //
-// testFallbackWhenNoFile       — missing .muaddib.json → quotethat defaults
-// testFallbackHasApiProject    — fallback config has exactly one API project (with seedScript)
-// testFallbackFrontends        — fallback config has two frontend projects (no seedScript, has devScript)
+// testThrowsWhenNoFile         — missing .muaddib.json → clear error, no fallback guess
+// testThrowsOnInvalidJson      — malformed .muaddib.json → clear error naming the file
+// testThrowsOnEmptyProjects    — .muaddib.json with no "projects" array → clear error
 // testCustomConfig             — custom .muaddib.json → config values used verbatim
 // testCustomApiProjectPicked   — custom config → correct API project selected
 // testCustomFrontendsFiltered  — custom config → correct frontends filtered
@@ -35,38 +35,51 @@ async function run(name, fn) {
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 
-async function testFallbackWhenNoFile() {
+async function testThrowsWhenNoFile() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ss-cfg-'));
   try {
-    const cfg = loadConfig(tmp);
-    assert(cfg.projects && cfg.projects.length > 0, 'fallback should have projects');
+    let threw = false;
+    try {
+      loadConfig(tmp);
+    } catch (err) {
+      threw = true;
+      assert(err.message.includes('.muaddib.json'), `error should name the missing file, got: ${err.message}`);
+    }
+    assert(threw, 'missing .muaddib.json should throw, not silently fall back to a guessed project list');
   } finally {
     fs.rmSync(tmp, { recursive: true });
   }
 }
 
-async function testFallbackHasApiProject() {
+async function testThrowsOnInvalidJson() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ss-cfg-'));
   try {
-    const cfg = loadConfig(tmp);
-    const api = cfg.projects.find((p) => p.seedScript);
-    assert(api, 'fallback should have one API project with seedScript');
-    assert(api.path === 'projects/api', `expected path=projects/api, got ${api.path}`);
-    assert(api.devScript === 'npm run api:dev', `expected devScript=npm run api:dev, got ${api.devScript}`);
-    assert(api.port === 8081, `expected port=8081, got ${api.port}`);
+    fs.writeFileSync(path.join(tmp, '.muaddib.json'), '{ not valid json');
+    let threw = false;
+    try {
+      loadConfig(tmp);
+    } catch (err) {
+      threw = true;
+      assert(err.message.includes('.muaddib.json'), `error should name the file, got: ${err.message}`);
+    }
+    assert(threw, 'malformed .muaddib.json should throw a clear error');
   } finally {
     fs.rmSync(tmp, { recursive: true });
   }
 }
 
-async function testFallbackFrontends() {
+async function testThrowsOnEmptyProjects() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ss-cfg-'));
   try {
-    const cfg = loadConfig(tmp);
-    const frontends = cfg.projects.filter((p) => !p.seedScript && p.devScript);
-    assert(frontends.length === 2, `expected 2 frontends in fallback, got ${frontends.length}`);
-    const names = frontends.map((p) => p.name).sort();
-    assert(names[0] === 'homeowner' && names[1] === 'portal', `expected portal+homeowner, got ${names}`);
+    fs.writeFileSync(path.join(tmp, '.muaddib.json'), JSON.stringify({ projectName: 'x' }));
+    let threw = false;
+    try {
+      loadConfig(tmp);
+    } catch (err) {
+      threw = true;
+      assert(err.message.includes('projects'), `error should mention the missing "projects" array, got: ${err.message}`);
+    }
+    assert(threw, '.muaddib.json with no projects array should throw');
   } finally {
     fs.rmSync(tmp, { recursive: true });
   }
@@ -135,9 +148,9 @@ async function testCustomFrontendsFiltered() {
 // ── run ───────────────────────────────────────────────────────────────────────
 
 (async () => {
-  await run('fallback when no .muaddib.json', testFallbackWhenNoFile);
-  await run('fallback has API project with seedScript', testFallbackHasApiProject);
-  await run('fallback has portal + homeowner frontends', testFallbackFrontends);
+  await run('missing .muaddib.json throws a clear error (no fallback guess)', testThrowsWhenNoFile);
+  await run('malformed .muaddib.json throws a clear error', testThrowsOnInvalidJson);
+  await run('.muaddib.json with no projects array throws', testThrowsOnEmptyProjects);
   await run('custom config loaded verbatim', testCustomConfig);
   await run('custom API project identified by seedScript', testCustomApiProjectPicked);
   await run('custom frontends filtered by devScript/no-seedScript', testCustomFrontendsFiltered);
