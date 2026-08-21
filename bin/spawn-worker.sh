@@ -59,8 +59,11 @@ cp "$SHARED_ENV" "$ENV_FILE"
 # (e.g. STRIPE_CONNECT_STATE_SECRET=xxxxCLAUDE_CODE_OAUTH_TOKEN=sk-ant-xxxx).
 printf '\n' >>"$ENV_FILE"
 
-# Append worker-specific dynamic values. PG_*/DATABASE_URL are force-overridden
-# in compose to the local sidecar, so DB connection can't point at prod here.
+# Append worker-specific dynamic values. If the project supplies a DB compose
+# overlay (see read-config.sh's MUADDIB_COMPOSE_OVERLAY), its PG_*/DATABASE_URL
+# `environment:` block overrides this env_file, force-pointing the DB connection
+# at the local sidecar regardless of what's in secrets.env — but that guarantee
+# lives in the project's overlay, not in this generic base file.
 cat >>"$ENV_FILE" <<EOF
 CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN}
 GITHUB_TOKEN=${GITHUB_TOKEN}
@@ -119,14 +122,16 @@ if ! docker image inspect "$MUADDIB_WORKER_IMAGE" >/dev/null 2>&1; then
     docker build -f "$WORKER_DOCKERFILE" -t "$MUADDIB_WORKER_IMAGE" "$REPO_ROOT"
 fi
 
+# MUADDIB_COMPOSE_FILES (base + project overlay, if any) comes from
+# read-config.sh — teardown-worker.sh must use the exact same list.
 docker compose -p "$PROJECT" \
     --project-directory "$HOST_FLEET_DIR" \
-    -f "$FLEET_DIR/docker-compose.worker.yml" up -d
+    "${MUADDIB_COMPOSE_FILES[@]}" up -d
 
 # Capture container ID immediately — before it can be removed on fast exit.
 WORKER_CID=$(docker compose -p "$PROJECT" \
     --project-directory "$HOST_FLEET_DIR" \
-    -f "$FLEET_DIR/docker-compose.worker.yml" ps -q worker 2>/dev/null | head -1)
+    "${MUADDIB_COMPOSE_FILES[@]}" ps -q worker 2>/dev/null | head -1)
 
 # Wait for the worker to finish provisioning (clone + deps + MCP). If it dies,
 # surface its logs to THIS console instead of reporting a false "up".

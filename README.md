@@ -15,8 +15,9 @@ tells you which worker needs you.
   your `~/.claude/skills` ro), non-root user, and CPU/mem/pids caps.
 - **Local dev secrets, prod unreachable by construction.** App secrets come from
   a local `.muaddib/secrets.env` (dev/local values only) loaded straight into the
-  container — no secret-manager indirection. The DB is safe regardless of the
-  file's contents: the compose force-overrides `PG_*` / `DATABASE_URL` to the
+  container — no secret-manager indirection. For a project whose compose overlay
+  defines a DB contract (quotethat's does — see "Project compose overlay"), the
+  overlay's `environment:` block force-overrides `PG_*` / `DATABASE_URL` to the
   local sidecar, so a worker can't connect to a cloud/prod database even if a
   prod URL were dropped into the env file by mistake.
 - **Easy to make interactive** When building with LLMs, often you need to come in and
@@ -34,6 +35,7 @@ project-specific — all customisation lives here.
 | `.muaddib/secrets.env.example` | Committed template for the secrets bundle (gitignored: `.muaddib/secrets.env`) |
 | `.muaddib/secrets.env` | Your filled-in secrets (gitignored). Copy from `secrets.env.example`. |
 | `.muaddib/hooks/on-worker-start.sh` | Project hook run by the worker entrypoint after env is loaded. Executable; receives the full worker env. |
+| `.muaddib/docker/docker-compose.worker.yml` | Project compose overlay — services/env the generic `docker-compose.worker.yml` doesn't carry (e.g. a DB sidecar). Layered in via an extra `-f` when present. |
 | `.muaddib/.worker-N.env` | Per-worker ephemeral env file (gitignored). Written by `spawn-worker.sh`; never edit by hand. |
 | `.muaddib/plan.md` | Current implementation plan written by the muaddib fleet agent. Not tracked by git. |
 
@@ -48,6 +50,24 @@ The hook receives the full worker env (all vars from `secrets.env` plus dynamic
 values like `WORKER_INDEX`, `BRANCH`, `REPO_URL`). Use it for anything that must
 happen on every worker start — materialising secret files, writing config, etc.
 
+### Project compose overlay
+
+`muaddib/docker-compose.worker.yml` carries no project-specific services or env
+vars — no DB sidecars, no app config contract, just the generic sandbox (build,
+the worker container, its narrow host mounts, resource limits). A project that
+needs more than that (a database, app-specific env vars, etc.) supplies its own
+overlay at `.muaddib/docker/docker-compose.worker.yml`. When present,
+`spawn-worker.sh` and `teardown-worker.sh` pass it as an additional `-f` after
+the base file, so Compose merges it in (new services are added; `worker`'s
+`environment`/`depends_on` are merged in on top). Both scripts must agree on
+which `-f` flags were used for a given worker, or `teardown-worker.sh` won't
+know about (and won't tear down) the overlay's services — they derive the list
+the same way via `read-config.sh`'s `MUADDIB_COMPOSE_OVERLAY`.
+
+quotethat's own DB contract (Postgres dev + test sidecars, `PG_*`/`DATABASE_URL`/
+`TEST_DB_*`/`ENV` env vars) lives at `.muaddib/docker/docker-compose.worker.yml`
+in the quotethat repo as a worked example of this pattern.
+
 ## Port scheme
 
 Worker `N` (1-based):
@@ -55,12 +75,16 @@ Worker `N` (1-based):
 | Service             | Host port    | Worker 1 | Worker 2 |
 | ------------------- | ------------ | -------- | -------- |
 | API (`npm run dev`) | `8090 + N-1` | 8090     | 8091     |
-| Postgres (dev)      | `5443 + N-1` | 5443     | 5444     |
-| Postgres (test)     | not published — internal `db_test:5432` |
+| Postgres (dev)¹     | `5443 + N-1` | 5443     | 5444     |
+| Postgres (test)¹    | not published — internal `db_test:5432` |
 | Sketch (UI/UX prototyping loop) | `4387 + N-1` | 4387 | 4388 |
 
 Compose project is namespaced `quotethat-w<N>`, so containers/volumes never
 collide across workers.
+
+¹ Postgres sidecars aren't part of the generic `docker-compose.worker.yml` —
+they come from quotethat's DB compose overlay (see "Project compose overlay").
+A project without a DB overlay has no `db`/`db_test` services at all.
 
 ## Prerequisites (one-time)
 
@@ -195,9 +219,10 @@ externally-provided Postgres:
 - `test-setup.ts` skips all container management when `TEST_DB_EXTERNAL=1`,
   waits on the external DB via `pg_isready`, and runs migrations against it.
 
-The compose already sets `TEST_DB_HOST=db_test`, `TEST_DB_PORT=5432`,
-`TEST_DB_EXTERNAL=1`, so integration tests run against the `db_test` sidecar with
-no socket. Defaults are preserved, so local `npm test` on your Mac is unchanged.
+quotethat's DB compose overlay (`.muaddib/docker/docker-compose.worker.yml`)
+already sets `TEST_DB_HOST=db_test`, `TEST_DB_PORT=5432`, `TEST_DB_EXTERNAL=1`,
+so integration tests run against the `db_test` sidecar with no socket. Defaults
+are preserved, so local `npm test` on your Mac is unchanged.
 
 > This harness change lives in `projects/api/**` and should go through your
 > normal review/PR — it's separable from the `muaddib/` infra.

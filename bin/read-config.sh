@@ -11,6 +11,19 @@ REPO_ROOT="${REPO_ROOT:-$(cd "$_MUADDIB_BIN_DIR/../.." && pwd)}"
 export REPO_ROOT
 _MUADDIB_CONFIG="$REPO_ROOT/.muaddib.json"
 
+# Project-supplied compose overlay: adds project-specific services/env (e.g. a
+# DB sidecar) to docker-compose.worker.yml without editing the generic base
+# file. See README "Project compose overlay".
+export MUADDIB_COMPOSE_OVERLAY="$REPO_ROOT/.muaddib/docker/docker-compose.worker.yml"
+
+# The `-f` flags for the worker compose stack: base file, plus the project
+# overlay if it supplied one. spawn-worker.sh and teardown-worker.sh MUST both
+# use this (rather than each recomputing it) — they need to agree on which
+# `-f` flags a given worker was brought up with, or teardown won't know about
+# (and won't tear down) the overlay's services.
+MUADDIB_COMPOSE_FILES=(-f "$_MUADDIB_BIN_DIR/../docker-compose.worker.yml")
+[ -f "$MUADDIB_COMPOSE_OVERLAY" ] && MUADDIB_COMPOSE_FILES+=(-f "$MUADDIB_COMPOSE_OVERLAY")
+
 if ! command -v jq &>/dev/null || [ ! -f "$_MUADDIB_CONFIG" ]; then
     export MUADDIB_PROJECT_NAME="quotethat"
     return 0 2>/dev/null || true

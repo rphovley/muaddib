@@ -18,6 +18,11 @@ export HOST_DESKTOP="$HOME/Desktop"
 
 STATUS_DIR="$FLEET_DIR/status"
 
+# MUADDIB_COMPOSE_FILES (base + project overlay, if any) comes from
+# read-config.sh — must match what spawn-worker.sh used to bring the stack
+# up, or compose won't know about (and won't tear down) the overlay's
+# services (e.g. DB sidecars).
+
 # Read the worker's state before bringing the container down.
 CURRENT_STATE="$(cut -d' ' -f1 "$STATUS_DIR/worker-${WORKER}.state" 2>/dev/null || true)"
 
@@ -26,7 +31,7 @@ CURRENT_STATE="$(cut -d' ' -f1 "$STATUS_DIR/worker-${WORKER}.state" 2>/dev/null 
 # Then wait for the docker exec process to exit before bringing the container
 # down — without the wait, compose down races the PTY flush and the host
 # terminal is left with mouse-tracking escape sequences still active.
-WORKER_CID=$(docker compose -p "$PROJECT" -f "$FLEET_DIR/docker-compose.worker.yml" ps -q worker 2>/dev/null | head -1)
+WORKER_CID=$(docker compose -p "$PROJECT" "${MUADDIB_COMPOSE_FILES[@]}" ps -q worker 2>/dev/null | head -1)
 if [ -n "$WORKER_CID" ]; then
     docker exec "$WORKER_CID" tmux detach-client -s "w${WORKER}" 2>/dev/null || true
     # Poll until no clients remain (PTY has flushed its cleanup sequences) or we
@@ -40,7 +45,7 @@ if [ -n "$WORKER_CID" ]; then
     sleep 0.5  # small extra buffer for PTY buffer flush after last client drops
 fi
 
-docker compose -p "$PROJECT" -f "$FLEET_DIR/docker-compose.worker.yml" down -v
+docker compose -p "$PROJECT" "${MUADDIB_COMPOSE_FILES[@]}" down -v
 
 # Remove env file (always).
 rm -f "$FLEET_DIR/.worker-${WORKER}.env"
