@@ -290,15 +290,19 @@ elements/text, or submit a comment through a review button built into the
 prototype — instead of a single round of "what do you think?". Built on
 [lavish-axi](https://github.com/kunchenguid/lavish-axi) under the hood.
 
-The review loop is real orchestrator control flow, not a skill that waits
-forever in prose — it mirrors the existing PR `FEEDBACK ⇄ FEEDBACK_WORKING`
-state machine, just driven by `lavish-axi poll`'s own signals instead of a
-GitHub webhook (no tunnel needed — the reviewer is local):
+The review loop is a **project-specific workflow step**, not a special case
+built into the orchestrator core — `muaddib/workflows/plan.json` declares it
+using the same declarative `loop`/`claude-tui`/`runIf` primitives
+`quality-loop` uses in `feature.json`/`bug.json` (`orchestrator/runner.js`
+executes these; see its file header for the step-type reference). The
+orchestrator itself (`orchestrator/orchestrator.js`) has no sketch-specific
+states or literals; a project that doesn't declare a `sketch` step in its
+workflow just never runs any of this.
 
 - `analyze-ticket` (shared by `plan`/`feature`/`bug` workflows) decides
   whether a ticket needs a sketch pass and writes `needs_sketch` to worker
-  state; only `plan.json` (the workflow that actually has a `sketch` step)
-  acts on it.
+  state; only `plan.json` (the workflow that actually declares the `sketch`
+  steps below) acts on it.
 - `sketch` (`muaddib/claude/skills/sketch/`) is setup-only: discovers the
   target project's real design system (Mantine v8 for Portal/Homeowner
   today, not a generic Tailwind/DaisyUI default), builds the prototype with
@@ -306,18 +310,30 @@ GitHub webhook (no tunnel needed — the reviewer is local):
   container has no display — the URL is published per worker at
   `http://localhost:<workerPorts.sketch + N>` (quotethat: worker 1 →
   `4387`), and notifies you via Linear + macOS.
-- The orchestrator (`orchestrator/sketch-review.js`) then loops:
-  `SKETCH_REVIEW` runs `sketch-poll` (one bounded `lavish-axi poll` call) →
-  feedback submitted → `SKETCH_REVIEW_WORKING` runs `sketch-feedback` (applies
-  it, revises the prototype and `.muaddib/plan.md` if the approach changed) →
-  back to `SKETCH_REVIEW`. Submitting with no changes (or ending the session)
+- `sketch-review-loop` (a `loop` step in `plan.json`, capped at 200 iterations
+  as a runaway backstop — a real review session is nowhere near that; hitting
+  it fails the workflow rather than silently wrapping up) then repeats:
+  `sketch-poll` (one bounded `lavish-axi poll` call, `awaitsReview: true` —
+  see below) sets worker state `sketch_status` to `feedback` or `ended` → if
+  `feedback`, `sketch-feedback` applies it (revises the prototype and
+  `.muaddib/plan.md` if the approach changed) and the loop polls again → if
+  `ended`, the loop exits. Submitting with no changes (or ending the session)
   is approval.
-- **Persistence is the point.** On approval, `SKETCH_FINALIZING` runs
-  `sketch-finalize`, which exports the prototype and posts `## Plan` +
-  `## Sketch` to the Linear ticket — `analyze-ticket` deliberately holds off
-  posting `## Plan` itself when a sketch pass is pending. `implement`/
-  `implement-bug` (running later, in a different worker/container) read the
-  prototype back from that `## Sketch` comment — falling back to the ticket's
+- **Status while blocked on you.** `sketch-poll`'s `awaitsReview: true` is a
+  generic runner capability (any project-declared `claude-tui` step can opt
+  in, not just sketch's): while that step runs, the coarse worker status is
+  `AWAITING_REVIEW` — surfaced by `bin/attend.sh`, `spawn-worker.sh`'s macOS
+  notifier, and MuaddibApp's status board — and reverts to `RUNNING` once it
+  settles. Fires a notify event too, so you get a fresh ping each round, not
+  just the first.
+- **Persistence is the point.** Once the loop exits with approval,
+  `sketch-finalize` (gated on `sketch_status === 'ended'`, not just
+  `needs_sketch` — never runs on an exhausted/incomplete loop) exports the
+  prototype and posts `## Plan` + `## Sketch` to the Linear ticket —
+  `analyze-ticket` deliberately holds off posting `## Plan` itself when a
+  sketch pass is pending. `implement`/`implement-bug` (running later, in a
+  different worker/container) read the prototype back from that `## Sketch`
+  comment — falling back to the ticket's
   parent, same as the plan fallback — since nothing on the planning worker's
   filesystem survives to the implementation run.
 

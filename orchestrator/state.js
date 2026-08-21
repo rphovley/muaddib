@@ -83,4 +83,12 @@ function merge(worker, obj) {
   });
 }
 
-module.exports = { get, set, merge, read, write, statePath };
+function unset(worker, key) {
+  withLock(worker, () => {
+    const data = read(worker);
+    delete data[key];
+    write(worker, data);
+  });
+}
+
+module.exports = { get, set, merge, unset, read, write, statePath };

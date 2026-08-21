@@ -5,9 +5,9 @@ description: Fleet sketch-review step. Applies one round of operator feedback (f
 
 # Sketch Feedback
 
-Called by the orchestrator's sketch-review state machine
-(`SKETCH_REVIEW_WORKING`) after `sketch-poll` reports `feedback`. Applies
-exactly one round, then hands back to `sketch-poll`.
+Called by `plan.json`'s `sketch-review-loop` step (see
+`muaddib/workflows/plan.json`) after `sketch-poll` sets `sketch_status` to
+`feedback`. Applies exactly one round, then hands back to `sketch-poll`.
 
 `$ARGUMENTS` is the Linear ticket identifier.
 

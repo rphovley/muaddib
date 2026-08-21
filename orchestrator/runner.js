@@ -12,6 +12,12 @@
 // Notify: any job can emit a notify event on the bus. The runner calls
 // flushNotify() after every step — this is synchronous so it works correctly
 // for both blocking script steps and async claude-tui steps.
+//
+// claude-tui step option — awaitsReview: true — marks a step as blocked on a
+// human (not just slow). Sets the coarse per-worker status to AWAITING_REVIEW
+// (read by bin/attend.sh, spawn-worker.sh's notifier, MuaddibApp) and fires a
+// notify event, then reverts to RUNNING once the step settles. Generic — any
+// project-declared step can opt in; the runner doesn't know or care which one.
 
 const fs = require('fs');
 const path = require('path');
@@ -19,6 +25,7 @@ const { spawnSync, spawn } = require('child_process');
 const { eventsFile, emit } = require('./events');
 const { startJob } = require('./job');
 const state = require('./state');
+const { noteStatus, AGENT_STATUS_DIR } = require('./status');
 const { recordStep } = require('./token-tracker');
 
 const REPO = process.env.REPO_DIR || '/home/worker/repo';
@@ -181,8 +188,7 @@ async function runScriptStep(worker, step) {
   const runtime = scriptPath.endsWith('.js') ? 'node' : 'bash';
 
   // Capture output to the host-mounted status dir (/var/run/agent-status).
-  const statusDir = process.env.AGENT_STATUS_DIR || '/var/run/agent-status';
-  const logPath = path.join(statusDir, `worker-${worker}-${step.id}.log`);
+  const logPath = path.join(AGENT_STATUS_DIR, `worker-${worker}-${step.id}.log`);
   const logFd = fs.openSync(logPath, 'w');
 
   const r = spawnSync(runtime, [scriptPath], { stdio: ['ignore', logFd, logFd], env });
@@ -222,13 +228,23 @@ async function runClaudeTuiStep(worker, step, ticketId) {
   const cmd = claudeTuiCmd(worker, step, ticketId);
   const notifyScript = path.join(REPO, 'muaddib/services/notify.sh');
 
-  const onWarn = () => {
-    const msg = `${step.id} is taking longer than expected — worker ${worker} may need input`;
-    console.log(`[runner w${worker}] WARN: ${msg}`);
-    emit(worker, 'orchestrator', 'notify', { msg });
+  // Spawns notify.sh directly — no bus `emit` here. runClaudeTuiStep already
+  // runs inside this process, so it doesn't need the notify event's other
+  // purpose: letting a script-run job (a separate process with no direct
+  // access to this function) request a notification via the bus, which
+  // flushNotify() picks up after the step. Emitting AND spawning directly
+  // here would double-fire: flushNotify() re-reads the same event once the
+  // step settles and spawns notify.sh a second time for the identical message.
+  const fireNotify = (msg) => {
     if (fs.existsSync(notifyScript)) {
       spawn('bash', [notifyScript, String(worker), msg], { stdio: 'ignore', detached: true }).unref();
     }
+  };
+
+  const onWarn = () => {
+    const msg = `${step.id} is taking longer than expected — worker ${worker} may need input`;
+    console.log(`[runner w${worker}] WARN: ${msg}`);
+    fireNotify(msg);
   };
 
   // STEP_WARN_MS overrides the default (300 000 ms) — used in tests to trigger
@@ -237,10 +253,26 @@ async function runClaudeTuiStep(worker, step, ticketId) {
 
   const stepStartMs = Date.now();
 
-  // Capture offset BEFORE startJob so the done event is never missed.
-  const waitP = waitForJobCompletion(worker, step.id, { onWarn, warnMs });
-  startJob(worker, step.id, cmd, extraEnv);
-  await waitP;
+  // A step can declare awaitsReview so the coarse status board (attend.sh,
+  // spawn-worker.sh's notifier, MuaddibApp) shows it's blocked on a human —
+  // and pings once via the same generic notify path onWarn uses — without the
+  // orchestrator core hardcoding which step that is. Reverted to RUNNING
+  // (in a finally) once the step settles, success or failure.
+  if (step.awaitsReview) {
+    noteStatus(worker, 'AWAITING_REVIEW');
+    // Same wording bin/attend.sh and spawn-worker.sh's notifier show for this
+    // state — one message across all three delivery paths, not three.
+    fireNotify('A workflow step needs your input');
+  }
+
+  try {
+    // Capture offset BEFORE startJob so the done event is never missed.
+    const waitP = waitForJobCompletion(worker, step.id, { onWarn, warnMs });
+    startJob(worker, step.id, cmd, extraEnv);
+    await waitP;
+  } finally {
+    if (step.awaitsReview) noteStatus(worker, 'RUNNING');
+  }
 
   if (!MOCK_JOBS) {
     try {

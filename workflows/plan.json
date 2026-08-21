@@ -32,6 +32,38 @@
       "runIf": "state.needs_sketch === 'true'",
       "stateReads": ["ticket_identifier", "ticket_url"],
       "stateWrites": ["sketch_file", "sketch_url"]
+    },
+    {
+      "id": "sketch-review-loop",
+      "type": "loop",
+      "runIf": "state.needs_sketch === 'true'",
+      "minIterations": 1,
+      "maxIterations": 200,
+      "exitCondition": "state.sketch_status === 'ended'",
+      "steps": [
+        {
+          "id": "sketch-poll",
+          "type": "claude-tui",
+          "skill": "sketch-poll",
+          "awaitsReview": true,
+          "stateReads": ["sketch_file", "sketch_url"],
+          "stateWrites": ["sketch_status"]
+        },
+        {
+          "id": "sketch-feedback",
+          "type": "claude-tui",
+          "skill": "sketch-feedback",
+          "runIf": "state.sketch_status === 'feedback'",
+          "stateReads": ["sketch_file"]
+        }
+      ]
+    },
+    {
+      "id": "sketch-finalize",
+      "type": "claude-tui",
+      "skill": "sketch-finalize",
+      "runIf": "state.needs_sketch === 'true' && state.sketch_status === 'ended'",
+      "stateReads": ["sketch_file"]
     }
   ]
 }

@@ -5,9 +5,10 @@
 // Usage:
 //   node state-cli.js <worker> get <key>
 //   node state-cli.js <worker> set <key> <value>
+//   node state-cli.js <worker> unset <key>
 //   node state-cli.js <worker> get-all
 
-const { get, set, read } = require('./state');
+const { get, set, unset, read } = require('./state');
 
 const [,, workerStr, cmd, key, value] = process.argv;
 const worker = parseInt(workerStr, 10);
@@ -17,11 +18,13 @@ if (cmd === 'get') {
   if (v !== undefined) process.stdout.write(String(v));
 } else if (cmd === 'set') {
   set(worker, key, value);
+} else if (cmd === 'unset') {
+  unset(worker, key);
 } else if (cmd === 'get-all') {
   process.stdout.write(JSON.stringify(read(worker), null, 2) + '\n');
 } else {
   process.stderr.write(
-    'usage: state-cli.js <worker> get <key> | set <key> <value> | get-all\n',
+    'usage: state-cli.js <worker> get <key> | set <key> <value> | unset <key> | get-all\n',
   );
   process.exit(1);
 }
