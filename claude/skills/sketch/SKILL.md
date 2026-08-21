@@ -60,13 +60,14 @@ each session at its own path (e.g. `http://127.0.0.1:4387/session/<key>`),
 printed in `$OPEN_OUTPUT` — it is not just `http://localhost:<port>/`
 (that 404s). Extract the path and rebuild it with the *host*-reachable port:
 the container always listens on lavish's own default (4387) regardless of
-worker number, but the port published to the operator's Mac is
-`4386 + WORKER_INDEX`, which only equals 4387 for worker 1. Concretely:
+worker number, but the port published to the operator's Mac varies per
+worker — `docker-compose.worker.yml` injects it as `WORKER_SKETCH_PORT`.
+Concretely:
 
 ```bash
 WORKER="${WORKER_INDEX:-0}"
 SESSION_PATH="$(echo "$OPEN_OUTPUT" | grep -oE '/session/[A-Za-z0-9]+' | head -1)"
-SKETCH_URL="http://localhost:$((4386 + WORKER))${SESSION_PATH}"
+SKETCH_URL="http://localhost:${WORKER_SKETCH_PORT:?set WORKER_SKETCH_PORT}${SESSION_PATH}"
 echo "Operator URL: $SKETCH_URL"
 ```
 

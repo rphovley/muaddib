@@ -24,14 +24,39 @@ export MUADDIB_COMPOSE_OVERLAY="$REPO_ROOT/.muaddib/docker/docker-compose.worker
 MUADDIB_COMPOSE_FILES=(-f "$_MUADDIB_BIN_DIR/../docker-compose.worker.yml")
 [ -f "$MUADDIB_COMPOSE_OVERLAY" ] && MUADDIB_COMPOSE_FILES+=(-f "$MUADDIB_COMPOSE_OVERLAY")
 
+# Usage: API_PORT=$(muaddib_worker_port "$MUADDIB_PORT_API" api "$WORKER")
+# Shared by spawn-worker.sh and teardown-worker.sh so the port formula can't
+# drift between the two — they must agree on a given worker's ports, or
+# teardown's `docker compose down` won't correctly interpolate the stack it's
+# tearing down. Defined ahead of the jq/config check below so it's always
+# available, even along the degraded-fallback path.
+muaddib_worker_port() {
+    local base="$1" label="$2" worker="$3"
+    : "${base:?set .muaddib.json workerPorts.$label}"
+    echo $((base + worker))
+}
+
 if ! command -v jq &>/dev/null || [ ! -f "$_MUADDIB_CONFIG" ]; then
+    if ! command -v jq &>/dev/null; then
+        echo "muaddib: jq not found on PATH — install it (brew install jq)." \
+            ".muaddib.json can't be read without it, so worker ports etc. won't resolve." >&2
+    fi
     export MUADDIB_PROJECT_NAME="quotethat"
+    export MUADDIB_PORT_API="" MUADDIB_PORT_DB="" MUADDIB_PORT_SKETCH=""
     return 0 2>/dev/null || true
 fi
 
 MUADDIB_PROJECT_NAME="$(jq -r '.projectName' "$_MUADDIB_CONFIG")"
 export MUADDIB_PROJECT_NAME
 export MUADDIB_CONFIG_FILE="$_MUADDIB_CONFIG"
+
+# Per-worker port bases. No defaults here — a project must supply its own
+# range to avoid colliding with whatever else is running on the host. See
+# README "Port scheme".
+MUADDIB_PORT_API="$(jq -r '.workerPorts.api // empty' "$_MUADDIB_CONFIG")"
+MUADDIB_PORT_DB="$(jq -r '.workerPorts.db // empty' "$_MUADDIB_CONFIG")"
+MUADDIB_PORT_SKETCH="$(jq -r '.workerPorts.sketch // empty' "$_MUADDIB_CONFIG")"
+export MUADDIB_PORT_API MUADDIB_PORT_DB MUADDIB_PORT_SKETCH
 
 # Pin the model Claude Code uses inside workers. Without this, workers fall back
 # to the account default (currently Fable 5), whose gated availability causes an

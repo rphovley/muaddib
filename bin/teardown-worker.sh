@@ -7,9 +7,14 @@ WORKER="${1:?usage: teardown-worker.sh <worker-number>}"
 PROJECT="${MUADDIB_PROJECT_NAME}-w${WORKER}"
 
 # Compute the same values spawn-worker.sh uses so this script works standalone.
-export WORKER_API_PORT=$((8089 + WORKER))
-export WORKER_DB_PORT=$((5442 + WORKER))
-export WORKER_SKETCH_PORT=$((4386 + WORKER))
+# Plain assignments, THEN export — `export VAR=$(cmd)` masks a failing `cmd`
+# from `set -e` (the export builtin's own exit status is what's checked, not
+# the command substitution's), so a bad muaddib_worker_port call would
+# silently leave these empty instead of aborting.
+WORKER_API_PORT=$(muaddib_worker_port "$MUADDIB_PORT_API" api "$WORKER")
+WORKER_DB_PORT=$(muaddib_worker_port "$MUADDIB_PORT_DB" db "$WORKER")
+WORKER_SKETCH_PORT=$(muaddib_worker_port "$MUADDIB_PORT_SKETCH" sketch "$WORKER")
+export WORKER_API_PORT WORKER_DB_PORT WORKER_SKETCH_PORT
 export WORKER_ENV_FILE="$FLEET_DIR/.worker-${WORKER}.env"
 export WORKER_INDEX="$WORKER"
 export CLAUDE_SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"

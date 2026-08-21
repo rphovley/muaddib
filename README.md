@@ -70,14 +70,23 @@ in the quotethat repo as a worked example of this pattern.
 
 ## Port scheme
 
-Worker `N` (1-based):
+Worker `N` (1-based) gets `<base> + N` for each port, where the bases come from
+`.muaddib.json`'s `workerPorts` (`api`, `db`, `sketch`) — there's no default
+baked into `spawn-worker.sh`, so a project must supply a range that doesn't
+collide with whatever else is running on the host:
 
-| Service             | Host port    | Worker 1 | Worker 2 |
-| ------------------- | ------------ | -------- | -------- |
-| API (`npm run dev`) | `8090 + N-1` | 8090     | 8091     |
-| Postgres (dev)¹     | `5443 + N-1` | 5443     | 5444     |
+```json
+"workerPorts": { "api": 8089, "db": 5442, "sketch": 4386 }
+```
+
+quotethat supplies exactly these values, giving:
+
+| Service             | Host port  | Worker 1 | Worker 2 |
+| ------------------- | ---------- | -------- | -------- |
+| API (`npm run dev`) | `8089 + N` | 8090     | 8091     |
+| Postgres (dev)¹     | `5442 + N` | 5443     | 5444     |
 | Postgres (test)¹    | not published — internal `db_test:5432` |
-| Sketch (UI/UX prototyping loop) | `4387 + N-1` | 4387 | 4388 |
+| Sketch (UI/UX prototyping loop) | `4386 + N` | 4387 | 4388 |
 
 Compose project is namespaced `quotethat-w<N>`, so containers/volumes never
 collide across workers.
@@ -295,8 +304,8 @@ GitHub webhook (no tunnel needed — the reviewer is local):
   today, not a generic Tailwind/DaisyUI default), builds the prototype with
   an explicit "Submit Review" control, opens it (`--no-open`, since the
   container has no display — the URL is published per worker at
-  `http://localhost:4386 + N`, worker 1 → `4387`), and notifies you via
-  Linear + macOS.
+  `http://localhost:<workerPorts.sketch + N>` (quotethat: worker 1 →
+  `4387`), and notifies you via Linear + macOS.
 - The orchestrator (`orchestrator/sketch-review.js`) then loops:
   `SKETCH_REVIEW` runs `sketch-poll` (one bounded `lavish-axi poll` call) →
   feedback submitted → `SKETCH_REVIEW_WORKING` runs `sketch-feedback` (applies
