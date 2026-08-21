@@ -38,7 +38,10 @@ final class DispatchDaemonManager {
     }
 
     private func autoStartIfNeeded() async {
-        let nowRunning = await Task.detached(priority: .background) {
+        let nowRunning = await Task.detached(priority: .background) { () -> Bool in
+            // Can't tell if the daemon is running without a manifest — don't
+            // guess by launching it. See DockerRunner.hasConfig.
+            guard DockerRunner.hasConfig else { return false }
             guard !DockerRunner.isDispatchDaemonRunning() else { return true }
             DispatchDaemonManager.runDispatchScript("--bg")
             return DockerRunner.isDispatchDaemonRunning()

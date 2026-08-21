@@ -14,7 +14,7 @@ set -uo pipefail
 
 REPO="${REPO_DIR:-/home/worker/repo}"
 STATE_CLI="$REPO/muaddib/orchestrator/state-cli.js"
-CONFIG="$REPO/.muaddib.json"
+CONFIG="$REPO/.muaddib/manifest.json"
 
 log() { echo "[run-checks w${WORKER_INDEX}] $*"; }
 

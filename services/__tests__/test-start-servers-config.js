@@ -2,10 +2,10 @@
 'use strict';
 // start-servers.js config loading test suite.
 //
-// testThrowsWhenNoFile         — missing .muaddib.json → clear error, no fallback guess
-// testThrowsOnInvalidJson      — malformed .muaddib.json → clear error naming the file
-// testThrowsOnEmptyProjects    — .muaddib.json with no "projects" array → clear error
-// testCustomConfig             — custom .muaddib.json → config values used verbatim
+// testThrowsWhenNoFile         — missing .muaddib/manifest.json → clear error, no fallback guess
+// testThrowsOnInvalidJson      — malformed .muaddib/manifest.json → clear error naming the file
+// testThrowsOnEmptyProjects    — .muaddib/manifest.json with no "projects" array → clear error
+// testCustomConfig             — custom .muaddib/manifest.json → config values used verbatim
 // testCustomApiProjectPicked   — custom config → correct API project selected
 // testCustomFrontendsFiltered  — custom config → correct frontends filtered
 
@@ -14,6 +14,7 @@ const os = require('os');
 const path = require('path');
 
 const { _loadConfig: loadConfig } = require('../start-servers');
+const { writeManifest } = require('./test-utils');
 
 let pass = 0;
 let fail = 0;
@@ -43,9 +44,9 @@ async function testThrowsWhenNoFile() {
       loadConfig(tmp);
     } catch (err) {
       threw = true;
-      assert(err.message.includes('.muaddib.json'), `error should name the missing file, got: ${err.message}`);
+      assert(err.message.includes('manifest.json'), `error should name the missing file, got: ${err.message}`);
     }
-    assert(threw, 'missing .muaddib.json should throw, not silently fall back to a guessed project list');
+    assert(threw, 'missing .muaddib/manifest.json should throw, not silently fall back to a guessed project list');
   } finally {
     fs.rmSync(tmp, { recursive: true });
   }
@@ -54,15 +55,15 @@ async function testThrowsWhenNoFile() {
 async function testThrowsOnInvalidJson() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ss-cfg-'));
   try {
-    fs.writeFileSync(path.join(tmp, '.muaddib.json'), '{ not valid json');
+    writeManifest(tmp, '{ not valid json');
     let threw = false;
     try {
       loadConfig(tmp);
     } catch (err) {
       threw = true;
-      assert(err.message.includes('.muaddib.json'), `error should name the file, got: ${err.message}`);
+      assert(err.message.includes('manifest.json'), `error should name the file, got: ${err.message}`);
     }
-    assert(threw, 'malformed .muaddib.json should throw a clear error');
+    assert(threw, 'malformed .muaddib/manifest.json should throw a clear error');
   } finally {
     fs.rmSync(tmp, { recursive: true });
   }
@@ -71,7 +72,7 @@ async function testThrowsOnInvalidJson() {
 async function testThrowsOnEmptyProjects() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ss-cfg-'));
   try {
-    fs.writeFileSync(path.join(tmp, '.muaddib.json'), JSON.stringify({ projectName: 'x' }));
+    writeManifest(tmp, JSON.stringify({ projectName: 'x' }));
     let threw = false;
     try {
       loadConfig(tmp);
@@ -79,7 +80,7 @@ async function testThrowsOnEmptyProjects() {
       threw = true;
       assert(err.message.includes('projects'), `error should mention the missing "projects" array, got: ${err.message}`);
     }
-    assert(threw, '.muaddib.json with no projects array should throw');
+    assert(threw, '.muaddib/manifest.json with no projects array should throw');
   } finally {
     fs.rmSync(tmp, { recursive: true });
   }
@@ -95,7 +96,7 @@ async function testCustomConfig() {
         { name: 'web', path: 'web', devScript: 'web:dev', port: 3000 },
       ],
     };
-    fs.writeFileSync(path.join(tmp, '.muaddib.json'), JSON.stringify(custom));
+    writeManifest(tmp, JSON.stringify(custom));
     const cfg = loadConfig(tmp);
     assert(cfg.projectName === 'myproject', `expected projectName=myproject, got ${cfg.projectName}`);
     assert(cfg.projects.length === 2, `expected 2 projects, got ${cfg.projects.length}`);
@@ -114,7 +115,7 @@ async function testCustomApiProjectPicked() {
         { name: 'web', path: 'web', devScript: 'web:dev', port: 3000 },
       ],
     };
-    fs.writeFileSync(path.join(tmp, '.muaddib.json'), JSON.stringify(custom));
+    writeManifest(tmp, JSON.stringify(custom));
     const cfg = loadConfig(tmp);
     const api = cfg.projects.find((p) => p.seedScript);
     assert(api && api.name === 'backend', `expected api.name=backend, got ${api && api.name}`);
@@ -135,7 +136,7 @@ async function testCustomFrontendsFiltered() {
         { name: 'static', path: 'static' },
       ],
     };
-    fs.writeFileSync(path.join(tmp, '.muaddib.json'), JSON.stringify(custom));
+    writeManifest(tmp, JSON.stringify(custom));
     const cfg = loadConfig(tmp);
     const frontends = cfg.projects.filter((p) => !p.seedScript && p.devScript);
     assert(frontends.length === 1, `expected 1 frontend, got ${frontends.length}`);
@@ -148,9 +149,9 @@ async function testCustomFrontendsFiltered() {
 // ── run ───────────────────────────────────────────────────────────────────────
 
 (async () => {
-  await run('missing .muaddib.json throws a clear error (no fallback guess)', testThrowsWhenNoFile);
-  await run('malformed .muaddib.json throws a clear error', testThrowsOnInvalidJson);
-  await run('.muaddib.json with no projects array throws', testThrowsOnEmptyProjects);
+  await run('missing .muaddib/manifest.json throws a clear error (no fallback guess)', testThrowsWhenNoFile);
+  await run('malformed .muaddib/manifest.json throws a clear error', testThrowsOnInvalidJson);
+  await run('.muaddib/manifest.json with no projects array throws', testThrowsOnEmptyProjects);
   await run('custom config loaded verbatim', testCustomConfig);
   await run('custom API project identified by seedScript', testCustomApiProjectPicked);
   await run('custom frontends filtered by devScript/no-seedScript', testCustomFrontendsFiltered);

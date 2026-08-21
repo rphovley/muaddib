@@ -22,7 +22,7 @@ set -euo pipefail
 
 REPO="${REPO_DIR:-/home/worker/repo}"
 WORKER="${WORKER_INDEX:-1}"
-CONFIG="$REPO/.muaddib.json"
+CONFIG="$REPO/.muaddib/manifest.json"
 STATE_CLI="$REPO/muaddib/orchestrator/state-cli.js"
 EMIT_CLI="$REPO/muaddib/orchestrator/emit-cli.js"
 

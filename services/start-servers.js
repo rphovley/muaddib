@@ -28,7 +28,7 @@ function log(msg) { process.stdout.write(`[start-servers w${WORKER}] ${msg}\n`);
 function loadConfig(repoDir) {
   const config = readMuaddibConfig(repoDir);
   if (!Array.isArray(config.projects) || config.projects.length === 0) {
-    throw new Error(`${path.join(repoDir, '.muaddib.json')} has no "projects" array — start-servers.js needs at least one project with a devScript`);
+    throw new Error(`${path.join(repoDir, '.muaddib', 'manifest.json')} has no "projects" array — start-servers.js needs at least one project with a devScript`);
   }
   return config;
 }
@@ -244,7 +244,7 @@ async function openTunnel(port, cfLog, lrLog) {
 async function main() {
   const config = loadConfig(REPO);
   const apiProject = config.projects.find((p) => p.seedScript);
-  if (!apiProject) throw new Error('No API project (with seedScript) found in .muaddib.json');
+  if (!apiProject) throw new Error('No API project (with seedScript) found in .muaddib/manifest.json');
   const frontendProjects = config.projects.filter((p) => !p.seedScript && p.devScript);
 
   // 1. Migrations

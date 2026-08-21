@@ -36,8 +36,8 @@ const SPAWN_WORKER = path.join(FLEET_DIR, "bin/spawn-worker.sh");
 // Lazy — config is only read (and validated) the first time something
 // actually needs it, not merely on require(). Keeps this module importable
 // in isolation (e.g. by tests exercising resolveRoute/handleEvent, which
-// never touch config) without needing a real .muaddib.json to exist at
-// REPO_ROOT.
+// never touch config) without needing a real .muaddib/manifest.json to
+// exist at REPO_ROOT.
 let _config = null;
 function getConfig() {
   if (_config === null) {
@@ -47,7 +47,7 @@ function getConfig() {
       // every call, not just the first (a caller that doesn't exit the
       // process on failure would otherwise silently see this as "valid"
       // from the second call onward).
-      throw new Error(`${path.join(REPO_ROOT, ".muaddib.json")} is missing "projectName" — dispatch-daemon.js needs it to find this project's worker containers`);
+      throw new Error(`${path.join(REPO_ROOT, ".muaddib", "manifest.json")} is missing "projectName" — dispatch-daemon.js needs it to find this project's worker containers`);
     }
     _config = config;
   }
@@ -347,7 +347,7 @@ async function trySpawn(entry) {
 
   const env = { ...process.env, MUADIB_NO_ATTACH: "1" };
   if (entry.workflowFile) env.WORKFLOW_FILE = entry.workflowFile;
-  // Pin the model from .muaddib.json. The dispatch image has no jq, so
+  // Pin the model from .muaddib/manifest.json. The dispatch image has no jq, so
   // read-config.sh inside spawn-worker.sh can't derive MUADDIB_MODEL itself —
   // inject it here (parsed in JS) so spawn-worker.sh writes ANTHROPIC_MODEL.
   if (getConfig().model) env.MUADDIB_MODEL = getConfig().model;

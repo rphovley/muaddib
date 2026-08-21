@@ -22,7 +22,14 @@ enum DockerRunner {
             .path
     }
 
-    private static var config: MuaddibConfig { MuaddibConfig.load(repoPath: repoPath) }
+    private static var config: MuaddibConfig? { MuaddibConfig.load(repoPath: repoPath) }
+
+    // Whether .muaddib/manifest.json could be found and parsed. Callers that
+    // take an action when the daemon/workers "aren't running" (e.g. auto-start)
+    // must check this first — isDispatchDaemonRunning() returning false is
+    // ambiguous between "genuinely not running" and "can't tell," and treating
+    // the latter as the former would auto-start the daemon on every launch.
+    static var hasConfig: Bool { config != nil }
 
     private static func run(_ args: [String]) -> String? {
         let proc = Process()
@@ -46,6 +53,10 @@ enum DockerRunner {
     // matches quotethat-wN. Skips db/db_test containers by filtering on the
     // com.docker.compose.service=worker label.
     static func listWorkerContainers() -> [(cid: String, workerIndex: Int, workingDir: String)] {
+        // No manifest, no way to know which compose projects are ours — empty,
+        // not a guess at some other project's containers.
+        guard let projectPrefix = config?.projectName else { return [] }
+
         guard let raw = run(["ps",
                              "--filter", "label=com.docker.compose.service=worker",
                              "--format", "{{.ID}}"]),
@@ -69,7 +80,6 @@ enum DockerRunner {
             let workingDir = parts[1]
 
             // Only consider <projectName>-wN compose projects.
-            let projectPrefix = config.projectName
             guard project.range(of: "^\(projectPrefix)-w\\d+$", options: .regularExpression) != nil,
                   let suffix = project.components(separatedBy: "\(projectPrefix)-w").last,
                   let workerIndex = Int(suffix)
@@ -105,8 +115,9 @@ enum DockerRunner {
     }
 
     static func isDispatchDaemonRunning() -> Bool {
-        guard let raw = run(["ps",
-                             "--filter", "label=com.docker.compose.project=\(config.projectName)-dispatch",
+        guard let projectName = config?.projectName,
+              let raw = run(["ps",
+                             "--filter", "label=com.docker.compose.project=\(projectName)-dispatch",
                              "--format", "{{.ID}}"]) else { return false }
         return !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }

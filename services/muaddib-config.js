@@ -1,15 +1,16 @@
 'use strict';
-// Reads and parses a project's .muaddib.json — shared by start-servers.js
-// and dispatch-daemon.js so the two can't drift on error wording/behavior
-// for the same two universal failure modes (missing file, invalid JSON).
-// No fallback: every muaddib service needs project-supplied config, not a
-// guessed default. Callers validate their own required fields on top of this.
+// Reads and parses a project's .muaddib/manifest.json — shared by
+// start-servers.js and dispatch-daemon.js so the two can't drift on error
+// wording/behavior for the same two universal failure modes (missing file,
+// invalid JSON). No fallback: every muaddib service needs project-supplied
+// config, not a guessed default. Callers validate their own required fields
+// on top of this.
 
 const fs = require('fs');
 const path = require('path');
 
 function readMuaddibConfig(repoDir) {
-  const configPath = path.join(repoDir, '.muaddib.json');
+  const configPath = path.join(repoDir, '.muaddib', 'manifest.json');
   let raw;
   try {
     raw = fs.readFileSync(configPath, 'utf8');

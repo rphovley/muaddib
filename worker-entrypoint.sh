@@ -45,7 +45,7 @@ while IFS= read -r p; do
         echo "→ lockfile drift in $p — running npm ci"
         (cd "$p" && npm ci)
     fi
-done < <(jq -r '.projects[].path' "${MUADDIB_CONFIG_FILE:-$WORKDIR/.muaddib.json}")
+done < <(jq -r '.projects[].path' "${MUADDIB_CONFIG_FILE:-$WORKDIR/.muaddib/manifest.json}")
 
 # Run the project hook (if present). Projects drop their own setup logic here
 # (e.g. materializing secrets, writing config files) instead of baking it into
