@@ -2,7 +2,8 @@
 # Provision and launch one isolated worker.
 #   ./spawn-worker.sh <worker-number> [initial task prompt...]
 #
-# Ports (per your spec): API = 8090 + (N-1), Postgres = 5443 + (N-1).
+# Ports: base + worker number, bases come from .muaddib.json's workerPorts
+# (no defaults baked in here — see read-config.sh / README "Port scheme").
 # Secrets: subscription + GitHub tokens come from your shell env; non-prod app
 # secrets come from a local .muaddib/secrets.env, injected as VALUES into the container.
 set -euo pipefail
@@ -23,9 +24,9 @@ shift || true
 TASK="${*:-}"
 [[ "$WORKER" =~ ^[0-9]+$ ]] || { echo "worker number must be an integer" >&2; exit 1; }
 
-API_PORT=$((8089 + WORKER))    # worker 1 -> 8090
-DB_PORT=$((5442 + WORKER))     # worker 1 -> 5443
-SKETCH_PORT=$((4386 + WORKER)) # worker 1 -> 4387 (lavish-axi's own default)
+API_PORT=$(muaddib_worker_port "$MUADDIB_PORT_API" api "$WORKER")
+DB_PORT=$(muaddib_worker_port "$MUADDIB_PORT_DB" db "$WORKER")
+SKETCH_PORT=$(muaddib_worker_port "$MUADDIB_PORT_SKETCH" sketch "$WORKER")
 PROJECT="${MUADDIB_PROJECT_NAME}-w${WORKER}"
 BRANCH="agent/w${WORKER}/$(date -u +%Y%m%d-%H%M%S)"
 
