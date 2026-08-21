@@ -54,6 +54,10 @@ SHARED_ENV="${WORKER_SHARED_ENV:-$REPO_ROOT/.muaddib/secrets.env}"
 }
 ENV_FILE="$REPO_ROOT/.muaddib/.worker-${WORKER}.env"
 cp "$SHARED_ENV" "$ENV_FILE"
+# Guard against a missing trailing newline in secrets.env — without this, the
+# append below would land on the end of its last line and corrupt both values
+# (e.g. STRIPE_CONNECT_STATE_SECRET=xxxxCLAUDE_CODE_OAUTH_TOKEN=sk-ant-xxxx).
+printf '\n' >>"$ENV_FILE"
 
 # Append worker-specific dynamic values. PG_*/DATABASE_URL are force-overridden
 # in compose to the local sidecar, so DB connection can't point at prod here.
