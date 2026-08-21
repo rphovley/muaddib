@@ -6,11 +6,11 @@ description: UI/UX prototyping setup step for muaddib planning (plan.json), run 
 # Sketch
 
 Sets up a review session — it does **not** wait for feedback itself. The
-orchestrator drives the actual review loop afterward (`SKETCH_REVIEW` state,
-`sketch-poll` / `sketch-feedback` / `sketch-finalize`), the same way `wrapup`
-just opens a PR and the orchestrator's `FEEDBACK` state drives the PR review
-loop afterward — the looping is real control flow in
-`orchestrator/sketch-review.js`, not prose in a skill.
+`sketch-review-loop` step declared right after this one in `plan.json` drives
+the actual review loop (`sketch-poll` / `sketch-feedback`, then
+`sketch-finalize` on approval) — the looping is a real declarative `loop`
+step (the same primitive `quality-loop` uses in `feature.json`/`bug.json`),
+not prose in a skill.
 
 `$ARGUMENTS` is the Linear ticket identifier. Read `.muaddib/plan.md` in the
 repo root first — that's the plan you're prototyping, not the ticket title

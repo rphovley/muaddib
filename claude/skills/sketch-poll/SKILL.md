@@ -1,14 +1,15 @@
 ---
 name: sketch-poll
-description: Fleet sketch-review step. Runs exactly one lavish-axi poll cycle against the prototype from the `sketch` step and reports the outcome (feedback vs. ended) to the orchestrator via a status file. Fixes error-severity layout_warnings internally without involving the operator. Never calls AskUserQuestion.
+description: Fleet sketch-review step. Runs exactly one lavish-axi poll cycle against the prototype from the `sketch` step and reports the outcome (feedback vs. ended) to the orchestrator via worker state. Fixes error-severity layout_warnings internally without involving the operator. Never calls AskUserQuestion.
 ---
 
 # Sketch Poll
 
-Called in a loop by the orchestrator's sketch-review state machine
-(`SKETCH_REVIEW`, see `orchestrator/sketch-review.js`). Runs exactly one
-round — poll, interpret, report, done. The orchestrator, not this skill, owns
-the "wait, then decide what happens next" looping.
+Called in a loop by `plan.json`'s `sketch-review-loop` step (see
+`muaddib/workflows/plan.json` — a declarative `loop` step, same primitive
+`quality-loop` uses in `feature.json`/`bug.json`). Runs exactly one round —
+poll, interpret, report, done. The loop, not this skill, owns the "wait, then
+decide what happens next" looping.
 
 `$ARGUMENTS` is the Linear ticket identifier.
 
@@ -34,7 +35,15 @@ echo "────────────────────────�
 
 ## Step 1 — Poll
 
+Clear the previous round's `sketch_status` first — if this round's session
+exits without ever reaching Step 4 (crash, interrupted, etc.), a stale
+`feedback` value left over from last time would make `sketch-feedback`
+re-apply the same feedback a second time on the next loop iteration.
+Clearing it means an incomplete round just polls again instead.
+
 ```bash
+node "$STATE_CLI" "$WORKER" unset sketch_status
+
 SKETCH_FILE="$(node "$STATE_CLI" "$WORKER" get sketch_file)"
 
 REPLY_FILE="/tmp/sketch-reply-${WORKER}.txt"
@@ -74,14 +83,14 @@ requesting a change.
 
 ## Step 4 — Report the outcome
 
-```bash
-STATUS_FILE="/tmp/sketch-status-${WORKER}"
-```
+Write the outcome to worker state — the loop's `exitCondition` reads
+`sketch_status` to decide whether to poll again or exit:
 
-- Ended/approved: `echo ended > "$STATUS_FILE"`
-- Feedback: `echo feedback > "$STATUS_FILE"`, and write the feedback content
-  (submitted comment, annotation text, selected-text ranges) to
-  `/tmp/sketch-feedback-${WORKER}.txt` for the `sketch-feedback` step.
+- Ended/approved: `node "$STATE_CLI" "$WORKER" set sketch_status ended`
+- Feedback: `node "$STATE_CLI" "$WORKER" set sketch_status feedback`, and write
+  the feedback content (submitted comment, annotation text, selected-text
+  ranges) to `/tmp/sketch-feedback-${WORKER}.txt` for the `sketch-feedback`
+  step.
 
 ## Step 5 — Signal done
 

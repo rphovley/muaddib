@@ -6,7 +6,7 @@
 // testMissingKey        — get on unset key returns undefined
 // testAtomicConcurrent  — two processes writing different keys simultaneously
 //                         both values present after writes complete
-// testStateCli          — CLI: set, get, get-all
+// testStateCli          — CLI: set, get, unset, get-all
 
 const fs = require('fs');
 const os = require('os');
@@ -17,7 +17,7 @@ const TMP_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'state-test-'));
 process.env.STATE_DIR = TMP_DIR;
 process.env.AGENT_STATUS_DIR = TMP_DIR;
 
-const { get, set, merge, read, statePath } = require('../state');
+const { get, set, merge, unset, read, statePath } = require('../state');
 const STATE_CLI = path.join(__dirname, '../state-cli.js');
 
 const BASE = 980;
@@ -43,6 +43,13 @@ async function testGetSetMerge() {
   // Overwrite existing key
   set(W, 'foo', 'baz');
   if (get(W, 'foo') !== 'baz') throw new Error(`expected baz after overwrite, got ${get(W, 'foo')}`);
+
+  // unset removes the key entirely (not just blanks it) — GH issue #5:
+  // sketch-poll clears sketch_status before each poll so a crashed round
+  // doesn't leave a stale value for the next loop iteration to act on.
+  unset(W, 'foo');
+  if (get(W, 'foo') !== undefined) throw new Error(`expected undefined after unset, got ${get(W, 'foo')}`);
+  if (get(W, 'a') !== '1') throw new Error('unset should not affect other keys');
 }
 
 async function testMissingKey() {
@@ -111,6 +118,13 @@ async function testStateCli() {
   if (obj.mykey !== 'myvalue') throw new Error('get-all missing mykey');
   if (obj.other !== '123')     throw new Error('get-all missing other');
 
+  // unset removes the key
+  cli('unset', 'mykey');
+  const r5 = cli('get', 'mykey');
+  if (r5.stdout !== '') throw new Error(`expected empty stdout after unset, got ${JSON.stringify(r5.stdout)}`);
+  const r6 = cli('get', 'other');
+  if (r6.stdout !== '123') throw new Error('unset should not affect other keys');
+
   // unknown command → exit 1
   const r4 = cli('unknown');
   if (r4.status !== 1) throw new Error(`expected exit 1, got ${r4.status}`);
@@ -123,7 +137,7 @@ async function main() {
     ['get/set/merge basic operations', testGetSetMerge],
     ['missing key returns undefined', testMissingKey],
     ['atomic concurrent writes — two processes, both values survive', testAtomicConcurrent],
-    ['state-cli.js — set, get, get-all, unknown command', testStateCli],
+    ['state-cli.js — set, get, unset, get-all, unknown command', testStateCli],
   ];
 
   let passed = 0;

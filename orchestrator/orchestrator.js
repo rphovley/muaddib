@@ -10,18 +10,15 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
-const { subscribe, emit } = require('./events');
+const { subscribe } = require('./events');
 const { startJob } = require('./job');
 const { run } = require('./runner');
-const state = require('./state');
-const { runSketchReview } = require('./sketch-review');
+const { noteStatus, AGENT_STATUS_DIR } = require('./status');
 const { getRunData, sumTotals, estimateCost, formatSummary, postRunRecord } = require('./token-tracker');
 
 const WORKER         = parseInt(process.env.WORKER_INDEX || '1', 10);
 const REPO           = process.env.REPO_DIR || '/home/worker/repo';
 const EMIT_CLI       = path.join(REPO, 'muaddib/orchestrator/emit-cli.js');
-const AGENT_STATUS_DIR = process.env.AGENT_STATUS_DIR || '/var/run/agent-status';
-const STATUS_FILE    = path.join(AGENT_STATUS_DIR, `worker-${WORKER}.state`);
 const WORK_TYPE_FILE = `/tmp/work-type-${WORKER}`;
 const MOCK_JOBS      = process.env.MOCK_JOBS === '1';
 const LINEAR_ISSUE   = process.env.LINEAR_ISSUE_IDENTIFIER || parseTicketId();
@@ -41,9 +38,7 @@ function permFlag() {
 
 function note(s) {
   currentState = s;
-  fs.mkdirSync(AGENT_STATUS_DIR, { recursive: true });
-  try { fs.writeFileSync(STATUS_FILE, `${s} ${new Date().toISOString()}\n`); } catch (_) {}
-  emit(WORKER, 'orchestrator', 'state_changed', { state: s });
+  noteStatus(WORKER, s);
   console.log(`[orchestrator w${WORKER}] → ${s}`);
 }
 
@@ -168,14 +163,6 @@ async function main() {
   const runStartTime = Date.now();
   note('RUNNING');
   await run(WORKER, workflowFile, LINEAR_ISSUE);
-
-  // Only workflows that actually declare a `sketch` step (currently plan.json)
-  // can run the review loop — analyze-ticket writes needs_sketch unconditionally
-  // (it's shared by feature/bug/plan), so gate on the workflow shape too.
-  const hasSketchStep = (definition.workflow || []).some((s) => s.id === 'sketch');
-  if (hasSketchStep && state.get(WORKER, 'needs_sketch') === 'true') {
-    await runSketchReview(WORKER, LINEAR_ISSUE, note);
-  }
 
   if (definition.skipWatching) {
     await recordAndPrintTokens(workType, runStartTime);

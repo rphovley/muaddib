@@ -34,8 +34,7 @@ while true; do
                     WAITING_FOR_INPUT) notify "muaddib: $label" "Questions posted to Linear — needs answers" ;;
                     FEEDBACK)         notify "muaddib: $label" "Preview live — waiting for feedback" ;;
                     FEEDBACK_WORKING) notify "muaddib: $label" "Addressing PR feedback" ;;
-                    SKETCH_REVIEW)         notify "muaddib: $label" "Sketch ready — waiting for your review" ;;
-                    SKETCH_REVIEW_WORKING) notify "muaddib: $label" "Applying sketch feedback" ;;
+                    AWAITING_REVIEW)   notify "muaddib: $label" "A workflow step needs your input" ;;
                     FAILED)            notify "muaddib: $label" "Worker failed — check logs" ;;
                 esac
                 prev_states[$label]="$state_word"
@@ -45,16 +44,16 @@ while true; do
                 WAITING_FOR_INPUT) printf '  %-12s ⏳ %s\n' "$label" "$state_line" ;;
                 FEEDBACK)         printf '  %-12s 🔭 %s\n' "$label" "$state_line" ;;
                 FEEDBACK_WORKING) printf '  %-12s 🔧 %s\n' "$label" "$state_line" ;;
-                SKETCH_REVIEW)         printf '  %-12s 🎨 %s\n' "$label" "$state_line" ;;
-                SKETCH_REVIEW_WORKING) printf '  %-12s 🔧 %s\n' "$label" "$state_line" ;;
+                AWAITING_REVIEW)   printf '  %-12s 🎨 %s\n' "$label" "$state_line" ;;
                 *)                 printf '  %-12s %s\n'    "$label" "$state_line" ;;
             esac
         done
-        if grep -lqE 'BLOCKED|FAILED|WAITING_FOR_INPUT' "${states[@]}" 2>/dev/null; then
+        if grep -lqE 'BLOCKED|FAILED|WAITING_FOR_INPUT|AWAITING_REVIEW' "${states[@]}" 2>/dev/null; then
             printf '\a' # bell
             echo
             echo "⚠ a worker needs attention (BLOCKED = answer it, FAILED = check logs,"
-            echo "  WAITING_FOR_INPUT = answer questions on the Linear ticket then re-run /muaddib)."
+            echo "  WAITING_FOR_INPUT = answer questions on the Linear ticket then re-run /muaddib,"
+            echo "  AWAITING_REVIEW = a workflow step is blocked on your input)."
         fi
     fi
     sleep 3

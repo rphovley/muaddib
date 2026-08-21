@@ -6,17 +6,34 @@
 // runner is exercised against realistic definition structure, not minimal stubs.
 //
 // No-tmux tests (pure script steps):
-//   testEvaluateCondition — expression evaluation edge cases
-//   testRunIfSkips        — step with runIf=false is skipped, workflow continues
-//   testLoopExitsOnCond   — loop exits when exitCondition becomes true
-//   testLoopMaxIterations — loop throws after maxIterations with no exit cond
-//   testNotifyNonBlock    — notify event fires notify.sh without blocking
+//   testEvaluateCondition       — expression evaluation edge cases
+//   testRunIfSkips              — step with runIf=false is skipped, workflow continues
+//   testLoopExitsOnCond         — loop exits when exitCondition becomes true
+//   testLoopMaxIterations       — loop throws after maxIterations with no exit cond
+//   testNotifyNonBlock          — notify event fires notify.sh without blocking
+//   testSketchReviewWorkflow    — plan.json's sketch/sketch-review-loop/sketch-finalize
+//                                 shape: poll (feedback then ended) → feedback applied
+//                                 once → finalize runs once. Same loop/runIf primitives
+//                                 as quality-loop — sketch has no bespoke orchestrator
+//                                 state machine to test separately.
+//   testSketchSkippedWhenNotNeeded — needs_sketch=false skips sketch/loop/finalize
+//                                    entirely (analyze-ticket sets it unconditionally
+//                                    across feature/bug/plan)
+//   testSketchLoopExhaustionNeverFinalizes — loop that never reaches
+//                                    sketch_status=ended must fail the workflow,
+//                                    never silently run sketch-finalize
+//   testSketchLoopStaleStateStillPolls — a stale sketch_status='ended' present
+//                                    before the loop starts must not skip the
+//                                    first real poll (minIterations:1)
 //
 // Requires tmux:
 //   testFeatureWorkflow   — full gather-context→implement→quality-loop→wrapup
 //                           shape using MOCK_JOBS=1 with mockStateWrites
 //   testBugWorkflow       — shorter gather-context-bug→implement-bug→wrapup
 //                           shape; no preview env steps
+//   testAwaitsReviewSetsStatus — claude-tui step with awaitsReview:true sets
+//                                the coarse status to AWAITING_REVIEW while it
+//                                runs, reverts to RUNNING once it settles
 
 const fs = require('fs');
 const os = require('os');
@@ -228,6 +245,189 @@ async function testLoopMaxIterations() {
   if (s.check_status !== 'fail') throw new Error(`check_status = ${s.check_status}`);
 }
 
+// ─── testSketchReviewWorkflow ─────────────────────────────────────────────────
+// Mirrors plan.json's sketch / sketch-review-loop / sketch-finalize shape:
+// sketch writes sketch_file; the loop polls (feedback first round, ended
+// second) and applies feedback exactly once; finalize runs once after the
+// loop exits. GH issue #5: sketch's review loop used to be a bespoke
+// imperative state machine in orchestrator.js with no test coverage — it's
+// now just another declarative loop/runIf shape, exercised the same way
+// testLoopExitsOnCond exercises quality-loop.
+
+async function testSketchReviewWorkflow() {
+  const W = BASE + 8;
+
+  const sketchScript = mkScript(`w${W}-sketch`,
+    `node '${STATE_CLI}' ${W} set sketch_file /tmp/w${W}-sketch.html`,
+  );
+  // poll: feedback on the first round, ended on the second
+  const pollScript = mkScript(`w${W}-poll`, `
+count=$(node '${STATE_CLI}' ${W} get poll_iter || echo 0)
+count=$((count + 1))
+node '${STATE_CLI}' ${W} set poll_iter "$count"
+if [ "$count" -ge 2 ]; then
+  node '${STATE_CLI}' ${W} set sketch_status ended
+else
+  node '${STATE_CLI}' ${W} set sketch_status feedback
+fi
+`);
+  const feedbackScript = mkScript(`w${W}-feedback`,
+    `node '${STATE_CLI}' ${W} set feedback_ran true`,
+  );
+  const finalizeScript = mkScript(`w${W}-finalize`,
+    `node '${STATE_CLI}' ${W} set finalize_ran true`,
+  );
+
+  const wf = mkWorkflow(`w${W}-plan`, [
+    { id: 'sketch', type: 'script', script: sketchScript, runIf: "state.needs_sketch === 'true'", stateWrites: ['sketch_file'] },
+    {
+      id:            'sketch-review-loop',
+      type:          'loop',
+      runIf:         "state.needs_sketch === 'true'",
+      maxIterations: 50,
+      exitCondition: "state.sketch_status === 'ended'",
+      steps: [
+        { id: 'sketch-poll',     type: 'script', script: pollScript,     stateWrites: ['sketch_status'] },
+        { id: 'sketch-feedback', type: 'script', script: feedbackScript, runIf: "state.sketch_status === 'feedback'" },
+      ],
+    },
+    { id: 'sketch-finalize', type: 'script', script: finalizeScript, runIf: "state.needs_sketch === 'true' && state.sketch_status === 'ended'" },
+  ]);
+
+  stateSet(W, 'needs_sketch', 'true');
+  await run(W, wf, 'QUO-999');
+
+  const s = stateRead(W);
+  if (s.sketch_file !== `/tmp/w${W}-sketch.html`) throw new Error(`sketch_file = ${s.sketch_file}`);
+  if (Number(s.poll_iter) !== 2)   throw new Error(`poll_iter = ${s.poll_iter}, want 2`);
+  if (s.feedback_ran !== 'true')   throw new Error('sketch-feedback should have run on the first poll round');
+  if (s.sketch_status !== 'ended') throw new Error(`sketch_status = ${s.sketch_status}`);
+  if (s.finalize_ran !== 'true')   throw new Error('sketch-finalize should have run after the loop exited');
+}
+
+// ─── testSketchSkippedWhenNotNeeded ───────────────────────────────────────────
+// needs_sketch !== 'true' must skip sketch / sketch-review-loop / sketch-finalize
+// entirely — analyze-ticket sets needs_sketch unconditionally across
+// feature/bug/plan, so a workflow that doesn't declare these steps (or a plan
+// run where the ticket didn't need one) must never touch them.
+
+async function testSketchSkippedWhenNotNeeded() {
+  const W = BASE + 9;
+
+  const sketchScript = mkScript(`w${W}-sketch`,
+    `node '${STATE_CLI}' ${W} set sketch_file /tmp/w${W}-sketch.html`,
+  );
+  const pollScript = mkScript(`w${W}-poll`,
+    `node '${STATE_CLI}' ${W} set sketch_status ended`,
+  );
+  const finalizeScript = mkScript(`w${W}-finalize`,
+    `node '${STATE_CLI}' ${W} set finalize_ran true`,
+  );
+
+  const wf = mkWorkflow(`w${W}-plan-noskatch`, [
+    { id: 'sketch', type: 'script', script: sketchScript, runIf: "state.needs_sketch === 'true'" },
+    {
+      id:            'sketch-review-loop',
+      type:          'loop',
+      runIf:         "state.needs_sketch === 'true'",
+      maxIterations: 50,
+      exitCondition: "state.sketch_status === 'ended'",
+      steps: [{ id: 'sketch-poll', type: 'script', script: pollScript }],
+    },
+    { id: 'sketch-finalize', type: 'script', script: finalizeScript, runIf: "state.needs_sketch === 'true' && state.sketch_status === 'ended'" },
+  ]);
+
+  stateSet(W, 'needs_sketch', 'false');
+  await run(W, wf, 'QUO-999');
+
+  const s = stateRead(W);
+  if (s.sketch_file !== undefined)   throw new Error('sketch step ran but needs_sketch was false');
+  if (s.sketch_status !== undefined) throw new Error('sketch-review-loop ran but needs_sketch was false');
+  if (s.finalize_ran !== undefined)  throw new Error('sketch-finalize ran but needs_sketch was false');
+}
+
+// ─── testSketchLoopExhaustionNeverFinalizes ────────────────────────────────────
+// Regression test for a bug caught in review: if sketch_status never reaches
+// 'ended' within maxIterations, the workflow must fail (not silently move on
+// to sketch-finalize and post an unapproved sketch to Linear as if the
+// operator had signed off). sketch-poll here always reports 'feedback', so
+// the loop can never exit cleanly.
+
+async function testSketchLoopExhaustionNeverFinalizes() {
+  const W = BASE + 14;
+
+  const pollScript = mkScript(`w${W}-poll`,
+    `node '${STATE_CLI}' ${W} set sketch_status feedback`,
+  );
+  const feedbackScript = mkScript(`w${W}-feedback`,
+    `node '${STATE_CLI}' ${W} set feedback_ran true`,
+  );
+  const finalizeScript = mkScript(`w${W}-finalize`,
+    `node '${STATE_CLI}' ${W} set finalize_ran true`,
+  );
+
+  const wf = mkWorkflow(`w${W}-plan-neverends`, [
+    {
+      id:            'sketch-review-loop',
+      type:          'loop',
+      maxIterations: 3,
+      exitCondition: "state.sketch_status === 'ended'",
+      steps: [
+        { id: 'sketch-poll',     type: 'script', script: pollScript,     stateWrites: ['sketch_status'] },
+        { id: 'sketch-feedback', type: 'script', script: feedbackScript, runIf: "state.sketch_status === 'feedback'" },
+      ],
+    },
+    { id: 'sketch-finalize', type: 'script', script: finalizeScript, runIf: "state.sketch_status === 'ended'" },
+  ]);
+
+  let threw = false;
+  try {
+    await run(W, wf, 'QUO-999');
+  } catch (err) {
+    if (!err.message.includes('exhausted')) throw new Error(`wrong error: ${err.message}`);
+    threw = true;
+  }
+  if (!threw) throw new Error('expected run() to throw when the review loop never reaches ended');
+
+  const s = stateRead(W);
+  if (s.finalize_ran !== undefined) {
+    throw new Error('sketch-finalize ran despite the loop never reaching sketch_status=ended — would have posted an unapproved sketch to Linear');
+  }
+}
+
+// ─── testSketchLoopStaleStateStillPolls ────────────────────────────────────────
+// Regression test for a review-caught bug: sketch-review-loop had no
+// minIterations, so a stale sketch_status='ended' already present in state
+// before the loop starts (e.g. a container/worker reused across runs) would
+// satisfy exitCondition at iteration 0 and exit WITHOUT ever running
+// sketch-poll — letting sketch-finalize post a never-actually-reviewed
+// prototype as if approved. minIterations:1 (matching quality-loop's existing
+// convention in feature.json/bug.json) forces at least one real poll first.
+
+async function testSketchLoopStaleStateStillPolls() {
+  const W = BASE + 15;
+
+  const pollScript = mkScript(`w${W}-poll`,
+    `node '${STATE_CLI}' ${W} set poll_ran true`,
+  );
+
+  const wf = mkWorkflow(`w${W}-stale`, [{
+    id:            'sketch-review-loop',
+    type:          'loop',
+    minIterations: 1,
+    maxIterations: 5,
+    exitCondition: "state.sketch_status === 'ended'",
+    steps: [{ id: 'sketch-poll', type: 'script', script: pollScript }],
+  }]);
+
+  // Simulate a stale 'ended' value already present before the loop runs.
+  stateSet(W, 'sketch_status', 'ended');
+  await run(W, wf, 'QUO-999');
+
+  const s = stateRead(W);
+  if (s.poll_ran !== 'true') throw new Error('sketch-poll never ran despite minIterations:1 — stale state let the loop skip it entirely');
+}
+
 // ─── testNotifyNonBlock ───────────────────────────────────────────────────────
 // Workflow: step-a emits a notify event, step-b runs after.
 // Both must complete, and notify.sh must have been called.
@@ -315,6 +515,69 @@ async function testWarnFiresNotFails() {
   } finally {
     if (prevWarnMs !== undefined) process.env.STEP_WARN_MS = prevWarnMs;
     else delete process.env.STEP_WARN_MS;
+    if (savedNotify) fs.writeFileSync(notifyScript, savedNotify);
+    else try { fs.unlinkSync(notifyScript); } catch (_) {}
+    killTmuxSession(W);
+  }
+}
+
+// ─── testAwaitsReviewSetsStatus ────────────────────────────────────────────────
+// A claude-tui step with awaitsReview:true must write AWAITING_REVIEW to the
+// coarse per-worker status file (read by bin/attend.sh, spawn-worker.sh's
+// notifier, MuaddibApp) while it runs, then revert to RUNNING once it settles.
+// GH issue #5: this is the generic replacement for the deleted SKETCH_REVIEW
+// state — any project-declared step can opt in, not just sketch's.
+//
+// Also a regression test for a review-caught bug: fireNotify() used to both
+// emit a bus 'notify' event AND spawn notify.sh directly — flushNotify()
+// (called after every step) then re-read that same event and spawned
+// notify.sh a second time. Asserts exactly one call, not two.
+
+async function testAwaitsReviewSetsStatus() {
+  if (!hasTmux()) { console.log('    (skipped — tmux not available)'); return; }
+
+  const W = BASE + 13;
+  ensureTmuxSession(W);
+
+  const notifyScript = path.join(MUADDIB_DIR, 'services/notify.sh');
+  const hadNotify     = fs.existsSync(notifyScript);
+  const savedNotify   = hadNotify ? fs.readFileSync(notifyScript) : null;
+  const callLog       = path.join(TMP_DIR, `notify-calls-${W}.log`);
+  fs.writeFileSync(notifyScript, `#!/usr/bin/env bash\necho called >> '${callLog}'\n`);
+  fs.chmodSync(notifyScript, 0o755);
+
+  try {
+    const statusFile = path.join(TMP_DIR, `worker-${W}.state`);
+    const readWord = () => {
+      try { return fs.readFileSync(statusFile, 'utf8').trim().split(' ')[0]; }
+      catch (_) { return ''; }
+    };
+
+    const wf = mkWorkflow(`w${W}-await`, [{
+      id:           'review-step',
+      type:         'claude-tui',
+      skill:        'review-step',
+      awaitsReview: true,
+    }]);
+
+    // Poll the status file while the mock step runs (~0.3s) to catch the
+    // transient AWAITING_REVIEW write.
+    let sawAwaiting = false;
+    const poll = setInterval(() => {
+      if (readWord() === 'AWAITING_REVIEW') sawAwaiting = true;
+    }, 20);
+
+    await run(W, wf, 'QUO-await');
+    clearInterval(poll);
+
+    if (!sawAwaiting) throw new Error('AWAITING_REVIEW status was never observed during the step');
+    if (readWord() !== 'RUNNING') throw new Error(`status not reverted to RUNNING after step — got "${readWord()}"`);
+
+    // notify.sh is spawned detached; give it a moment to execute.
+    await wait(400);
+    const calls = fs.existsSync(callLog) ? fs.readFileSync(callLog, 'utf8').trim().split('\n').filter(Boolean).length : 0;
+    if (calls !== 1) throw new Error(`expected notify.sh called exactly once, got ${calls}`);
+  } finally {
     if (savedNotify) fs.writeFileSync(notifyScript, savedNotify);
     else try { fs.unlinkSync(notifyScript); } catch (_) {}
     killTmuxSession(W);
@@ -490,8 +753,13 @@ async function main() {
     ['runIf=false skips step, workflow continues',       testRunIfSkips],
     ['loop exits when exitCondition met',                testLoopExitsOnCond],
     ['loop throws after maxIterations',                  testLoopMaxIterations],
+    ['sketch review workflow — plan/loop/finalize shape', testSketchReviewWorkflow],
+    ['sketch skipped when needs_sketch is not true',      testSketchSkippedWhenNotNeeded],
+    ['sketch loop exhaustion never runs finalize',        testSketchLoopExhaustionNeverFinalizes],
+    ['sketch loop with stale state still polls first',    testSketchLoopStaleStateStillPolls],
     ['notify fires without blocking workflow',           testNotifyNonBlock],
     ['warn fires notify without failing step (tmux)',                testWarnFiresNotFails],
+    ['awaitsReview sets AWAITING_REVIEW then reverts (tmux)',        testAwaitsReviewSetsStatus],
     ['feature workflow — full gather→implement→loop→wrapup (tmux)', testFeatureWorkflow],
     ['bug workflow — gather-bug→implement-bug→loop→wrapup (tmux)',  testBugWorkflow],
   ];

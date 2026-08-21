@@ -5,11 +5,11 @@ description: Fleet sketch-review step. Runs once the operator approves the sketc
 
 # Sketch Finalize
 
-Called by the orchestrator's sketch-review state machine
-(`SKETCH_FINALIZING`) once `sketch-poll` reports `ended`. This is the
-approval gate: `analyze-ticket` deliberately did not post `## Plan` when
-`needs_sketch=true` — this step posts it now, reflecting whatever the review
-loop changed.
+Called by `plan.json`'s `sketch-finalize` step (see
+`muaddib/workflows/plan.json`) once `sketch-review-loop` exits with
+`sketch_status=ended`. This is the approval gate: `analyze-ticket`
+deliberately did not post `## Plan` when `needs_sketch=true` — this step
+posts it now, reflecting whatever the review loop changed.
 
 `$ARGUMENTS` is the Linear ticket identifier.
 
