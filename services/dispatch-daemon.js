@@ -32,14 +32,24 @@ const REPO_ROOT = process.env.REPO_ROOT || path.join(__dirname, "../..");
 const FLEET_DIR = path.join(REPO_ROOT, "muaddib");
 const SPAWN_WORKER = path.join(FLEET_DIR, "bin/spawn-worker.sh");
 
+const MUADDIB_CONFIG_PATH = path.join(REPO_ROOT, ".muaddib.json");
 const MUADDIB_CONFIG = (() => {
+  let raw;
   try {
-    return JSON.parse(fs.readFileSync(path.join(REPO_ROOT, ".muaddib.json"), "utf8"));
+    raw = fs.readFileSync(MUADDIB_CONFIG_PATH, "utf8");
   } catch (_) {
-    return { projectName: "quotethat" };
+    throw new Error(`missing ${MUADDIB_CONFIG_PATH} — dispatch-daemon.js has no built-in project name`);
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`invalid JSON in ${MUADDIB_CONFIG_PATH}: ${err.message}`);
   }
 })();
-const PROJECT_NAME = MUADDIB_CONFIG.projectName || "quotethat";
+if (!MUADDIB_CONFIG.projectName) {
+  throw new Error(`${MUADDIB_CONFIG_PATH} is missing "projectName" — dispatch-daemon.js needs it to find this project's worker containers`);
+}
+const PROJECT_NAME = MUADDIB_CONFIG.projectName;
 const TUNNEL_LOG = "/tmp/cf-dispatch.log";
 const LR_LOG = "/tmp/lr-dispatch.log";
 

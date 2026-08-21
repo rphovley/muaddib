@@ -25,17 +25,23 @@ function log(msg) { process.stdout.write(`[start-servers w${WORKER}] ${msg}\n`);
 // ── config loading ────────────────────────────────────────────────────────────
 
 function loadConfig(repoDir) {
+  const configPath = path.join(repoDir, '.muaddib.json');
+  let raw;
   try {
-    return JSON.parse(fs.readFileSync(path.join(repoDir, '.muaddib.json'), 'utf8'));
+    raw = fs.readFileSync(configPath, 'utf8');
   } catch (_) {
-    return {
-      projects: [
-        { name: 'api',       path: 'projects/api',       devScript: 'npm run api:dev',       port: 8081, seedScript: 'projects/api/scripts/seed-preview.ts' },
-        { name: 'portal',    path: 'projects/portal',    devScript: 'npm run portal:dev',    port: 5173 },
-        { name: 'homeowner', path: 'projects/homeowner', devScript: 'npm run homeowner:dev', port: 5174 },
-      ],
-    };
+    throw new Error(`missing ${configPath} — start-servers.js has no built-in project list; see muaddib/README.md`);
   }
+  let config;
+  try {
+    config = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`invalid JSON in ${configPath}: ${err.message}`);
+  }
+  if (!Array.isArray(config.projects) || config.projects.length === 0) {
+    throw new Error(`${configPath} has no "projects" array — start-servers.js needs at least one project with a devScript`);
+  }
+  return config;
 }
 
 // ── subprocess helpers ────────────────────────────────────────────────────────
@@ -307,9 +313,11 @@ async function main() {
     }),
   );
 
-  // Backwards-compat aliases for skills that reference portal_url / ho_url
-  const portalUrl = frontendUrlMap.get('portal') || '';
-  const hoUrl     = frontendUrlMap.get('homeowner') || '';
+  // A project can name extra state keys some of its skills read under a
+  // different name than the project's own devScript name (e.g. a skill
+  // written against "ho_url" before a project was renamed to "homeowner").
+  // Config-driven, not hardcoded here — see .muaddib.json's legacyStateAliases.
+  const legacyAliases = config.legacyStateAliases || {};
 
   // 7. Write shared env file and worker state
   const URLS_FILE = `/tmp/preview-urls-${WORKER}.env`;
@@ -317,7 +325,9 @@ async function main() {
   for (const p of frontendProjects.filter((fp) => fp.port)) {
     envLines.push(`${p.name.toUpperCase()}_URL=${frontendUrlMap.get(p.name) || ''}`);
   }
-  envLines.push(`HO_URL=${hoUrl}`);
+  for (const [aliasKey, projectName] of Object.entries(legacyAliases)) {
+    envLines.push(`${aliasKey.toUpperCase()}=${frontendUrlMap.get(projectName) || ''}`);
+  }
   envLines.push(`PREVIEW_EMAIL=${previewEmail}`);
   envLines.push(`PREVIEW_PASSWORD=${previewPassword}`);
   envLines.push(`HO_MAGIC_LINK=${hoMagicLink}`);
@@ -328,13 +338,14 @@ async function main() {
   for (const p of frontendProjects.filter((fp) => fp.port)) {
     spawnSync('node', [STATE_CLI, WORKER, 'set', `${p.name}_url`, frontendUrlMap.get(p.name) || ''], { stdio: 'inherit' });
   }
-  // ho_url aliases homeowner_url for existing skills
-  spawnSync('node', [STATE_CLI, WORKER, 'set', 'ho_url', hoUrl], { stdio: 'inherit' });
+  for (const [stateKey, projectName] of Object.entries(legacyAliases)) {
+    spawnSync('node', [STATE_CLI, WORKER, 'set', stateKey, frontendUrlMap.get(projectName) || ''], { stdio: 'inherit' });
+  }
 
   // 8. Signal orchestrator
   log('emitting tunnel_ready');
   spawnSync('node', [EMIT_CLI, WORKER, 'servers', 'tunnel_ready',
-    JSON.stringify({ api: apiTunnelUrl, portal: portalUrl, homeowner: hoUrl }),
+    JSON.stringify({ api: apiTunnelUrl, ...Object.fromEntries(frontendUrlMap) }),
   ], { stdio: 'inherit' });
 
   log('servers running');

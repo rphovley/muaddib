@@ -14,10 +14,13 @@
 // testMuaddibPlanLabel       — auto + muaddib:plan → plan workflow
 // testBugTakesPrecedence     — auto + bug + fast → bug workflow (bug wins)
 // testLabelsCaseInsensitive  — mixed-case label names are normalised
+// testThrowsWhenConfigMissing      — missing .muaddib.json → clear error, no quotethat fallback
+// testThrowsWhenProjectNameMissing — .muaddib.json without "projectName" → clear error
 
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const { spawnSync } = require("child_process");
 const { resolveRoute, handleEvent, cleanupWorkerFiles } = require("../dispatch-daemon");
 
 function assertRoute(labels, expectedEntryPoint) {
@@ -414,6 +417,46 @@ async function testCleanupNoStateFile() {
   }
 }
 
+// ─── module-load config validation ───────────────────────────────────────────
+// dispatch-daemon.js reads .muaddib.json (via REPO_ROOT) at module load time —
+// require() it in a subprocess so a thrown config error doesn't take this
+// whole test process down. `node -e "require(...)"` doesn't set
+// require.main to dispatch-daemon.js, so its own require.main===module-gated
+// main() (server.listen etc) never runs — just the config-loading IIFE.
+
+const DISPATCH_DAEMON_PATH = path.join(__dirname, "../dispatch-daemon.js");
+
+function requireInSubprocess(repoRoot) {
+  return spawnSync(
+    process.execPath,
+    ["-e", `require(${JSON.stringify(DISPATCH_DAEMON_PATH)})`],
+    { encoding: "utf8", env: { ...process.env, REPO_ROOT: repoRoot } },
+  );
+}
+
+async function testThrowsWhenConfigMissing() {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "muaddib-test-"));
+  try {
+    const r = requireInSubprocess(tmpDir);
+    if (r.status === 0) throw new Error("expected non-zero exit when .muaddib.json is missing — got a silent quotethat-shaped default instead");
+    if (!r.stderr.includes(".muaddib.json")) throw new Error(`error should name the missing file, got: ${r.stderr}`);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+async function testThrowsWhenProjectNameMissing() {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "muaddib-test-"));
+  try {
+    fs.writeFileSync(path.join(tmpDir, ".muaddib.json"), JSON.stringify({}));
+    const r = requireInSubprocess(tmpDir);
+    if (r.status === 0) throw new Error('expected non-zero exit when "projectName" is missing — got a silent "quotethat" default instead');
+    if (!r.stderr.includes("projectName")) throw new Error(`error should mention projectName, got: ${r.stderr}`);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 // ─── runner ──────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -475,6 +518,14 @@ async function main() {
     [
       "cleanupWorkerFiles: deletes files when state file is missing",
       testCleanupNoStateFile,
+    ],
+    [
+      "config: missing .muaddib.json throws a clear error (no quotethat fallback)",
+      testThrowsWhenConfigMissing,
+    ],
+    [
+      "config: missing projectName throws a clear error (no quotethat fallback)",
+      testThrowsWhenProjectNameMissing,
     ],
   ];
 
