@@ -14,6 +14,7 @@ const path = require('path');
 const net = require('net');
 const https = require('https');
 const { spawn, spawnSync } = require('child_process');
+const { readMuaddibConfig } = require('./muaddib-config');
 
 const WORKER = process.env.WORKER_INDEX || '1';
 const REPO = process.env.REPO_DIR || '/home/worker/repo';
@@ -25,21 +26,9 @@ function log(msg) { process.stdout.write(`[start-servers w${WORKER}] ${msg}\n`);
 // ── config loading ────────────────────────────────────────────────────────────
 
 function loadConfig(repoDir) {
-  const configPath = path.join(repoDir, '.muaddib.json');
-  let raw;
-  try {
-    raw = fs.readFileSync(configPath, 'utf8');
-  } catch (_) {
-    throw new Error(`missing ${configPath} — start-servers.js has no built-in project list; see muaddib/README.md`);
-  }
-  let config;
-  try {
-    config = JSON.parse(raw);
-  } catch (err) {
-    throw new Error(`invalid JSON in ${configPath}: ${err.message}`);
-  }
+  const config = readMuaddibConfig(repoDir);
   if (!Array.isArray(config.projects) || config.projects.length === 0) {
-    throw new Error(`${configPath} has no "projects" array — start-servers.js needs at least one project with a devScript`);
+    throw new Error(`${path.join(repoDir, '.muaddib.json')} has no "projects" array — start-servers.js needs at least one project with a devScript`);
   }
   return config;
 }
@@ -313,20 +302,11 @@ async function main() {
     }),
   );
 
-  // A project can name extra state keys some of its skills read under a
-  // different name than the project's own devScript name (e.g. a skill
-  // written against "ho_url" before a project was renamed to "homeowner").
-  // Config-driven, not hardcoded here — see .muaddib.json's legacyStateAliases.
-  const legacyAliases = config.legacyStateAliases || {};
-
   // 7. Write shared env file and worker state
   const URLS_FILE = `/tmp/preview-urls-${WORKER}.env`;
   const envLines = [`API_TUNNEL_URL=${apiTunnelUrl}`];
   for (const p of frontendProjects.filter((fp) => fp.port)) {
     envLines.push(`${p.name.toUpperCase()}_URL=${frontendUrlMap.get(p.name) || ''}`);
-  }
-  for (const [aliasKey, projectName] of Object.entries(legacyAliases)) {
-    envLines.push(`${aliasKey.toUpperCase()}=${frontendUrlMap.get(projectName) || ''}`);
   }
   envLines.push(`PREVIEW_EMAIL=${previewEmail}`);
   envLines.push(`PREVIEW_PASSWORD=${previewPassword}`);
@@ -338,14 +318,14 @@ async function main() {
   for (const p of frontendProjects.filter((fp) => fp.port)) {
     spawnSync('node', [STATE_CLI, WORKER, 'set', `${p.name}_url`, frontendUrlMap.get(p.name) || ''], { stdio: 'inherit' });
   }
-  for (const [stateKey, projectName] of Object.entries(legacyAliases)) {
-    spawnSync('node', [STATE_CLI, WORKER, 'set', stateKey, frontendUrlMap.get(projectName) || ''], { stdio: 'inherit' });
-  }
 
   // 8. Signal orchestrator
+  // Nested, not spread — a frontend project literally named "api" (a
+  // misconfiguration: devScript+port but no seedScript) would otherwise
+  // silently clobber the real API tunnel URL at the top level.
   log('emitting tunnel_ready');
   spawnSync('node', [EMIT_CLI, WORKER, 'servers', 'tunnel_ready',
-    JSON.stringify({ api: apiTunnelUrl, ...Object.fromEntries(frontendUrlMap) }),
+    JSON.stringify({ api: apiTunnelUrl, frontends: Object.fromEntries(frontendUrlMap) }),
   ], { stdio: 'inherit' });
 
   log('servers running');

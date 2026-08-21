@@ -107,19 +107,10 @@ frontend projects by `devScript` presence (no project named "api"/"portal"/
 `projectName` to find this project's worker containers by their compose
 project label.
 
-A project can also declare `legacyStateAliases` — extra worker-state keys
-(and matching env-file lines) that mirror a frontend project's tunnel URL
-under a different name, for skills written against an older key. quotethat
-has `sketch`-unrelated skills (`commit-and-pr`, `muaddib-task`) that predate
-its `homeowner` project's current name and still read `ho_url`:
-
-```json
-"legacyStateAliases": { "ho_url": "homeowner" }
-```
-
-`portal_url` needs no entry — quotethat's frontend project is literally named
-`portal`, so the generic per-project state key (`<project-name>_url`) already
-matches what those skills expect.
+`start-servers.js` writes each frontend project's tunnel URL to worker state
+as `<project-name>_url` (e.g. `portal_url`, `homeowner_url`) — skills that
+want a preview link read the state key matching the project's own name in
+`.muaddib.json`, not a separately-configured alias.
 
 ## Prerequisites (one-time)
 

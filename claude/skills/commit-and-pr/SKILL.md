@@ -11,7 +11,7 @@ Fleet-safe wrapup step. **Never calls `AskUserQuestion`.**
 
 - `STATE_BRANCH` — the feature branch name
 - `STATE_TICKET_URL` — the Linear ticket URL
-- `STATE_API_TUNNEL_URL`, `STATE_PORTAL_URL`, `STATE_HO_URL` — preview tunnel URLs
+- `STATE_API_TUNNEL_URL`, `STATE_PORTAL_URL`, `STATE_HOMEOWNER_URL` — preview tunnel URLs
 
 ## Step 1 — Verify branch
 
@@ -98,8 +98,8 @@ Use STATE\_\* vars for preview URLs; fall back to `(unavailable)` for any empty 
 Compute the homeowner credential before opening the PR — only combine the URL and magic-link when both are present:
 
 ```bash
-if [ -n "$STATE_HO_URL" ] && [ -n "$HO_MAGIC_LINK" ]; then
-  HO_CREDENTIAL="${STATE_HO_URL}${HO_MAGIC_LINK} _(magic-link — open directly)_"
+if [ -n "$STATE_HOMEOWNER_URL" ] && [ -n "$HO_MAGIC_LINK" ]; then
+  HO_CREDENTIAL="${STATE_HOMEOWNER_URL}${HO_MAGIC_LINK} _(magic-link — open directly)_"
 else
   HO_CREDENTIAL="(unavailable)"
 fi
@@ -121,7 +121,7 @@ $STATE_TICKET_URL
 |---------|-----|
 | API | ${STATE_API_TUNNEL_URL:-(unavailable)} |
 | Portal | ${STATE_PORTAL_URL:-(unavailable)}?is_preview=true |
-| Homeowner | ${STATE_HO_URL:-(unavailable)} |
+| Homeowner | ${STATE_HOMEOWNER_URL:-(unavailable)} |
 
 ## Preview credentials
 | Role | Login |
@@ -163,7 +163,7 @@ Call `mcp__linear__save_comment` on the ticket from `$ARGUMENTS` with:
 ```
 PR opened: <pr-url>
 Branch: $STATE_BRANCH
-Preview: ${STATE_PORTAL_URL:-(unavailable)} (Portal) · ${STATE_HO_URL:-(unavailable)} (Homeowner)
+Preview: ${STATE_PORTAL_URL:-(unavailable)} (Portal) · ${STATE_HOMEOWNER_URL:-(unavailable)} (Homeowner)
 Feedback: comment on the PR with /feedback — the agent is in feedback mode.
 ```
 

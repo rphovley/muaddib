@@ -8,8 +8,6 @@
 // testCustomConfig             — custom .muaddib.json → config values used verbatim
 // testCustomApiProjectPicked   — custom config → correct API project selected
 // testCustomFrontendsFiltered  — custom config → correct frontends filtered
-// testLegacyStateAliasesPassthrough — legacyStateAliases in config is returned verbatim
-//                                     (main() reads it — see services/start-servers.js)
 
 const fs = require('fs');
 const os = require('os');
@@ -147,26 +145,6 @@ async function testCustomFrontendsFiltered() {
   }
 }
 
-async function testLegacyStateAliasesPassthrough() {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ss-cfg-'));
-  try {
-    const custom = {
-      projectName: 'myproject',
-      projects: [
-        { name: 'backend', path: 'backend', devScript: 'backend:dev', port: 9000, seedScript: 'backend/seed.ts' },
-        { name: 'web', path: 'web', devScript: 'web:dev', port: 3000 },
-      ],
-      legacyStateAliases: { legacy_url: 'web' },
-    };
-    fs.writeFileSync(path.join(tmp, '.muaddib.json'), JSON.stringify(custom));
-    const cfg = loadConfig(tmp);
-    assert(cfg.legacyStateAliases && cfg.legacyStateAliases.legacy_url === 'web',
-      `expected legacyStateAliases.legacy_url=web, got ${JSON.stringify(cfg.legacyStateAliases)}`);
-  } finally {
-    fs.rmSync(tmp, { recursive: true });
-  }
-}
-
 // ── run ───────────────────────────────────────────────────────────────────────
 
 (async () => {
@@ -176,7 +154,6 @@ async function testLegacyStateAliasesPassthrough() {
   await run('custom config loaded verbatim', testCustomConfig);
   await run('custom API project identified by seedScript', testCustomApiProjectPicked);
   await run('custom frontends filtered by devScript/no-seedScript', testCustomFrontendsFiltered);
-  await run('legacyStateAliases passed through from config', testLegacyStateAliasesPassthrough);
 
   process.stdout.write(`\n${pass}/${pass + fail} passed\n`);
   if (fail > 0) process.exit(1);

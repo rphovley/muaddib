@@ -27,29 +27,36 @@ const {
   enqueue,
   flush,
 } = require("./dispatch-queue");
+const { readMuaddibConfig } = require("./muaddib-config");
 
 const REPO_ROOT = process.env.REPO_ROOT || path.join(__dirname, "../..");
 const FLEET_DIR = path.join(REPO_ROOT, "muaddib");
 const SPAWN_WORKER = path.join(FLEET_DIR, "bin/spawn-worker.sh");
 
-const MUADDIB_CONFIG_PATH = path.join(REPO_ROOT, ".muaddib.json");
-const MUADDIB_CONFIG = (() => {
-  let raw;
-  try {
-    raw = fs.readFileSync(MUADDIB_CONFIG_PATH, "utf8");
-  } catch (_) {
-    throw new Error(`missing ${MUADDIB_CONFIG_PATH} — dispatch-daemon.js has no built-in project name`);
+// Lazy — config is only read (and validated) the first time something
+// actually needs it, not merely on require(). Keeps this module importable
+// in isolation (e.g. by tests exercising resolveRoute/handleEvent, which
+// never touch config) without needing a real .muaddib.json to exist at
+// REPO_ROOT.
+let _config = null;
+function getConfig() {
+  if (_config === null) {
+    const config = readMuaddibConfig(REPO_ROOT);
+    if (!config.projectName) {
+      // Deliberately NOT cached — an invalid config must keep throwing on
+      // every call, not just the first (a caller that doesn't exit the
+      // process on failure would otherwise silently see this as "valid"
+      // from the second call onward).
+      throw new Error(`${path.join(REPO_ROOT, ".muaddib.json")} is missing "projectName" — dispatch-daemon.js needs it to find this project's worker containers`);
+    }
+    _config = config;
   }
-  try {
-    return JSON.parse(raw);
-  } catch (err) {
-    throw new Error(`invalid JSON in ${MUADDIB_CONFIG_PATH}: ${err.message}`);
-  }
-})();
-if (!MUADDIB_CONFIG.projectName) {
-  throw new Error(`${MUADDIB_CONFIG_PATH} is missing "projectName" — dispatch-daemon.js needs it to find this project's worker containers`);
+  return _config;
 }
-const PROJECT_NAME = MUADDIB_CONFIG.projectName;
+function getProjectName() {
+  return getConfig().projectName;
+}
+
 const TUNNEL_LOG = "/tmp/cf-dispatch.log";
 const LR_LOG = "/tmp/lr-dispatch.log";
 
@@ -191,7 +198,7 @@ function getActiveWorkerProjects() {
         return;
       }
       const projects = new Set();
-      const workerRe = new RegExp(`com\\.docker\\.compose\\.project=(${PROJECT_NAME}-w\\d+)`);
+      const workerRe = new RegExp(`com\\.docker\\.compose\\.project=(${getProjectName()}-w\\d+)`);
       for (const line of stdout.split("\n")) {
         const m = line.match(workerRe);
         if (m) projects.add(m[1]);
@@ -208,7 +215,7 @@ async function countActiveWorkers() {
 async function findNextFreeWorker() {
   const projects = await getActiveWorkerProjects();
   const used = new Set();
-  const indexRe = new RegExp(`${PROJECT_NAME}-w(\\d+)`);
+  const indexRe = new RegExp(`${getProjectName()}-w(\\d+)`);
   for (const p of projects) {
     const m = p.match(indexRe);
     if (m) used.add(parseInt(m[1], 10));
@@ -290,7 +297,7 @@ function cleanupWorkerFiles(statusDir, activeIndices) {
 async function cleanupOrphanedStatusFiles() {
   const statusDir = path.join(FLEET_DIR, "status");
   const activeProjects = await getActiveWorkerProjects();
-  const indexRe = new RegExp(`${PROJECT_NAME}-w(\\d+)`);
+  const indexRe = new RegExp(`${getProjectName()}-w(\\d+)`);
   const activeIndices = new Set();
   for (const p of activeProjects) {
     const m = p.match(indexRe);
@@ -343,7 +350,7 @@ async function trySpawn(entry) {
   // Pin the model from .muaddib.json. The dispatch image has no jq, so
   // read-config.sh inside spawn-worker.sh can't derive MUADDIB_MODEL itself —
   // inject it here (parsed in JS) so spawn-worker.sh writes ANTHROPIC_MODEL.
-  if (MUADDIB_CONFIG.model) env.MUADDIB_MODEL = MUADDIB_CONFIG.model;
+  if (getConfig().model) env.MUADDIB_MODEL = getConfig().model;
 
   // spawn-worker.sh blocks until the container reaches READY/RUNNING (up to 5 min).
   // Run it detached so the daemon stays responsive to incoming events.
@@ -489,6 +496,13 @@ process.on("SIGINT", shutdown);
 
 async function main() {
   validateEnv();
+  // Force config validation now, synchronously, before anything async starts
+  // (HTTP server, execFile calls, etc). getConfig()/getProjectName() cache
+  // their result, so every later call — including the ones inside async
+  // callbacks like getActiveWorkerProjects()'s execFile — just returns the
+  // already-validated value instead of risking a throw from inside a
+  // callback (uncaught there, since it isn't inside a Promise executor).
+  getConfig();
 
   // 1. Start HTTP server (before cloudflared, so the port is ready to tunnel)
   server = http.createServer((req, res) => {
@@ -547,7 +561,7 @@ async function main() {
   log(`ready — port ${PORT}, max workers ${MAX_WORKERS}`);
 }
 
-module.exports = { resolveRoute, handleEvent, cleanupWorkerFiles, cleanupOrphanedStatusFiles };
+module.exports = { resolveRoute, handleEvent, cleanupWorkerFiles, cleanupOrphanedStatusFiles, getProjectName };
 
 if (require.main === module) {
   main().catch((err) => {

@@ -66,6 +66,9 @@ docker run --rm \
         echo '=== services/test-start-servers-config ==='
         node \$REPO/muaddib/services/__tests__/test-start-servers-config.js
 
+        echo '=== services/test-muaddib-config ==='
+        node \$REPO/muaddib/services/__tests__/test-muaddib-config.js
+
         echo ''
         echo 'All test suites passed.'
     "
