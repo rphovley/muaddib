@@ -95,7 +95,7 @@ check_tool gh          "brew install gh"
 check_tool claude      "npm install -g @anthropic-ai/claude-code"
 check_tool cloudflared "brew install cloudflared" optional
 # Required, not optional: spawn-worker.sh/teardown-worker.sh read the worker
-# port scheme (and everything else project-specific) out of .muaddib.json via
+# port scheme (and everything else project-specific) out of .muaddib/manifest.json via
 # jq — without it there's no way to resolve those values.
 check_tool jq          "brew install jq"
 

@@ -13,7 +13,7 @@ set -euo pipefail
 WORKER="$WORKER_INDEX"
 REPO="${REPO_DIR:-/home/worker/repo}"
 EMIT_CLI="$REPO/muaddib/orchestrator/emit-cli.js"
-CONFIG="$REPO/.muaddib.json"
+CONFIG="$REPO/.muaddib/manifest.json"
 
 log() { echo "[start-servers w${WORKER}] $*"; }
 

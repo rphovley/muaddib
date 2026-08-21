@@ -32,6 +32,7 @@ project-specific — all customisation lives here.
 
 | Path | Purpose |
 |------|---------|
+| `.muaddib/manifest.json` | The project registry — dev/check/lint/test scripts, ports, seed command, default model, `workerPorts`, etc. Every config-reading script/service in this repo reads this file; no fallback if it's missing. |
 | `.muaddib/secrets.env.example` | Committed template for the secrets bundle (gitignored: `.muaddib/secrets.env`) |
 | `.muaddib/secrets.env` | Your filled-in secrets (gitignored). Copy from `secrets.env.example`. |
 | `.muaddib/hooks/on-worker-start.sh` | Project hook run by the worker entrypoint after env is loaded. Executable; receives the full worker env. |
@@ -71,7 +72,7 @@ in the quotethat repo as a worked example of this pattern.
 ## Port scheme
 
 Worker `N` (1-based) gets `<base> + N` for each port, where the bases come from
-`.muaddib.json`'s `workerPorts` (`api`, `db`, `sketch`) — there's no default
+`.muaddib/manifest.json`'s `workerPorts` (`api`, `db`, `sketch`) — there's no default
 baked into `spawn-worker.sh`, so a project must supply a range that doesn't
 collide with whatever else is running on the host:
 
@@ -97,9 +98,9 @@ A project without a DB overlay has no `db`/`db_test` services at all.
 
 ## Preview server config (`services/start-servers.js`, `dispatch-daemon.js`)
 
-Both read `.muaddib.json` directly (not through `read-config.sh`, since they
+Both read `.muaddib/manifest.json` directly (not through `read-config.sh`, since they
 run as Node jobs rather than shell scripts) and have no built-in fallback — a
-missing `.muaddib.json`, a `.muaddib.json` with no `projects` array, or one
+missing `.muaddib/manifest.json`, a `.muaddib/manifest.json` with no `projects` array, or one
 missing `projectName` is a clear startup error, not a silent quotethat-shaped
 guess. `start-servers.js` picks the API project by `seedScript` presence and
 frontend projects by `devScript` presence (no project named "api"/"portal"/
@@ -110,7 +111,7 @@ project label.
 `start-servers.js` writes each frontend project's tunnel URL to worker state
 as `<project-name>_url` (e.g. `portal_url`, `homeowner_url`) — skills that
 want a preview link read the state key matching the project's own name in
-`.muaddib.json`, not a separately-configured alias.
+`.muaddib/manifest.json`, not a separately-configured alias.
 
 ## Prerequisites (one-time)
 
@@ -146,7 +147,7 @@ docker build -f muaddib/Dockerfile.worker -t quotethat-worker .
 that near-instant unless something changed.
 
 **Dependencies are pre-installed into the image** (Linux-native `npm ci` for every
-project listed in `.muaddib.json`'s `projects[].path`), at the final repo path.
+project listed in `.muaddib/manifest.json`'s `projects[].path`), at the final repo path.
 At spawn the entrypoint `git fetch`es source *over* the baked `node_modules`
 (which is gitignored, so it survives checkout) — so a spawn does **no install and
 no copy**, just git deltas. Deps refresh only when a project's

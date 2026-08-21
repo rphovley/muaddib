@@ -8,11 +8,15 @@ struct MuaddibConfig: Codable {
     let projectName: String
     let projects: [Project]
 
-    static func load(repoPath: String) -> MuaddibConfig {
-        let url = URL(fileURLWithPath: repoPath).appendingPathComponent(".muaddib.json")
+    // Returns nil (not a "quotethat"-shaped guess) if .muaddib/manifest.json is
+    // missing or invalid — callers decide what a missing config means for them.
+    static func load(repoPath: String) -> MuaddibConfig? {
+        let url = URL(fileURLWithPath: repoPath)
+            .appendingPathComponent(".muaddib")
+            .appendingPathComponent("manifest.json")
         guard let data = try? Data(contentsOf: url),
               let config = try? JSONDecoder().decode(MuaddibConfig.self, from: data)
-        else { return MuaddibConfig(projectName: "quotethat", projects: []) }
+        else { return nil }
         return config
     }
 }

@@ -14,8 +14,8 @@
 // testMuaddibPlanLabel       — auto + muaddib:plan → plan workflow
 // testBugTakesPrecedence     — auto + bug + fast → bug workflow (bug wins)
 // testLabelsCaseInsensitive  — mixed-case label names are normalised
-// testThrowsWhenConfigMissing      — getProjectName() with missing .muaddib.json → clear error, no quotethat fallback
-// testThrowsWhenProjectNameMissing — getProjectName() with .muaddib.json missing "projectName" → clear error
+// testThrowsWhenConfigMissing      — getProjectName() with missing .muaddib/manifest.json → clear error, no quotethat fallback
+// testThrowsWhenProjectNameMissing — getProjectName() with .muaddib/manifest.json missing "projectName" → clear error
 // testInvalidConfigThrowsOnEveryCall — an invalid config throws on every getProjectName() call,
 //                                    not just the first (a broken config must never get cached
 //                                    as if it were valid)
@@ -29,6 +29,7 @@ const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
 const { resolveRoute, handleEvent, cleanupWorkerFiles } = require("../dispatch-daemon");
+const { writeManifest } = require("./test-utils");
 
 function assertRoute(labels, expectedEntryPoint) {
   const route = resolveRoute(labels);
@@ -425,11 +426,12 @@ async function testCleanupNoStateFile() {
 }
 
 // ─── config validation (lazy) ─────────────────────────────────────────────────
-// dispatch-daemon.js reads .muaddib.json lazily — only when something actually
-// needs the project name (getProjectName()), not merely on require(). That's
-// deliberate: it keeps the module importable in isolation (as this whole test
-// file already does at the top, via a real .muaddib.json two directories up)
-// without every unrelated test needing a valid config. So these two tests call
+// dispatch-daemon.js reads .muaddib/manifest.json lazily — only when something
+// actually needs the project name (getProjectName()), not merely on require().
+// That's deliberate: it keeps the module importable in isolation (as this
+// whole test file already does at the top, without a REPO_ROOT override —
+// harmless precisely because plain require() never touches config) without
+// every unrelated test needing a valid config. So these two tests call
 // getProjectName() explicitly, in a subprocess so the thrown error doesn't take
 // this whole test process down.
 
@@ -447,8 +449,8 @@ async function testThrowsWhenConfigMissing() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "muaddib-test-"));
   try {
     const r = callGetProjectNameInSubprocess(tmpDir);
-    if (r.status === 0) throw new Error("expected non-zero exit when .muaddib.json is missing — got a silent quotethat-shaped default instead");
-    if (!r.stderr.includes(".muaddib.json")) throw new Error(`error should name the missing file, got: ${r.stderr}`);
+    if (r.status === 0) throw new Error("expected non-zero exit when .muaddib/manifest.json is missing — got a silent quotethat-shaped default instead");
+    if (!r.stderr.includes("manifest.json")) throw new Error(`error should name the missing file, got: ${r.stderr}`);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -457,7 +459,7 @@ async function testThrowsWhenConfigMissing() {
 async function testThrowsWhenProjectNameMissing() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "muaddib-test-"));
   try {
-    fs.writeFileSync(path.join(tmpDir, ".muaddib.json"), JSON.stringify({}));
+    writeManifest(tmpDir, JSON.stringify({}));
     const r = callGetProjectNameInSubprocess(tmpDir);
     if (r.status === 0) throw new Error('expected non-zero exit when "projectName" is missing — got a silent "quotethat" default instead');
     if (!r.stderr.includes("projectName")) throw new Error(`error should mention projectName, got: ${r.stderr}`);
@@ -477,7 +479,7 @@ async function testThrowsWhenProjectNameMissing() {
 async function testInvalidConfigThrowsOnEveryCall() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "muaddib-test-"));
   try {
-    fs.writeFileSync(path.join(tmpDir, ".muaddib.json"), JSON.stringify({}));
+    writeManifest(tmpDir, JSON.stringify({}));
     const r = spawnSync(
       process.execPath,
       ["-e", `
@@ -502,7 +504,7 @@ async function testInvalidConfigThrowsOnEveryCall() {
 
 async function testRequireAloneDoesNotThrow() {
   // The point of laziness: importing the module (without calling
-  // getProjectName()) must succeed even with no .muaddib.json at all —
+  // getProjectName()) must succeed even with no .muaddib/manifest.json at all —
   // otherwise every test/tool that only needs resolveRoute/handleEvent would
   // be forced to supply a valid config just to require() this file.
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "muaddib-test-"));
@@ -512,7 +514,7 @@ async function testRequireAloneDoesNotThrow() {
       ["-e", `require(${JSON.stringify(DISPATCH_DAEMON_PATH)}); console.log("ok")`],
       { encoding: "utf8", env: { ...process.env, REPO_ROOT: tmpDir } },
     );
-    if (r.status !== 0) throw new Error(`expected require() alone to succeed with no .muaddib.json, got exit ${r.status}: ${r.stderr}`);
+    if (r.status !== 0) throw new Error(`expected require() alone to succeed with no .muaddib/manifest.json, got exit ${r.status}: ${r.stderr}`);
     if (!r.stdout.includes("ok")) throw new Error(`expected "ok" on stdout, got: ${r.stdout}`);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -624,7 +626,7 @@ async function main() {
       testCleanupNoStateFile,
     ],
     [
-      "config: missing .muaddib.json throws a clear error (no quotethat fallback)",
+      "config: missing .muaddib/manifest.json throws a clear error (no quotethat fallback)",
       testThrowsWhenConfigMissing,
     ],
     [

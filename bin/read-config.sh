@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Read .muaddib.json and export MUADDIB_PROJECT_NAME + MUADDIB_CONFIG_FILE + MUADDIB_MODEL.
+# Read .muaddib/manifest.json and export MUADDIB_PROJECT_NAME + MUADDIB_CONFIG_FILE + MUADDIB_MODEL.
 # Source this script — do not execute directly.
 
 _MUADDIB_BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -9,7 +9,7 @@ REPO_ROOT="${MUADDIB_REPO:-$(git -C "$_MUADDIB_BIN_DIR" rev-parse --show-superpr
 REPO_ROOT="${REPO_ROOT:-$(git -C "$_MUADDIB_BIN_DIR" rev-parse --show-toplevel 2>/dev/null)}"
 REPO_ROOT="${REPO_ROOT:-$(cd "$_MUADDIB_BIN_DIR/../.." && pwd)}"
 export REPO_ROOT
-_MUADDIB_CONFIG="$REPO_ROOT/.muaddib.json"
+_MUADDIB_CONFIG="$REPO_ROOT/.muaddib/manifest.json"
 
 # Project-supplied compose overlay: adds project-specific services/env (e.g. a
 # DB sidecar) to docker-compose.worker.yml without editing the generic base
@@ -29,24 +29,31 @@ MUADDIB_COMPOSE_FILES=(-f "$_MUADDIB_BIN_DIR/../docker-compose.worker.yml")
 # drift between the two — they must agree on a given worker's ports, or
 # teardown's `docker compose down` won't correctly interpolate the stack it's
 # tearing down. Defined ahead of the jq/config check below so it's always
-# available, even along the degraded-fallback path.
+# available to callers that source successfully.
 muaddib_worker_port() {
     local base="$1" label="$2" worker="$3"
-    : "${base:?set .muaddib.json workerPorts.$label}"
+    : "${base:?set .muaddib/manifest.json workerPorts.$label}"
     echo $((base + worker))
 }
 
-if ! command -v jq &>/dev/null || [ ! -f "$_MUADDIB_CONFIG" ]; then
-    if ! command -v jq &>/dev/null; then
-        echo "muaddib: jq not found on PATH — install it (brew install jq)." \
-            ".muaddib.json can't be read without it, so worker ports etc. won't resolve." >&2
-    fi
-    export MUADDIB_PROJECT_NAME="quotethat"
-    export MUADDIB_PORT_API="" MUADDIB_PORT_DB="" MUADDIB_PORT_SKETCH=""
-    return 0 2>/dev/null || true
+# No fallback: a missing manifest or missing jq means every downstream script
+# (ports, project name, compose stack) is unusable, so fail loudly here rather
+# than let scripts limp along with guessed/empty values. See issue #6.
+if [ ! -f "$_MUADDIB_CONFIG" ]; then
+    echo "muaddib: missing $_MUADDIB_CONFIG — every muaddib script needs a project-supplied manifest; see muaddib/README.md" >&2
+    return 1 2>/dev/null || exit 1
 fi
 
-MUADDIB_PROJECT_NAME="$(jq -r '.projectName' "$_MUADDIB_CONFIG")"
+if ! command -v jq &>/dev/null; then
+    echo "muaddib: jq not found on PATH — install it (brew install jq); .muaddib/manifest.json can't be read without it." >&2
+    return 1 2>/dev/null || exit 1
+fi
+
+MUADDIB_PROJECT_NAME="$(jq -r '.projectName // empty' "$_MUADDIB_CONFIG")"
+if [ -z "$MUADDIB_PROJECT_NAME" ]; then
+    echo "muaddib: $_MUADDIB_CONFIG is missing \"projectName\"" >&2
+    return 1 2>/dev/null || exit 1
+fi
 export MUADDIB_PROJECT_NAME
 export MUADDIB_CONFIG_FILE="$_MUADDIB_CONFIG"
 

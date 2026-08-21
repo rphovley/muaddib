@@ -228,16 +228,29 @@ final class InstallChecker {
             hint: webhookOk ? "" : "Set DISPATCH_WEBHOOK_SECRET in non-prod.env"
         ))
 
-        // 13. <projectName>-worker:latest image
+        // 13. .muaddib/manifest.json — clear failed check if missing/invalid,
+        // not a silent "quotethat" guess.
         let repoPath = muaddibDir().deletingLastPathComponent().path
         let muaddibConfig = MuaddibConfig.load(repoPath: repoPath)
-        let workerImage = "\(muaddibConfig.projectName)-worker:latest"
-        let imageOk = runExitCode(executable: resolvedDocker, args: ["image", "inspect", workerImage]) == 0
+        result.append(CheckItem(
+            id: "manifest",
+            label: ".muaddib/manifest.json",
+            status: muaddibConfig != nil ? .ok : .failed,
+            hint: muaddibConfig != nil ? "" : "Missing or invalid — see muaddib/README.md"
+        ))
+
+        // 14. <projectName>-worker:latest image
+        let workerImageLabel = muaddibConfig.map { "\($0.projectName)-worker:latest" } ?? "<projectName>-worker:latest"
+        let workerImageOk = muaddibConfig != nil
+            && runExitCode(executable: resolvedDocker, args: ["image", "inspect", workerImageLabel]) == 0
+        let workerImageHint = muaddibConfig == nil
+            ? "Can't determine image name — fix .muaddib/manifest.json first"
+            : (workerImageOk ? "" : "Run install.sh to build the worker image")
         result.append(CheckItem(
             id: "worker-image",
-            label: workerImage,
-            status: imageOk ? .ok : .failed,
-            hint: imageOk ? "" : "Run install.sh to build the worker image"
+            label: workerImageLabel,
+            status: workerImageOk ? .ok : .failed,
+            hint: workerImageHint
         ))
 
         return result

@@ -13,15 +13,15 @@ COPY --chown=worker:worker . /home/worker/repo/
 
 # --- Pre-install project dependencies (Linux-native) -------------------------
 # The project list is never hardcoded here — it's read from the project's own
-# .muaddib.json (baked in above via the full-repo COPY), the same config
-# worker-entrypoint.sh reads for lockfile-drift checks at spawn time. Projects
-# that aren't npm packages (no package.json) are skipped. Each baked lockfile
-# is stashed under ~/.deps-lock for drift detection at startup.
-RUN test -f .muaddib.json || (echo "missing .muaddib.json at repo root — see muaddib/README.md" >&2 && exit 1)
+# .muaddib/manifest.json (baked in above via the full-repo COPY), the same
+# config worker-entrypoint.sh reads for lockfile-drift checks at spawn time.
+# Projects that aren't npm packages (no package.json) are skipped. Each baked
+# lockfile is stashed under ~/.deps-lock for drift detection at startup.
+RUN test -f .muaddib/manifest.json || (echo "missing .muaddib/manifest.json at repo root — see muaddib/README.md" >&2 && exit 1)
 RUN set -e; \
-    PROJECT_PATHS="$(jq -r '.projects[].path' .muaddib.json)" \
-        || { echo "failed to read .projects[].path from .muaddib.json" >&2; exit 1; }; \
-    [ -n "$PROJECT_PATHS" ] || { echo "no projects[] entries found in .muaddib.json" >&2; exit 1; }; \
+    PROJECT_PATHS="$(jq -r '.projects[].path' .muaddib/manifest.json)" \
+        || { echo "failed to read .projects[].path from .muaddib/manifest.json" >&2; exit 1; }; \
+    [ -n "$PROJECT_PATHS" ] || { echo "no projects[] entries found in .muaddib/manifest.json" >&2; exit 1; }; \
     for p in $PROJECT_PATHS; do \
         [ -f "$p/package.json" ] || continue; \
         echo "== installing deps: $p =="; \

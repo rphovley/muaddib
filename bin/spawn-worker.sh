@@ -2,7 +2,7 @@
 # Provision and launch one isolated worker.
 #   ./spawn-worker.sh <worker-number> [initial task prompt...]
 #
-# Ports: base + worker number, bases come from .muaddib.json's workerPorts
+# Ports: base + worker number, bases come from .muaddib/manifest.json's workerPorts
 # (no defaults baked in here — see read-config.sh / README "Port scheme").
 # Secrets: subscription + GitHub tokens come from your shell env; non-prod app
 # secrets come from a local .muaddib/secrets.env, injected as VALUES into the container.
@@ -90,7 +90,7 @@ fi
 # Let LINEAR_API_KEY come from the shell env too (overrides .muaddib/secrets.env if set).
 [ -n "${LINEAR_API_KEY:-}" ] && echo "LINEAR_API_KEY=${LINEAR_API_KEY}" >>"$ENV_FILE"
 
-# Pin the Claude Code model (from .muaddib.json "model", via read-config.sh).
+# Pin the Claude Code model (from .muaddib/manifest.json "model", via read-config.sh).
 # Applies to every `claude` call in the container — orchestrator task steps and
 # interactive sessions alike — since this env file is the container's env_file.
 [ -n "${MUADDIB_MODEL:-}" ] && echo "ANTHROPIC_MODEL=${MUADDIB_MODEL}" >>"$ENV_FILE"
