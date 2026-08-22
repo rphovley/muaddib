@@ -33,6 +33,7 @@ project-specific — all customisation lives here.
 | Path | Purpose |
 |------|---------|
 | `.muaddib/manifest.json` | The project registry — dev/check/lint/test scripts, ports, seed command, default model, `workerPorts`, etc. Every config-reading script/service in this repo reads this file; no fallback if it's missing. |
+| `.muaddib/goals.md` | Goal Context — durable, cross-ticket fleet policy. Committed, not gitignored. Bootstrapped with a default template on first read if missing. See "Goal Context" below. |
 | `.muaddib/secrets.env.example` | Committed template for the secrets bundle (gitignored: `.muaddib/secrets.env`) |
 | `.muaddib/secrets.env` | Your filled-in secrets (gitignored). Copy from `secrets.env.example`. |
 | `.muaddib/hooks/on-worker-start.sh` | Project hook run by the worker entrypoint after env is loaded. Executable; receives the full worker env. |
@@ -112,6 +113,27 @@ project label.
 as `<project-name>_url` (e.g. `portal_url`, `homeowner_url`) — skills that
 want a preview link read the state key matching the project's own name in
 `.muaddib/manifest.json`, not a separately-configured alias.
+
+## Goal Context (`.muaddib/goals.md`)
+
+`.muaddib/goals.md` is durable, cross-ticket **fleet policy** — budget/retry/
+concurrency thresholds and durable priorities the Conductor should weigh when
+managing workers over time. It's distinct from CLAUDE.md/AGENTS.md, which
+describe the *product* (architecture, conventions, how to build a feature),
+not how the fleet running against that product should be managed.
+
+It's committed (not gitignored) like `.muaddib/manifest.json` — fleet policy
+is a team decision, not a local/secret value. `services/goals.js`'s
+`readGoals(repoDir)` reads it as opaque markdown text (no field parsing yet)
+and, if the file doesn't exist, bootstraps it: writes a default template to
+`.muaddib/goals.md` and returns that instead of erroring, so a project that
+hasn't customised it yet still gets a sane Goal Context to work with. An
+existing file — even a mostly-empty one — is always returned verbatim and
+never overwritten.
+
+Nothing consumes Goal Context yet — reading and weighing it is the
+Conductor's job, in a later milestone. This is just the file convention and
+the reader/bootstrapper.
 
 ## Prerequisites (one-time)
 
