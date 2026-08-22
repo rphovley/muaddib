@@ -34,7 +34,6 @@ project-specific — all customisation lives here.
 |------|---------|
 | `.muaddib/manifest.json` | The project registry — dev/check/lint/test scripts, ports, seed command, default model, `workerPorts`, etc. Every config-reading script/service in this repo reads this file; no fallback if it's missing. |
 | `.muaddib/goals.md` | Goal Context — durable, cross-ticket fleet policy. Committed, not gitignored. Bootstrapped with a default template on first read if missing. See "Goal Context" below. |
-| `.muaddib/skills/*/SKILL.md` | The project's SDLC skill pack — the actual prompt content each workflow-JSON `claude-tui` step's `skill:` name resolves to (`commit-and-pr`, `implement`, `review-fleet`, etc.). No fallback: `spawn-worker.sh` and `Dockerfile.worker` both fail clearly if this directory is missing. See "SDLC skills" below. |
 | `.muaddib/secrets.env.example` | Committed template for the secrets bundle (gitignored: `.muaddib/secrets.env`) |
 | `.muaddib/secrets.env` | Your filled-in secrets (gitignored). Copy from `secrets.env.example`. |
 | `.muaddib/hooks/on-worker-start.sh` | Project hook run by the worker entrypoint after env is loaded. Executable; receives the full worker env. |
@@ -135,27 +134,6 @@ never overwritten.
 Nothing consumes Goal Context yet — reading and weighing it is the
 Conductor's job, in a later milestone. This is just the file convention and
 the reader/bootstrapper.
-
-## SDLC skills (`.muaddib/skills/`)
-
-Every workflow-JSON `claude-tui` step names a skill (`"skill": "implement"`,
-`"skill": "commit-and-pr"`, ...); `orchestrator/runner.js` just runs
-`claude "/<skill>"` — resolving that name to actual prompt content is entirely
-Claude Code's own skill lookup, not anything muaddib's runner does itself.
-That prompt content — what `implement`, `commit-and-pr`, `review-fleet`, and
-the rest actually say — is project-owned, at `.muaddib/skills/*/SKILL.md`,
-alongside `.muaddib/manifest.json` and `.muaddib/goals.md`. muaddib itself
-carries no SDLC prompt content of its own.
-
-`bin/spawn-worker.sh` merges `.muaddib/skills/` with your personal
-`~/.claude/skills/` into a per-worker directory that's bind-mounted into the
-container (project skills win on a name collision, so `/muaddib` and its
-variants are always the current SDLC-pack version, not a stale personal
-copy). `Dockerfile.worker` also bakes `.muaddib/skills/` into the image
-directly, as a fallback for anything that runs the image without going
-through `spawn-worker.sh`'s merge step. Both fail with a clear error if
-`.muaddib/skills/` is missing — a workflow can't run a step whose skill
-doesn't resolve to anything, so there's no sane fallback here either.
 
 ## Prerequisites (one-time)
 
@@ -365,12 +343,13 @@ workflow just never runs any of this.
   whether a ticket needs a sketch pass and writes `needs_sketch` to worker
   state; only `plan.json` (the workflow that actually declares the `sketch`
   steps below) acts on it.
-- `sketch` (`.muaddib/skills/sketch/`) is setup-only: discovers the target
-  project's real design system (not a generic Tailwind/DaisyUI default),
-  builds the prototype with an explicit "Submit Review" control, opens it
-  (`--no-open`, since the container has no display — the URL is published
-  per worker at `http://localhost:<workerPorts.sketch + N>`), and notifies
-  you via Linear + macOS.
+- `sketch` (`muaddib/claude/skills/sketch/`) is setup-only: discovers the
+  target project's real design system (Mantine v8 for Portal/Homeowner
+  today, not a generic Tailwind/DaisyUI default), builds the prototype with
+  an explicit "Submit Review" control, opens it (`--no-open`, since the
+  container has no display — the URL is published per worker at
+  `http://localhost:<workerPorts.sketch + N>` (quotethat: worker 1 →
+  `4387`), and notifies you via Linear + macOS.
 - `sketch-review-loop` (a `loop` step in `plan.json`, capped at 200 iterations
   as a runaway backstop — a real review session is nowhere near that; hitting
   it fails the workflow rather than silently wrapping up) then repeats:
