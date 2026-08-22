@@ -35,18 +35,12 @@ REPO_URL="${REPO_URL:-$(git -C "$REPO_ROOT" remote get-url origin \
     | sed -E 's#^git@github.com:#github.com/#; s#^https://##; s#^http://##')}"
 CLAUDE_SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
 
-# Merge personal skills from host with the project's own SDLC skills
-# (.muaddib/skills/ — project-owned, not muaddib's; see README). Project
+# Merge personal skills from host with fleet skills from this repo. Fleet
 # skills take precedence so /muaddib and its variants are always current.
-PROJECT_SKILLS="$REPO_ROOT/.muaddib/skills"
-[ -n "$(ls -A "$PROJECT_SKILLS" 2>/dev/null)" ] || {
-    echo "missing or empty $PROJECT_SKILLS — every workflow step invokes a skill by name; see muaddib/README.md" >&2
-    exit 1
-}
 MERGED_SKILLS="$FLEET_DIR/status/.skills-${WORKER}"
 rm -rf "$MERGED_SKILLS" && mkdir -p "$MERGED_SKILLS"
 [ -d "$CLAUDE_SKILLS_DIR" ] && cp -r "$CLAUDE_SKILLS_DIR/." "$MERGED_SKILLS/"
-cp -r "$PROJECT_SKILLS/." "$MERGED_SKILLS/"
+cp -r "$FLEET_DIR/claude/skills/." "$MERGED_SKILLS/"
 # Use the host-side path so docker compose mounts the right directory on the host.
 CLAUDE_SKILLS_DIR="$HOST_FLEET_DIR/status/.skills-${WORKER}"
 

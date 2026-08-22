@@ -32,15 +32,7 @@ RUN set -e; \
 
 WORKDIR /home/worker
 COPY --chown=worker:worker muaddib/claude/settings.json /home/worker/.claude/settings.json
-# SDLC skills are project-owned, not muaddib's — see README ".muaddib/skills/".
-# Copied from the repo already baked in above (not a fresh COPY from the host
-# build context) so a missing directory fails with our own clear message —
-# a host-context COPY's source is checksummed before any RUN step can run,
-# so BuildKit's own generic "not found" would otherwise win the race.
-RUN set -e; \
-    [ -n "$(ls -A /home/worker/repo/.muaddib/skills 2>/dev/null)" ] \
-        || { echo "missing or empty .muaddib/skills/ at repo root — see muaddib/README.md" >&2; exit 1; }; \
-    cp -r /home/worker/repo/.muaddib/skills /home/worker/.claude/skills
+COPY --chown=worker:worker muaddib/claude/skills/ /home/worker/.claude/skills/
 # Pre-seed onboarding state so claude skips the theme picker / welcome / trust
 # dialog and goes straight to the task. The entrypoint's `claude mcp add` merges
 # mcpServers into this same file at runtime.
