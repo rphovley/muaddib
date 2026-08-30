@@ -15,11 +15,7 @@ const path = require("path");
 const http = require("http");
 const { spawn, execFile } = require("child_process");
 
-const {
-  registerWebhook,
-  deregisterWebhook,
-  verifySignature,
-} = require("./linear-webhook");
+const { getTicketSource } = require("./ticket-source");
 const {
   isDispatched,
   markDispatched,
@@ -71,6 +67,17 @@ const SECRET =
   require("crypto").randomBytes(32).toString("hex");
 const LINEAR_TEAM_ID = process.env.LINEAR_TEAM_ID || "";
 const MAX_WORKERS = parseInt(process.env.MAX_DISPATCH_WORKERS || "8", 10);
+
+// The ticket backend (Linear today) — webhook register/deregister and inbound
+// signature verification all go through this interface rather than raw calls.
+// Resolved lazily (like getConfig() above) so a misconfigured TICKET_SOURCE
+// surfaces as a clean startup/handler error, never an uncaught throw at
+// require() time.
+let _ticketSource = null;
+function ticketSource() {
+  if (_ticketSource === null) _ticketSource = getTicketSource();
+  return _ticketSource;
+}
 
 let webhookId = null;
 let tunnelProc = null;
@@ -477,9 +484,9 @@ async function shutdown() {
   if (webhookId) {
     log(`deregistering Linear webhook ${webhookId}...`);
     try {
-      await deregisterWebhook(webhookId);
+      await ticketSource().deregisterWatch(webhookId);
     } catch (err) {
-      log(`deregisterWebhook error: ${err.message}`);
+      log(`deregisterWatch error: ${err.message}`);
     }
   }
   if (tunnelProc) {
@@ -522,7 +529,7 @@ async function main() {
       res.end("ok");
 
       const sig = req.headers["linear-signature"] || "";
-      if (!verifySignature(rawBody, sig, SECRET)) {
+      if (!ticketSource().verifySignature(rawBody, sig, SECRET)) {
         log("invalid linear-signature — rejected");
         return;
       }
@@ -545,10 +552,14 @@ async function main() {
   log("starting tunnel...");
   const tunnelUrl = await openTunnel(PORT, TUNNEL_LOG, LR_LOG);
 
-  // 3. Register Linear webhook
+  // 3. Register ticket-source watch (Linear webhook)
   log(`registering Linear webhook for team ${LINEAR_TEAM_ID}...`);
-  const result = await registerWebhook(LINEAR_TEAM_ID, tunnelUrl, SECRET);
-  webhookId = result.webhookId;
+  const { watchId } = await ticketSource().registerWatch({
+    teamId: LINEAR_TEAM_ID,
+    url: tunnelUrl,
+    secret: SECRET,
+  });
+  webhookId = watchId;
   log(`webhook registered: ${webhookId}`);
 
   // 4. Start overflow-queue flush interval (every 30 s)

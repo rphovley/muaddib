@@ -49,6 +49,9 @@ TEST_SCRIPT='
     echo "=== scripts/test-fetch-ticket ==="
     node "$MUADDIB/scripts/test-fetch-ticket.js"
 
+    echo "=== services/test-ticket-source ==="
+    node "$MUADDIB/services/__tests__/test-ticket-source.js"
+
     echo "=== services/test-linear-webhook ==="
     node "$MUADDIB/services/__tests__/test-linear-webhook.js"
 
