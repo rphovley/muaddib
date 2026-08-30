@@ -34,8 +34,9 @@ function getTicketSource(kind) {
     case 'raw':
       return rawSource;
     case 'github':
-      // Read-only GitHub Issues backend (see ./github.js). Implements the read
-      // path — fetchTicket(number) → a Linear-shaped ticket; write/watch methods
+      // GitHub Issues backend (see ./github.js). Implements the read path —
+      // fetchTicket(number) → a Linear-shaped ticket — plus the comment/mention/
+      // sub-issue write path; watch methods (register/deregister/verifySignature)
       // are explicit "not implemented" stubs pending a later milestone.
       return githubSource;
     default:
