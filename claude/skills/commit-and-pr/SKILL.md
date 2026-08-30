@@ -158,7 +158,7 @@ The webhook job (`watch-feedback.sh`) polls `/tmp/pr-number-${WORKER}` and regis
 
 ## Step 7 — Post Linear comment
 
-Call `mcp__linear__save_comment` on the ticket from `$ARGUMENTS` with:
+Skip this step entirely if `$STATE_TICKET_URL` is empty — there's no real ticket to post back to (e.g. a free-form task). Otherwise, call `mcp__linear__save_comment` on the ticket from `$ARGUMENTS` with:
 
 ```
 PR opened: <pr-url>

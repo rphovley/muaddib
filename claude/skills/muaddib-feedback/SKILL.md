@@ -7,7 +7,7 @@ description: Apply PR review feedback. Reads new comments on the GitHub PR since
 
 Addresses reviewer feedback posted as comments on the GitHub PR. Called by the orchestrator when a new `/feedback` comment arrives. **Never calls `AskUserQuestion`.** When feedback is ambiguous, make the most reasonable interpretation and document it in the reply.
 
-`$ARGUMENTS` is the Linear ticket identifier (e.g. `QUO-281`), used only for posting the reply.
+`$ARGUMENTS` is the ticket identifier, if any — not used by this skill. The reply in Step 6 goes through `gh pr comment` on the GitHub PR directly, not Linear.
 
 ## Step 1 — Read new PR comments
 
