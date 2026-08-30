@@ -98,6 +98,29 @@ collide across workers.
 they come from quotethat's DB compose overlay (see "Project compose overlay").
 A project without a DB overlay has no `db`/`db_test` services at all.
 
+## Ticket source config
+
+Which ticket backend a project uses is declared in `.muaddib/manifest.json`,
+not left to an ad-hoc env var:
+
+```json
+"ticketSource": "linear",
+"githubOwner": "",
+"githubRepo": ""
+```
+
+`ticketSource` is `"linear"` (default when the key is absent, preserving
+existing behavior) or `"github"`. `read-config.sh` validates it and fails loud
+on anything else. Linear's own identifier stays the `LINEAR_TEAM_ID` secret env
+var; `githubOwner`/`githubRepo` are the GitHub backend's identifiers — empty for
+Linear-only projects, and both required when `ticketSource` is `"github"`.
+
+`read-config.sh` exports these as `MUADDIB_TICKET_SOURCE` /
+`MUADDIB_GITHUB_OWNER` / `MUADDIB_GITHUB_REPO`. `spawn-worker.sh` forwards them
+into the worker as `TICKET_SOURCE` (defaulted from the manifest — an explicit
+`TICKET_SOURCE` env var still wins, e.g. `muaddib-task.sh`'s `raw` dispatch) plus
+`GITHUB_OWNER`/`GITHUB_REPO`, where `services/ticket-source` selects the backend.
+
 ## Preview server config (`services/start-servers.js`, `dispatch-daemon.js`)
 
 Both read `.muaddib/manifest.json` directly (not through `read-config.sh`, since they

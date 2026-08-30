@@ -359,6 +359,12 @@ async function trySpawn(entry) {
   // read-config.sh inside spawn-worker.sh can't derive MUADDIB_MODEL itself —
   // inject it here (parsed in JS) so spawn-worker.sh writes ANTHROPIC_MODEL.
   if (getConfig().model) env.MUADDIB_MODEL = getConfig().model;
+  // Same reason: the dispatch image has no jq, so read-config.sh can't derive the
+  // manifest's ticket-source settings inside spawn-worker.sh — inject them here so
+  // spawn-worker.sh forwards TICKET_SOURCE/GITHUB_OWNER/GITHUB_REPO into the worker.
+  if (getConfig().ticketSource) env.MUADDIB_TICKET_SOURCE = getConfig().ticketSource;
+  if (getConfig().githubOwner) env.MUADDIB_GITHUB_OWNER = getConfig().githubOwner;
+  if (getConfig().githubRepo) env.MUADDIB_GITHUB_REPO = getConfig().githubRepo;
 
   // spawn-worker.sh blocks until the container reaches READY/RUNNING (up to 5 min).
   // Run it detached so the daemon stays responsive to incoming events.

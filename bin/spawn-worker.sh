@@ -91,10 +91,19 @@ fi
 # Let LINEAR_API_KEY come from the shell env too (overrides .muaddib/secrets.env if set).
 [ -n "${LINEAR_API_KEY:-}" ] && echo "LINEAR_API_KEY=${LINEAR_API_KEY}" >>"$ENV_FILE"
 
-# Ticket source selection (default: linear, set by services/ticket-source).
-# muaddib-task.sh sets these for free-form/raw dispatch.
-[ -n "${TICKET_SOURCE:-}" ] && echo "TICKET_SOURCE=${TICKET_SOURCE}" >>"$ENV_FILE"
+# Ticket source selection. An explicit env var wins (muaddib-task.sh sets these
+# for free-form/raw dispatch); otherwise default from the committed manifest
+# (MUADDIB_TICKET_SOURCE, via read-config.sh) so the project's declared backend
+# takes effect without an env override.
+echo "TICKET_SOURCE=${TICKET_SOURCE:-$MUADDIB_TICKET_SOURCE}" >>"$ENV_FILE"
 [ -n "${TICKET_IDENTIFIER:-}" ] && echo "TICKET_IDENTIFIER=${TICKET_IDENTIFIER}" >>"$ENV_FILE"
+# GitHub identifiers come from the committed manifest (via read-config.sh) so the
+# github backend has its owner/repo inside the worker (empty for Linear projects).
+# Sourced from the manifest only — unlike TICKET_SOURCE there's no flow that sets
+# these as env vars, so a generically-named ambient GITHUB_OWNER/GITHUB_REPO must
+# not silently override the project's declared identifiers.
+[ -n "$MUADDIB_GITHUB_OWNER" ] && echo "GITHUB_OWNER=${MUADDIB_GITHUB_OWNER}" >>"$ENV_FILE"
+[ -n "$MUADDIB_GITHUB_REPO" ] && echo "GITHUB_REPO=${MUADDIB_GITHUB_REPO}" >>"$ENV_FILE"
 
 # Pin the Claude Code model (from .muaddib/manifest.json "model", via read-config.sh).
 # Applies to every `claude` call in the container — orchestrator task steps and

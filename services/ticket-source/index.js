@@ -17,7 +17,10 @@
 //   registerWatch({ teamId, url, secret })   -> { watchId }
 //   deregisterWatch(watchId)                 -> tears the watch down
 //
-// Select a backend with the TICKET_SOURCE env var (default: "linear").
+// Select a backend with the TICKET_SOURCE env var (default: "linear"). A project
+// declares its backend in .muaddib/manifest.json's "ticketSource" key; spawn-worker.sh
+// forwards that (plus githubOwner/githubRepo) into the worker as TICKET_SOURCE, so
+// the manifest is the source of truth and an explicit env var only overrides it.
 
 const { linearSource, createLinearSource } = require('./linear');
 const { rawSource } = require('./raw');
@@ -29,6 +32,12 @@ function getTicketSource(kind) {
       return linearSource;
     case 'raw':
       return rawSource;
+    case 'github':
+      // Declared-but-not-yet-implemented backend. The manifest schema and
+      // read-config.sh already accept ticketSource="github" to unblock a future
+      // GitHub backend, so this value can legitimately reach a worker — fail with
+      // a clear, intentional message rather than the generic "unknown" case below.
+      throw new Error('ticket source "github" is declared in the manifest but not yet implemented (no GitHub backend exists yet)');
     default:
       throw new Error(`unknown ticket source: "${which}" (supported: linear, raw)`);
   }
