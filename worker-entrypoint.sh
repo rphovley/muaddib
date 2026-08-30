@@ -104,6 +104,25 @@ if [ -n "${TASK:-}" ] && [ "${TASK#/muaddib-task}" != "$TASK" ]; then
     TASK_Q=$(printf '%q' "$TASK")
     tmux new-session -d -s "$SESSION" \
         "claude $PERM_FLAG $TASK_Q; exec bash"
+
+    # Auto-accept Claude's --dangerously-skip-permissions disclaimer if it
+    # appears — this task runs fully unattended (no human watching to accept
+    # it manually, unlike interactive mode). Same mechanism orchestrator/job.js
+    # already uses for every orchestrator-driven job; this path just doesn't
+    # go through job.js at all, so it needs its own copy.
+    (
+        for _ in $(seq 1 120); do
+            sleep 1
+            if tmux capture-pane -t "$SESSION" -p 2>/dev/null | grep -q 'Yes, I accept'; then
+                tmux send-keys -t "$SESSION" Down
+                sleep 0.3
+                tmux send-keys -t "$SESSION" Enter
+                break
+            fi
+        done
+    ) &
+    disown $!
+
     echo "Worker ${WORKER_INDEX} running free-form task on branch ${BRANCH}."
     echo "Attach: docker compose -p ${MUADDIB_PROJECT_NAME}-w${WORKER_INDEX} exec worker tmux attach -t ${SESSION}"
     tail -f /dev/null
