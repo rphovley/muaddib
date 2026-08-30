@@ -72,6 +72,18 @@ function emitEvent(job, event, payload = {}) {
   });
 }
 
+// __tests__ -> orchestrator -> muaddib's own root: always exactly 2 levels
+// up regardless of nesting (muaddib never nests itself). Passed straight
+// through as REPO_DIR to the spawned orchestrator.js process below — its
+// own resolveMuaddibRoot() is a no-op when already given the muaddib root
+// directly, so this works whether muaddib is nested under a consuming
+// project or is itself the repo (self-hosting). The old "3 levels up"
+// computation only worked for the nested case and silently broke self-
+// hosting: orchestrator.js's own EMIT_CLI/MUADDIB_ROOT pointed at a
+// nonexistent path, jobs it spawned could never signal readiness, and
+// testBootSequence hung at STARTING_SERVICES until its own 30s timeout.
+const MUADDIB_DIR = path.join(__dirname, '../..');
+
 const ORCH_ENV = {
   WORKER_INDEX:           String(WORKER),
   MOCK_JOBS:              '1',
@@ -79,7 +91,7 @@ const ORCH_ENV = {
   LINEAR_API_KEY:          '',
   AGENT_STATUS_DIR:        TMP_DIR,
   STATE_DIR:               TMP_DIR,
-  REPO_DIR:                path.join(__dirname, '../../..'),
+  REPO_DIR:                MUADDIB_DIR,
   WORKFLOW_FILE:           MOCK_WF_PATH,
 };
 
