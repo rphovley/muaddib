@@ -11,14 +11,14 @@ Called in a loop by `plan.json`'s `sketch-review-loop` step (see
 poll, interpret, report, done. The loop, not this skill, owns the "wait, then
 decide what happens next" looping.
 
-`$ARGUMENTS` is the Linear ticket identifier.
+`$ARGUMENTS` is the ticket identifier (source-neutral — Linear, GitHub, or raw).
 
 ## Step 0 — Print the review URL before blocking
 
 This step's window is the one the operator lands on — and the poll below
 blocks *silently*, so if we don't print the URL here it appears nowhere on
 screen (it only lives in the earlier `sketch` step's now-closed window, the
-Linear @mention, the macOS notify, and worker state). Echo the recorded
+ticket @mention, the macOS notify, and worker state). Echo the recorded
 `sketch_url` as a banner so it's always visible no matter when the operator
 attaches. This reprints every round since the orchestrator loops this skill.
 

@@ -47,6 +47,9 @@ TEST_SCRIPT='
     echo "=== orchestrator/test-token-tracker ==="
     node "$MUADDIB/orchestrator/__tests__/test-token-tracker.js"
 
+    echo "=== orchestrator/test-ticket-cli ==="
+    node "$MUADDIB/orchestrator/__tests__/test-ticket-cli.js"
+
     echo "=== scripts/test-read-config ==="
     bash "$MUADDIB/scripts/test-read-config.sh"
 

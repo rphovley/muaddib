@@ -158,13 +158,16 @@ The webhook job (`watch-feedback.sh`) polls `/tmp/pr-number-${WORKER}` and regis
 
 ## Step 7 — Post Linear comment
 
-Skip this step entirely if `$STATE_TICKET_URL` is empty — there's no real ticket to post back to (e.g. a free-form task). Otherwise, call `mcp__linear__save_comment` on the ticket from `$ARGUMENTS` with:
+Skip this step entirely if `$STATE_TICKET_URL` is empty — there's no real ticket to post back to (e.g. a free-form task). Otherwise, post to the ticket from `$ARGUMENTS` via the source-neutral ticket CLI (works for whatever `TICKET_SOURCE` the project uses — Linear, GitHub, or a no-op for raw):
 
-```
+```bash
+TICKET_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/ticket-cli.js"
+node "$TICKET_CLI" post-comment "$ARGUMENTS" <<EOF
 PR opened: <pr-url>
 Branch: $STATE_BRANCH
 Preview: ${STATE_PORTAL_URL:-(unavailable)} (Portal) · ${STATE_HOMEOWNER_URL:-(unavailable)} (Homeowner)
 Feedback: comment on the PR with /feedback — the agent is in feedback mode.
+EOF
 ```
 
 ## Step 8 — Signal done

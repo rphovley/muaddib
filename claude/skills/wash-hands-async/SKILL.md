@@ -24,14 +24,22 @@ List each viable approach with:
 
 **If no approach is clearly best:** do not stop. Instead:
 
-1. Read worker identity from env via Bash tool:
+1. Read worker identity from env via Bash tool (source-neutral handle, falling back to `LINEAR_USER_HANDLE` so existing Linear deployments keep working):
    ```bash
-   echo "WORKER_INDEX=${WORKER_INDEX:-} BRANCH=${BRANCH:-} LINEAR_USER_HANDLE=${LINEAR_USER_HANDLE:-}"
+   echo "WORKER_INDEX=${WORKER_INDEX:-} BRANCH=${BRANCH:-} HANDLE=${TICKET_USER_HANDLE:-${LINEAR_USER_HANDLE:-}}"
    ```
 2. Extract the ticket identifier from `$ARGUMENTS` (e.g. `QUO-274`).
-3. Post a comment to Linear via `mcp__linear__save_comment`:
+3. Post a comment via the source-neutral ticket CLI (correct for whatever `TICKET_SOURCE` the project uses — Linear, GitHub, or a no-op for raw). Build the `@mention` with the CLI, write the body to a temp file, then pipe it in on stdin:
+   ```bash
+   TICKET_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/ticket-cli.js"
+   MENTION="$(node "$TICKET_CLI" mention "${TICKET_USER_HANDLE:-${LINEAR_USER_HANDLE:-}}")"
+   # Compose the body below into this file, using "$MENTION —" as the first-line
+   # prefix when non-empty (omit it entirely when empty — do not crash).
+   node "$TICKET_CLI" post-comment "$ARGUMENTS" < "/tmp/washhands-comment-${WORKER_INDEX:-0}.md"
    ```
-   @<LINEAR_USER_HANDLE> — a fleet worker picked an approach but could not determine a clear winner:
+   Body format:
+   ```
+   <MENTION> — a fleet worker picked an approach but could not determine a clear winner:
 
    **Options considered:**
    - **Option A:** <approach> — <trade-offs>
@@ -44,7 +52,7 @@ List each viable approach with:
 
    Worker: w<WORKER_INDEX> | Branch: <BRANCH>
    ```
-   - If `LINEAR_USER_HANDLE` is unset, omit the `@<handle> —` prefix.
+   - If the handle is unset, `MENTION` is empty — omit the `<MENTION> —` prefix, don't crash.
    - Use `unknown` for `WORKER_INDEX` / `BRANCH` if either env var is empty.
 4. Write `WAITING_FOR_INPUT` state via Bash tool:
    ```bash

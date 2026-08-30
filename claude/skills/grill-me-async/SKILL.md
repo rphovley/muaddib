@@ -20,17 +20,17 @@ If you cannot identify any clarification worth asking (the ticket is already con
 Run via Bash tool:
 
 ```bash
-echo "WORKER_INDEX=${WORKER_INDEX:-} BRANCH=${BRANCH:-} LINEAR_USER_HANDLE=${LINEAR_USER_HANDLE:-}"
+echo "WORKER_INDEX=${WORKER_INDEX:-} BRANCH=${BRANCH:-} HANDLE=${TICKET_USER_HANDLE:-${LINEAR_USER_HANDLE:-}}"
 ```
 
-Capture `WORKER_INDEX`, `BRANCH`, and `LINEAR_USER_HANDLE`. Extract the ticket identifier from `$ARGUMENTS` (e.g. `QUO-274`).
+Capture `WORKER_INDEX`, `BRANCH`, and the escalation handle (source-neutral `TICKET_USER_HANDLE`, falling back to `LINEAR_USER_HANDLE` so existing Linear deployments keep working). Extract the ticket identifier from `$ARGUMENTS` (e.g. `QUO-274`).
 
 ## Step 3 — Build the comment
 
 Compose the comment body using this exact format:
 
 ```
-@<LINEAR_USER_HANDLE> — a fleet worker needs clarification before planning:
+<MENTION> — a fleet worker needs clarification before planning:
 
 **Q:** <question 1>
 **Options:** <option A> / <option B> / ...
@@ -43,8 +43,15 @@ Worker will continue with best available info. To re-run with your answers incor
 Worker: w<WORKER_INDEX> | Branch: <BRANCH>
 ```
 
+Build the `@<HANDLE> —` prefix with the source-neutral ticket CLI so the markup is correct for whatever `TICKET_SOURCE` the project uses:
+
+```bash
+TICKET_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/ticket-cli.js"
+MENTION="$(node "$TICKET_CLI" mention "${TICKET_USER_HANDLE:-${LINEAR_USER_HANDLE:-}}")"
+```
+
 Rules:
-- If `LINEAR_USER_HANDLE` is set: include the `@<handle> —` prefix on the first line. Do **not** crash if it is unset — omit the prefix and start directly with `a fleet worker needs clarification before planning:`.
+- If the handle is set: use the `${MENTION} —` prefix on the first line (`MENTION` is the CLI-built `@handle`). Do **not** crash if it is unset — `MENTION` is empty, so omit the prefix and start directly with `a fleet worker needs clarification before planning:`.
 - List 2–4 distinct options per question on the **Options** line, separated by ` / `.
 - `<ticket-id>` is the Linear identifier from `$ARGUMENTS` (e.g. `QUO-274`).
 - `<WORKER_INDEX>` and `<BRANCH>` come from env (Step 2). Use `unknown` if either is empty.
@@ -53,9 +60,15 @@ Rules:
 
 Run both actions:
 
-**Post to Linear** via `mcp__linear__save_comment`:
-- `issueId`: the ticket identifier from `$ARGUMENTS`
-- `body`: the comment composed in Step 3
+**Post the comment** via the source-neutral ticket CLI — write the Step 3 body to a temp file, then pipe it in on stdin (the id is the identifier from `$ARGUMENTS`):
+
+```bash
+TICKET_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/ticket-cli.js"
+# Write the Step 3 comment body to this file first (it's large, multi-line markdown).
+node "$TICKET_CLI" post-comment "$ARGUMENTS" < "/tmp/grill-comment-${WORKER_INDEX:-0}.md"
+```
+
+(For a `raw` source this is a clean no-op — nothing to post to — and exits 0.)
 
 **Write WAITING_FOR_INPUT state** via Bash tool:
 

@@ -13,11 +13,22 @@ Fleet implementation step for bug fixes. Never commits. Does not write a preview
 
 ## Step 1 — Load plan context
 
-Read `.muaddib/plan.md` in the repo root — this is the authoritative plan written by `analyze-ticket` / `ask-questions`. If that file does not exist, fall back to finding the `## Plan` comment via `mcp__linear__get_issue` on `$ARGUMENTS` (or its parent).
+Read `.muaddib/plan.md` in the repo root — this is the authoritative plan written by `analyze-ticket` / `ask-questions`; in the fleet flow it is written before this step, so it is normally present. If that file does not exist, re-hydrate it from the ticket's `## Plan` comment (own or parent) via the comment-aware fetch script, then read it:
+
+```bash
+node "${REPO_DIR:-/home/worker/repo}/muaddib/scripts/fetch-ticket.js"   # re-writes .muaddib/plan.md from the ## Plan comment; source-neutral, no-op on raw
+```
+
+If `.muaddib/plan.md` is still absent (no `## Plan` comment exists, or a raw ticket with no comment thread), fall back to the ticket itself and work from its description as context:
+
+```bash
+TICKET_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/ticket-cli.js"
+node "$TICKET_CLI" fetch "$ARGUMENTS"   # prints the ticket JSON (title, description, url, labels)
+```
 
 If `.muaddib/sketch/` contains an HTML prototype, a `sketch` step already ran in this container and the operator gave feedback on it — treat that prototype as the authoritative visual/structural reference for the UI, alongside the plan.
 
-More commonly, `sketch` ran during an earlier **planning** run (`plan.json`, a different worker/container), so nothing is on disk here. In that case look for a `## Sketch` comment via `mcp__linear__get_issue` on `$ARGUMENTS` (or its parent — same fallback as the plan). If found, extract the embedded HTML into `.muaddib/sketch/<name>.html` locally and treat it the same as a local prototype.
+More commonly, `sketch` ran during an earlier **planning** run (`plan.json`, a different worker/container), so nothing is on disk here. A `## Sketch` prototype from that run lives in a ticket comment, which `fetch` does not return; if no prototype is on disk under `.muaddib/sketch/`, proceed from the plan and ticket description without it.
 
 Read `CLAUDE.md` (root and per-project for the affected area). Read the files referenced in the plan.
 

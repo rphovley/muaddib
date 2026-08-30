@@ -31,8 +31,15 @@ that's fine, just say so in Step 3.
 ## Step 2 — Post `## Plan`
 
 Post the current (possibly revised) `.muaddib/plan.md` as a `## Plan`
-comment via `mcp__linear__save_comment` — same format `analyze-ticket` would
-have used had it posted directly.
+comment via the source-neutral ticket CLI — same format `analyze-ticket`
+would have used had it posted directly (works for whatever `TICKET_SOURCE`
+the project uses — Linear, GitHub, or a no-op for raw):
+
+```bash
+TICKET_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/ticket-cli.js"
+# .muaddib/plan.md already starts with its own "## Plan" heading; pipe via stdin.
+node "$TICKET_CLI" post-comment "$ARGUMENTS" < "${REPO_DIR:-/home/worker/repo}/.muaddib/plan.md"
+```
 
 ## Step 3 — Post `## Sketch`
 
@@ -57,6 +64,14 @@ just "prototyped the screen">
 \`\`\`
 
 </details>
+```
+
+Post it as a second comment via the same source-neutral ticket CLI — write
+the `## Sketch` body above to a temp file, then pipe it in on stdin:
+
+```bash
+TICKET_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/ticket-cli.js"
+node "$TICKET_CLI" post-comment "$ARGUMENTS" < "/tmp/sketch-comment-${WORKER_INDEX:-0}.md"
 ```
 
 Keep the exported artifact lean (avoid large embedded base64 images) — it

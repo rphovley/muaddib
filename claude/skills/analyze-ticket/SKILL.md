@@ -103,7 +103,16 @@ node "$STATE_CLI" "$WORKER" set needs_sketch "true"   # or "false"
 
 ## Step 5a — No questions needed: post plan (unless sketch is pending) and finish
 
-If `needs_questions=false` and `needs_sketch=false`: if `$STATE_TICKET_URL` is non-empty, post `.muaddib/plan.md` as a `## Plan` comment on the Linear ticket using `mcp__linear__save_comment`. If `$STATE_TICKET_URL` is empty (no real ticket — e.g. a free-form task), skip the comment entirely; the plan already lives in `.muaddib/plan.md`. Either way, then signal done.
+If `needs_questions=false` and `needs_sketch=false`: if `$STATE_TICKET_URL` is non-empty, post `.muaddib/plan.md` as a `## Plan` comment on the ticket via the source-neutral ticket CLI (works for whatever `TICKET_SOURCE` the project uses — Linear, GitHub, or a no-op for raw):
+
+```bash
+TICKET_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/ticket-cli.js"
+# .muaddib/plan.md already starts with its own "## Plan" heading (Step 3
+# template). Bodies are large multi-line markdown, so pipe via stdin, not argv.
+node "$TICKET_CLI" post-comment "$ARGUMENTS" < "${REPO_DIR:-/home/worker/repo}/.muaddib/plan.md"
+```
+
+If `$STATE_TICKET_URL` is empty (no real ticket — e.g. a free-form task), skip the comment entirely; the plan already lives in `.muaddib/plan.md`. Either way, then signal done.
 
 If `needs_questions=false` but `needs_sketch=true`, **do not post `## Plan` yet** — the plan isn't final until the operator has reviewed and approved the prototype. The `sketch` step posts the (possibly revised) `## Plan` itself once that happens. Just signal done here so the workflow moves on to `sketch`:
 
@@ -115,18 +124,24 @@ touch "$STEP_DONE_FILE"
 
 If `needs_questions=true`:
 
-**Post questions to Linear** using `mcp__linear__save_comment` — only if `$STATE_TICKET_URL` is non-empty. Mention the ticket assignee in the comment body so they receive a Linear notification. Format:
+**Post questions to the ticket** via the source-neutral ticket CLI — only if `$STATE_TICKET_URL` is non-empty. Mention the operator in the comment body so they receive a backend notification. Build the `@mention` markup with the CLI's `mention` subcommand (source-correct for Linear or GitHub) from a source-neutral handle, falling back to `LINEAR_USER_HANDLE`:
 
+```bash
+TICKET_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/ticket-cli.js"
+HANDLE="${TICKET_USER_HANDLE:-${LINEAR_USER_HANDLE:-}}"
+# Empty handle → empty MENTION; omit the "@<handle> —" prefix, don't crash.
+MENTION="$(node "$TICKET_CLI" mention "$HANDLE")"
+{
+  if [ -n "$MENTION" ]; then echo "Questions before implementing — ${MENTION}:"; else echo "Questions before implementing:"; fi
+  echo
+  echo "1. <question>"
+  echo "2. <question>"
+  echo
+  echo "(Reply in this TUI session — the worker is waiting.)"
+} | node "$TICKET_CLI" post-comment "$ARGUMENTS"
 ```
-Questions before implementing — @<assignee>:
 
-1. <question>
-2. <question>
-
-(Reply in this TUI session — the worker is waiting.)
-```
-
-Skip this call entirely if `$STATE_TICKET_URL` is empty (no real ticket, e.g. a free-form task) — there's no reporter or assignee to notify. Still fire the notify below and signal done either way.
+Skip this call entirely if `$STATE_TICKET_URL` is empty (no real ticket, e.g. a free-form task) — there's no one to notify. Still fire the notify below and signal done either way.
 
 **Fire macOS notify** via the event bus:
 

@@ -11,13 +11,20 @@ Fleet-safe variant of `/prepare-meal`. Programmatic — step order is fixed. The
 
 ## Step 1 — Load the ticket
 
-Call `mcp__linear__get_issue` with the ID from `$ARGUMENTS`. Capture:
-- `id`, `identifier`, `title`, `description`
-- `teamId` (needed for sub-ticket creation)
-- `state`, `labels`, `assignee`, `url`
-- `createdBy`, `createdById` (needed for @mention in grill-me-async)
+Fetch the ticket via the source-neutral ticket CLI (works for whatever `TICKET_SOURCE` the project uses — Linear or GitHub):
 
-If the ticket doesn't exist or you lack access, stop with a clear error.
+```bash
+TICKET_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/ticket-cli.js"
+node "$TICKET_CLI" fetch "$ARGUMENTS"   # prints the ticket JSON
+```
+
+Parse the printed JSON and capture:
+- `identifier`, `title`, `description`
+- `state`, `labels`, `url`
+
+If the CLI exits non-zero or prints `null` (ticket doesn't exist / no access), stop with a clear error.
+
+Sub-ticket creation (Step 4) no longer needs a `teamId` — `create-sub-issue` resolves the parent's team itself — and grill-me-async no longer needs `createdBy` (it @mentions the operator via `TICKET_USER_HANDLE`), so neither is captured here.
 
 ## Step 2 — Ambiguity heuristic → maybe `/grill-me-async`
 
@@ -35,7 +42,6 @@ Ticket ID: <identifier>
 Title: <title>
 Description: <full description>
 URL: <url>
-Created by: <createdBy> (id: <createdById>)
 ```
 
 `/grill-me-async` always returns an empty transcript (questions are posted to Linear, not collected interactively). Do not modify the ticket description based on its output.
@@ -67,12 +73,14 @@ Trigger sub-ticket creation if **any** of these are true:
 4. Total phases ≥ 5.
 
 **If triggered:**
-- For each work stream, call `mcp__linear__save_issue` with:
-  - `teamId`: from Step 1
-  - `parentId`: original ticket ID
-  - `title`: `<original title> — <work stream name>`
-  - `description`: the relevant portion of the plan (work-stream details + acceptance criteria)
-- Tickets to return = list of newly created sub-ticket IDs.
+- For each work stream, create a sub-ticket via the source-neutral ticket CLI. The parent id is the original ticket identifier; the title is an argument; the description (the relevant portion of the plan — work-stream details + acceptance criteria) is piped in on stdin:
+  ```bash
+  TICKET_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/ticket-cli.js"
+  # Write the work-stream description to /tmp/substream-<n>.md first, then:
+  node "$TICKET_CLI" create-sub-issue "<parent-identifier>" "<original title> — <work stream name>" \
+      < "/tmp/substream-<n>.md"   # prints the child ticket JSON (identifier, url)
+  ```
+- Parse each printed child JSON for its `identifier`. Tickets to return = list of newly created sub-ticket identifiers.
 
 **If not triggered:**
 - Tickets to return = `[<original ticket ID>]`.
@@ -81,7 +89,14 @@ Trigger sub-ticket creation if **any** of these are true:
 
 ## Step 5 — Post plan as comment on parent
 
-Post a single comment on the *original* (parent) ticket via `mcp__linear__save_comment`:
+Post a single comment on the *original* (parent) ticket via the source-neutral ticket CLI — write the body below to a temp file, then pipe it in on stdin:
+
+```bash
+TICKET_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/ticket-cli.js"
+node "$TICKET_CLI" post-comment "<parent-identifier>" < "/tmp/feast-plan-${WORKER_INDEX:-0}.md"
+```
+
+Body:
 
 ```
 ## Plan

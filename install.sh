@@ -229,6 +229,25 @@ else
     info "Linear → Settings → Account → Profile → Display name"
 fi
 
+# --- TICKET_USER_HANDLE (source-neutral @mention handle) ---
+# The skills read TICKET_USER_HANDLE first, falling back to LINEAR_USER_HANDLE,
+# so a GitHub- (or Linear-) backed project uses one name for the escalation
+# @mention regardless of backend. Seed it from whatever handle we resolved
+# (Linear viewer, or the LINEAR_USER_HANDLE already on file) so a fresh install
+# populates the neutral name; leave an existing value untouched.
+
+CURRENT_TICKET_HANDLE=$(env_get TICKET_USER_HANDLE)
+RESOLVED_HANDLE="${VIEWER_HANDLE:-$(env_get LINEAR_USER_HANDLE)}"
+if ! is_placeholder "$CURRENT_TICKET_HANDLE"; then
+    ok "TICKET_USER_HANDLE is set (${CURRENT_TICKET_HANDLE})"
+elif [ -n "$RESOLVED_HANDLE" ] && ! is_placeholder "$RESOLVED_HANDLE"; then
+    env_set TICKET_USER_HANDLE "$RESOLVED_HANDLE"
+    ok "TICKET_USER_HANDLE set to \"${RESOLVED_HANDLE}\""
+else
+    note "TICKET_USER_HANDLE not set"
+    info "Set to the handle to @mention on escalation comments (GitHub login or Linear display name)."
+fi
+
 # --- DISPATCH_ASSIGNEE_ID ---
 
 CURRENT_ASSIGNEE=$(env_get DISPATCH_ASSIGNEE_ID)
