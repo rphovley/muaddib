@@ -1,6 +1,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const fileLock = require('./file-lock');
 
 function stateDir() {
   return process.env.STATE_DIR || '/tmp';
@@ -14,36 +15,8 @@ function lockPath(worker) {
   return `${statePath(worker)}.lock`;
 }
 
-// O_EXCL spinlock — atomic across processes on the same filesystem.
-// Uses Atomics.wait for a synchronous sleep between retries (Node.js main
-// thread allows this; no browser restriction applies here).
-const LOCK_TIMEOUT_MS = 5000;
-const _sleepBuf = new Int32Array(new SharedArrayBuffer(4));
-
-function sleepSync(ms) {
-  Atomics.wait(_sleepBuf, 0, 0, ms);
-}
-
 function withLock(worker, fn) {
-  const lock = lockPath(worker);
-  fs.mkdirSync(path.dirname(lock), { recursive: true });
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
-  while (true) {
-    try {
-      const fd = fs.openSync(lock, 'wx'); // O_WRONLY|O_CREAT|O_EXCL — atomic
-      fs.closeSync(fd);
-      break;
-    } catch (err) {
-      if (err.code !== 'EEXIST') throw err;
-      if (Date.now() >= deadline) throw new Error(`state lock timeout (worker ${worker})`);
-      sleepSync(5);
-    }
-  }
-  try {
-    return fn();
-  } finally {
-    try { fs.unlinkSync(lock); } catch (_) {}
-  }
+  return fileLock.withLock(lockPath(worker), `state lock timeout (worker ${worker})`, fn);
 }
 
 function read(worker) {

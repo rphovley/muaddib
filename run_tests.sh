@@ -41,6 +41,9 @@ TEST_SCRIPT='
     echo "=== orchestrator/test-state ==="
     node "$MUADDIB/orchestrator/__tests__/test-state.js"
 
+    echo "=== orchestrator/test-decision-log ==="
+    node "$MUADDIB/orchestrator/__tests__/test-decision-log.js"
+
     echo "=== orchestrator/test-token-tracker ==="
     node "$MUADDIB/orchestrator/__tests__/test-token-tracker.js"
 

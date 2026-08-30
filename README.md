@@ -34,6 +34,7 @@ project-specific — all customisation lives here.
 |------|---------|
 | `.muaddib/manifest.json` | The project registry — dev/check/lint/test scripts, ports, seed command, default model, `workerPorts`, etc. Every config-reading script/service in this repo reads this file; no fallback if it's missing. |
 | `.muaddib/goals.md` | Goal Context — durable, cross-ticket fleet policy. Committed, not gitignored. Bootstrapped with a default template on first read if missing. See "Goal Context" below. |
+| `.muaddib/decisions.jsonl` | Decision Log — append-only, ticket-scoped audit trail of Conductor Handoff Records, one JSON object per line. Committed, not gitignored. See "Decision Log" below. |
 | `.muaddib/secrets.env.example` | Committed template for the secrets bundle (gitignored: `.muaddib/secrets.env`) |
 | `.muaddib/secrets.env` | Your filled-in secrets (gitignored). Copy from `secrets.env.example`. |
 | `.muaddib/hooks/on-worker-start.sh` | Project hook run by the worker entrypoint after env is loaded. Executable; receives the full worker env. |
@@ -134,6 +135,47 @@ never overwritten.
 Nothing consumes Goal Context yet — reading and weighing it is the
 Conductor's job, in a later milestone. This is just the file convention and
 the reader/bootstrapper.
+
+## Decision Log (`.muaddib/decisions.jsonl`)
+
+`.muaddib/decisions.jsonl` is a durable, citable audit trail of Conductor
+Handoff Records — what was decided or escalated, and the context that
+justified it. It's distinct from any system of record (Linear/GitHub): those
+track tickets, not the reasoning behind fleet decisions made along the way.
+
+Storage is append-only JSONL, one Handoff Record per line, so a lookup by ID
+never has to parse more than the matching line. `orchestrator/decision-log.js`'s
+`appendDecision(repoDir, scope, fields)` computes and appends a record;
+`readEntries(repoDir)` reads them all back. `fields` is whatever a caller
+wants to log — `id`, `scope`, and `timestamp` are always computed by the
+module itself, never taken from `fields`, so they can't drift from the log's
+actual state.
+
+IDs are `ADR-{seq}-{scope}`, where `scope` is a ticket id (`ADR-3-QUO-281`)
+or `FLEET` when a decision isn't scoped to one ticket (`ADR-1-FLEET`) —
+ticket-scoped and human-readable, borrowing uniqueness that already exists
+(Linear ticket numbers) instead of manufacturing new uniqueness. `seq` is
+monotonic per scope (the highest existing seq already logged for that scope,
+plus one), computed under an O_EXCL file lock (`orchestrator/file-lock.js`,
+shared with `orchestrator/state.js`'s `withLock` so the two can't diverge on
+retry/timeout behavior) so concurrent appends to the same file can't race on
+the same seq number. The lock file (`.muaddib/decisions.jsonl.lock`) only
+exists for the duration of one append and is gitignored — if a worker is
+killed mid-append, delete it by hand before appending again.
+
+Ordering is deliberately *not* encoded in the ID. Each worker appends to its
+own git checkout, on its own branch — two tickets' entries have no reason to
+interleave numerically, and forcing them to would mean a global counter
+shared across every worker on the fleet. A separate `timestamp` field carries
+chronology instead, so entries merge across branches the same way any other
+git-committed content does, without needing coordination between workers that
+never saw each other's commits.
+
+It's committed (not gitignored), like `.muaddib/manifest.json` and
+`.muaddib/goals.md` — an audit trail only stays citable if it persists with
+the code. Nothing writes real Handoff Records yet — this is just the storage
+mechanism and ID generator; deciding *what* goes in one is the Conductor's
+job, in a later milestone.
 
 ## Prerequisites (one-time)
 
