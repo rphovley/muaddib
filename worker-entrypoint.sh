@@ -33,7 +33,16 @@ git checkout -f -B "$BRANCH" FETCH_HEAD
 # Rewrite SSH submodule URLs to HTTPS so the GitHub token works (no SSH key in container).
 git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
 git submodule update --init --recursive --force
-source "$WORKDIR/muaddib/bin/read-config.sh"
+
+# Consuming projects have muaddib checked out as a nested submodule
+# (WORKDIR/muaddib); muaddib building itself has no such nesting — the
+# clone IS muaddib, so its own bin/ sits directly at WORKDIR.
+if [ -d "$WORKDIR/muaddib" ]; then
+    MUADDIB_ROOT="$WORKDIR/muaddib"
+else
+    MUADDIB_ROOT="$WORKDIR"
+fi
+source "$MUADDIB_ROOT/bin/read-config.sh"
 
 # Refresh deps ONLY for projects whose lockfile drifted from the baked one
 # (the common case is no drift → zero work).
@@ -87,7 +96,7 @@ if [ -n "${TASK:-}" ]; then
     export REPO_DIR="$WORKDIR"
     echo "Worker ${WORKER_INDEX} starting orchestrator on branch ${BRANCH}."
     echo "Attach: docker compose -p ${MUADDIB_PROJECT_NAME}-w${WORKER_INDEX} exec worker tmux attach -t ${SESSION}"
-    exec node "$WORKDIR/muaddib/orchestrator/orchestrator.js"
+    exec node "$MUADDIB_ROOT/orchestrator/orchestrator.js"
 else
     # Interactive mode: drop to bash after Claude exits, keep container alive.
     note "READY"

@@ -13,7 +13,17 @@ set -uo pipefail
 : "${WORKER_INDEX:?WORKER_INDEX not set}"
 
 REPO="${REPO_DIR:-/home/worker/repo}"
-STATE_CLI="$REPO/muaddib/orchestrator/state-cli.js"
+
+# Consuming projects have muaddib checked out as a nested submodule
+# (REPO/muaddib); muaddib building itself has no such nesting — the
+# clone IS muaddib, so its own orchestrator/ sits directly at REPO.
+if [ -d "$REPO/muaddib" ]; then
+  MUADDIB_ROOT="$REPO/muaddib"
+else
+  MUADDIB_ROOT="$REPO"
+fi
+
+STATE_CLI="$MUADDIB_ROOT/orchestrator/state-cli.js"
 CONFIG="$REPO/.muaddib/manifest.json"
 
 log() { echo "[run-checks w${WORKER_INDEX}] $*"; }
@@ -69,11 +79,19 @@ while IFS= read -r project; do
     LINT_SCRIPT=$(printf '%s' "$project" | jq -r '.lintScript // empty')
     TEST_SCRIPT=$(printf '%s' "$project" | jq -r '.testScript // empty')
 
-    echo "$CHANGED" | grep -q "^${PROJ_PATH}/" || continue
+    # "." means the project root itself — every change is "under" it, so
+    # skip the prefix match (git diff output never has a "./" prefix, so
+    # the literal match below would otherwise never fire for it).
+    if [ "$PROJ_PATH" != "." ]; then
+        echo "$CHANGED" | grep -q "^${PROJ_PATH}/" || continue
+    fi
+
+    CHECK_CMD=$(printf '%s' "$project" | jq -r '.checkCommand // empty')
 
     log "${NAME}: running checks..."
     ok=1
     [ -n "$CHECK_SCRIPT" ] && { capture "${NAME}:check" npm run "$CHECK_SCRIPT" || ok=0; }
+    [ -n "$CHECK_CMD"    ] && { capture "${NAME}:check" bash -c "$CHECK_CMD"    || ok=0; }
     [ -n "$LINT_SCRIPT"  ] && { capture "${NAME}:lint"  npm run "$LINT_SCRIPT"  || ok=0; }
     [ -n "$TEST_SCRIPT"  ] && { capture "${NAME}:test"  npm run "$TEST_SCRIPT"  || ok=0; }
     [ "$ok" -eq 1 ] && log "${NAME}: PASS" || { log "${NAME}: FAIL"; FAILED=1; }

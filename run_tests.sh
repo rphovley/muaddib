@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Run all muaddib test suites that don't require a live worker container.
-# Runs inside Docker so tmux, Node, and all runtime deps are available.
+#
+# When already running inside a muaddib worker container (WORKER_INDEX is
+# set — e.g. muaddib self-hosting its own checkScript), runs the suites
+# directly: tmux/Node/deps are already the right versions, so wrapping in
+# another `docker run` would need docker-in-docker for no benefit.
+# Otherwise wraps them in `docker run` against the worker image, so a bare
+# host without tmux/the right Node version still gets a matching environment.
 #
 # Usage: ./muaddib/run_tests.sh
 #
@@ -13,65 +19,74 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/bin/read-config.sh"
 
-WORKER_IMAGE="${MUADDIB_PROJECT_NAME}-worker:latest"
+# Single source of truth for the suite list — executed either directly
+# (self-hosted) or inside `docker run -c` (host). $MUADDIB is the only free
+# variable, set by each branch below to wherever muaddib's own root actually is.
+TEST_SCRIPT='
+    set -e
 
-if ! docker image inspect "$WORKER_IMAGE" >/dev/null 2>&1; then
-    echo "→ Building worker image…"
-    docker build -f "$REPO_ROOT/muaddib/Dockerfile.worker" -t "$WORKER_IMAGE" "$REPO_ROOT"
+    echo "=== orchestrator/test-event-bus ==="
+    node "$MUADDIB/orchestrator/__tests__/test-event-bus.js"
+
+    echo "=== orchestrator/test-job ==="
+    node "$MUADDIB/orchestrator/__tests__/test-job.js"
+
+    echo "=== orchestrator/test-orchestrator ==="
+    node "$MUADDIB/orchestrator/__tests__/test-orchestrator.js"
+
+    echo "=== orchestrator/test-runner ==="
+    node "$MUADDIB/orchestrator/__tests__/test-runner.js"
+
+    echo "=== orchestrator/test-state ==="
+    node "$MUADDIB/orchestrator/__tests__/test-state.js"
+
+    echo "=== orchestrator/test-token-tracker ==="
+    node "$MUADDIB/orchestrator/__tests__/test-token-tracker.js"
+
+    echo "=== scripts/test-run-checks ==="
+    bash "$MUADDIB/scripts/test-run-checks.sh"
+
+    echo "=== scripts/test-fetch-ticket ==="
+    node "$MUADDIB/scripts/test-fetch-ticket.js"
+
+    echo "=== services/test-linear-webhook ==="
+    node "$MUADDIB/services/__tests__/test-linear-webhook.js"
+
+    echo "=== services/test-dispatch-queue ==="
+    node "$MUADDIB/services/__tests__/test-dispatch-queue.js"
+
+    echo "=== services/test-dispatch-daemon ==="
+    node "$MUADDIB/services/__tests__/test-dispatch-daemon.js"
+
+    echo "=== services/test-start-servers-config ==="
+    node "$MUADDIB/services/__tests__/test-start-servers-config.js"
+
+    echo "=== services/test-muaddib-config ==="
+    node "$MUADDIB/services/__tests__/test-muaddib-config.js"
+
+    echo "=== services/test-goals ==="
+    node "$MUADDIB/services/__tests__/test-goals.js"
+
+    echo ""
+    echo "All test suites passed."
+'
+
+if [ -n "${WORKER_INDEX:-}" ]; then
+    echo "→ Inside a worker container — running tests directly…"
+    MUADDIB="$SCRIPT_DIR" bash -c "$TEST_SCRIPT"
+else
+    WORKER_IMAGE="${MUADDIB_PROJECT_NAME}-worker:latest"
+
+    if ! docker image inspect "$WORKER_IMAGE" >/dev/null 2>&1; then
+        echo "→ Building worker image…"
+        docker build -f "$REPO_ROOT/muaddib/Dockerfile.worker" -t "$WORKER_IMAGE" "$REPO_ROOT"
+    fi
+
+    echo "→ Running tests in container…"
+    docker run --rm \
+        --entrypoint bash \
+        -v "$REPO_ROOT:/home/worker/repo" \
+        -e MUADDIB=/home/worker/repo/muaddib \
+        "$WORKER_IMAGE" \
+        -c "$TEST_SCRIPT"
 fi
-
-echo "→ Running tests in container…"
-docker run --rm \
-    --entrypoint bash \
-    -v "$REPO_ROOT:/home/worker/repo" \
-    -e REPO_DIR=/home/worker/repo \
-    "$WORKER_IMAGE" \
-    -c "
-        set -e
-        REPO=/home/worker/repo
-
-        echo '=== orchestrator/test-event-bus ==='
-        node \$REPO/muaddib/orchestrator/__tests__/test-event-bus.js
-
-        echo '=== orchestrator/test-job ==='
-        node \$REPO/muaddib/orchestrator/__tests__/test-job.js
-
-        echo '=== orchestrator/test-orchestrator ==='
-        node \$REPO/muaddib/orchestrator/__tests__/test-orchestrator.js
-
-        echo '=== orchestrator/test-runner ==='
-        node \$REPO/muaddib/orchestrator/__tests__/test-runner.js
-
-        echo '=== orchestrator/test-state ==='
-        node \$REPO/muaddib/orchestrator/__tests__/test-state.js
-
-        echo '=== orchestrator/test-token-tracker ==='
-        node \$REPO/muaddib/orchestrator/__tests__/test-token-tracker.js
-
-        echo '=== scripts/test-run-checks ==='
-        bash \$REPO/muaddib/scripts/test-run-checks.sh
-
-        echo '=== scripts/test-fetch-ticket ==='
-        node \$REPO/muaddib/scripts/test-fetch-ticket.js
-
-        echo '=== services/test-linear-webhook ==='
-        node \$REPO/muaddib/services/__tests__/test-linear-webhook.js
-
-        echo '=== services/test-dispatch-queue ==='
-        node \$REPO/muaddib/services/__tests__/test-dispatch-queue.js
-
-        echo '=== services/test-dispatch-daemon ==='
-        node \$REPO/muaddib/services/__tests__/test-dispatch-daemon.js
-
-        echo '=== services/test-start-servers-config ==='
-        node \$REPO/muaddib/services/__tests__/test-start-servers-config.js
-
-        echo '=== services/test-muaddib-config ==='
-        node \$REPO/muaddib/services/__tests__/test-muaddib-config.js
-
-        echo '=== services/test-goals ==='
-        node \$REPO/muaddib/services/__tests__/test-goals.js
-
-        echo ''
-        echo 'All test suites passed.'
-    "
