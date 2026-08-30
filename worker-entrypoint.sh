@@ -88,7 +88,26 @@ fi
 
 SESSION="w${WORKER_INDEX}"
 
-if [ -n "${TASK:-}" ]; then
+if [ -n "${TASK:-}" ] && [ "${TASK#/muaddib-task}" != "$TASK" ]; then
+    # Free-form tasks are fully self-contained — the skill manages its own
+    # state transitions (BLOCKED/FEEDBACK) directly, including its own
+    # feedback-watcher launch, and was never designed to run through the
+    # ticket-shaped orchestrator state machine, which requires a Linear
+    # ticket ID it doesn't have. Run claude directly instead.
+    note "RUNNING"
+    PERM="${CLAUDE_PERMISSION_MODE:-bypassPermissions}"
+    if [ "$PERM" = "bypassPermissions" ]; then
+        PERM_FLAG="--dangerously-skip-permissions"
+    else
+        PERM_FLAG="--permission-mode $PERM"
+    fi
+    TASK_Q=$(printf '%q' "$TASK")
+    tmux new-session -d -s "$SESSION" \
+        "claude $PERM_FLAG $TASK_Q; exec bash"
+    echo "Worker ${WORKER_INDEX} running free-form task on branch ${BRANCH}."
+    echo "Attach: docker compose -p ${MUADDIB_PROJECT_NAME}-w${WORKER_INDEX} exec worker tmux attach -t ${SESSION}"
+    tail -f /dev/null
+elif [ -n "${TASK:-}" ]; then
     # Task mode: hand off to the orchestrator. Create a bare tmux session for
     # job windows, then exec the orchestrator as the container's main process.
     # The orchestrator owns the state machine (BOOTING → READY → … → DONE).
