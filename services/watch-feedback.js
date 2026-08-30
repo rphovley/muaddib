@@ -367,7 +367,7 @@ async function main() {
   // 3. Wait for PR number
   log(`waiting for PR number at ${PR_NUMBER_FILE}...`);
   const prNumber = await waitForPrNumber();
-  log(`PR #${prNumber} — restarting receiver with PR_NUMBER`);
+  log(`PR #${prNumber} — https://github.com/${REPO}/pull/${prNumber} — restarting receiver with PR_NUMBER`);
 
   // 4. Restart receiver with PR number
   startReceiver(prNumber);
@@ -401,7 +401,7 @@ async function main() {
       lastMergeCheck = now;
       const state = await getPrState(prNumber);
       if (state === 'MERGED' || state === 'CLOSED') {
-        log(`PR #${prNumber} is ${state} — emitting merged`);
+        log(`PR #${prNumber} (https://github.com/${REPO}/pull/${prNumber}) is ${state} — emitting merged`);
         emitEvent('webhook', 'merged', { state });
         clearInterval(loopHandle);
         // Give the emit a moment to write before exiting.
