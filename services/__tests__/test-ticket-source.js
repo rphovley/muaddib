@@ -71,16 +71,21 @@ async function testExplicitGithub() {
 
 // ─── GitHub backend (read path) ──────────────────────────────────────────────────
 
-// A fake REST client: records each requested path and returns a scripted
-// response. `respond` maps a substring of the path to the payload (or a
-// function of the path).
+// A fake REST client: records each requested path (plus method/body for the
+// write path) and returns a scripted response. `respond` maps a substring of the
+// path to the payload (or a function of the { path, opts } call). A scripted
+// value that is an `Error` (or a function returning one) is thrown, so tests can
+// exercise the reject branches.
 function fakeApi(respond) {
   const calls = [];
-  const api = async (path) => {
-    calls.push({ path });
+  const api = async (path, opts = {}) => {
+    const call = { path, method: opts.method || 'GET', body: opts.body };
+    calls.push(call);
     for (const [needle, data] of Object.entries(respond)) {
       if (path.includes(needle)) {
-        return typeof data === 'function' ? data(path) : data;
+        const value = typeof data === 'function' ? data(call) : data;
+        if (value instanceof Error) throw value;
+        return value;
       }
     }
     throw new Error(`fakeApi: no scripted response for path: ${path}`);
@@ -108,7 +113,11 @@ async function testGithubFetchTicketMapsFields() {
   const api = fakeApi({ '/issues/34': githubIssueFixture() });
   const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
   const result = await src.fetchTicket('34');
-  assert.deepStrictEqual(api.calls[0], { path: '/repos/rphovley/muaddib/issues/34' });
+  assert.deepStrictEqual(api.calls[0], {
+    path: '/repos/rphovley/muaddib/issues/34',
+    method: 'GET',
+    body: undefined,
+  });
   assert.deepStrictEqual(result, {
     id: 'I_kwDO_abc123',
     identifier: 'muaddib#34',
@@ -126,7 +135,11 @@ async function testGithubFetchTicketStripsLeadingHash() {
   const api = fakeApi({ '/issues/34': githubIssueFixture() });
   const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
   await src.fetchTicket('#34');
-  assert.deepStrictEqual(api.calls[0], { path: '/repos/rphovley/muaddib/issues/34' });
+  assert.deepStrictEqual(api.calls[0], {
+    path: '/repos/rphovley/muaddib/issues/34',
+    method: 'GET',
+    body: undefined,
+  });
 }
 
 async function testGithubFetchTicketNullWhenMissing() {
@@ -163,18 +176,131 @@ async function testGithubRequiresOwnerRepo() {
   }
 }
 
-async function testGithubWriteMethodsNotImplemented() {
+async function testGithubWatchMethodsNotImplemented() {
   const src = createGithubSource({ api: fakeApi({}), owner: 'o', repo: 'r' });
   assert.throws(() => src.graphql(), /not implemented in the read-only GitHub backend/);
   // verifySignature stays a non-throwing false (like raw.js) so a stray webhook
   // POST is cleanly rejected at the gate instead of crashing the handler.
   assert.strictEqual(src.verifySignature(), false);
-  await assert.rejects(() => src.postComment(), /not implemented in the read-only GitHub backend/);
-  await assert.rejects(() => src.createSubIssue(), /not implemented in the read-only GitHub backend/);
   await assert.rejects(() => src.registerWatch(), /not implemented in the read-only GitHub backend/);
   await assert.rejects(() => src.deregisterWatch(), /not implemented in the read-only GitHub backend/);
-  // mentionUser stays a working pure helper across backends.
-  assert.strictEqual(src.mentionUser('@paul'), '@paul');
+}
+
+// ─── GitHub backend (write path) ─────────────────────────────────────────────────
+
+async function testGithubPostCommentBuildsPost() {
+  const api = fakeApi({ '/issues/34/comments': { id: 987 } });
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  const res = await src.postComment('34', 'hello world');
+  assert.deepStrictEqual(res, { commentId: 987 });
+  assert.deepStrictEqual(api.calls[0], {
+    path: '/repos/rphovley/muaddib/issues/34/comments',
+    method: 'POST',
+    body: { body: 'hello world' },
+  });
+}
+
+async function testGithubPostCommentToleratesRepoHashPrefix() {
+  const api = fakeApi({ '/issues/34/comments': { id: 1 } });
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  await src.postComment('muaddib#34', 'x');
+  assert.strictEqual(api.calls[0].path, '/repos/rphovley/muaddib/issues/34/comments');
+}
+
+async function testGithubPostCommentThrowsOnFailure() {
+  const api = fakeApi({ '/issues/34/comments': {} }); // no id in the response
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  await assert.rejects(() => src.postComment('34', 'x'), /postComment failed/);
+}
+
+async function testGithubMentionUser() {
+  const src = createGithubSource({ api: fakeApi({}), owner: 'o', repo: 'r' });
+  assert.strictEqual(src.mentionUser('paul'), '@paul');
+  assert.strictEqual(src.mentionUser('@paul'), '@paul'); // normalizes existing @
+  assert.strictEqual(src.mentionUser('  paul  '), '@paul');
+  assert.strictEqual(src.mentionUser(''), '');
+  assert.strictEqual(src.mentionUser(null), '');
+}
+
+// The created-child payload the comments/issues endpoints return.
+function githubChildFixture() {
+  return {
+    id: 555, // numeric db id — the existence check and native-link id
+    node_id: 'I_kwDO_child',
+    number: 51,
+    title: 'Child issue',
+    body: 'Part of #34\n\nchild body',
+    html_url: 'https://github.com/rphovley/muaddib/issues/51',
+    state: 'open',
+    labels: [],
+    assignee: null,
+    user: { login: 'octocat' },
+  };
+}
+
+async function testGithubCreateSubIssueCreatesChildAndLinks() {
+  const api = fakeApi({
+    // includes() matching is by insertion order: the sub_issues path also
+    // contains '/issues', so its more-specific needle must come first.
+    '/issues/34/sub_issues': { id: 1 }, // native link succeeds
+    '/repos/rphovley/muaddib/issues': githubChildFixture(),
+  });
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  const child = await src.createSubIssue('34', 'Child issue', 'child body');
+
+  // Returns the normalized child (fetchTicket's shape).
+  assert.deepStrictEqual(child, {
+    id: 'I_kwDO_child',
+    identifier: 'muaddib#51',
+    title: 'Child issue',
+    description: 'Part of #34\n\nchild body',
+    url: 'https://github.com/rphovley/muaddib/issues/51',
+    labels: { nodes: [] },
+    state: { name: 'open' },
+    assignee: null,
+    createdBy: 'octocat',
+  });
+
+  // 1st call creates the child with the `Part of #34` back-reference.
+  assert.deepStrictEqual(api.calls[0], {
+    path: '/repos/rphovley/muaddib/issues',
+    method: 'POST',
+    body: { title: 'Child issue', body: 'Part of #34\n\nchild body' },
+  });
+  // 2nd call attempts the native sub-issue link with the child's numeric id.
+  assert.deepStrictEqual(api.calls[1], {
+    path: '/repos/rphovley/muaddib/issues/34/sub_issues',
+    method: 'POST',
+    body: { sub_issue_id: 555 },
+  });
+}
+
+async function testGithubCreateSubIssueOmitsDescriptionWhenBlank() {
+  const api = fakeApi({
+    '/issues/34/sub_issues': { id: 1 },
+    '/repos/rphovley/muaddib/issues': githubChildFixture(),
+  });
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  await src.createSubIssue('34', 'Child issue', '');
+  assert.deepStrictEqual(api.calls[0].body, { title: 'Child issue', body: 'Part of #34' });
+}
+
+async function testGithubCreateSubIssueSucceedsWhenNativeLinkFails() {
+  const api = fakeApi({
+    '/issues/34/sub_issues': new Error('sub-issues feature unavailable'),
+    '/repos/rphovley/muaddib/issues': githubChildFixture(),
+  });
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  // The native-link rejection is swallowed; the call still returns the child.
+  const child = await src.createSubIssue('34', 'Child issue', 'child body');
+  assert.strictEqual(child.identifier, 'muaddib#51');
+  assert.strictEqual(api.calls[1].path, '/repos/rphovley/muaddib/issues/34/sub_issues');
+}
+
+async function testGithubCreateSubIssueThrowsWhenChildNotCreated() {
+  const api = fakeApi({ '/repos/rphovley/muaddib/issues': {} }); // no id
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  await assert.rejects(() => src.createSubIssue('34', 't', 'd'), /createSubIssue failed/);
 }
 
 // ─── fetchTicket ────────────────────────────────────────────────────────────────
@@ -317,7 +443,15 @@ async function main() {
     ['github: fetchTicket null when issue missing (404)', testGithubFetchTicketNullWhenMissing],
     ['github: fetchTicket normalizes empty body/labels/state', testGithubFetchTicketNormalizesEmptyBodyAndLabels],
     ['github: fetchTicket requires GITHUB_OWNER/GITHUB_REPO', testGithubRequiresOwnerRepo],
-    ['github: write/watch methods are not implemented', testGithubWriteMethodsNotImplemented],
+    ['github: watch methods are not implemented', testGithubWatchMethodsNotImplemented],
+    ['github: postComment builds the POST comment request', testGithubPostCommentBuildsPost],
+    ['github: postComment tolerates a repo# prefix', testGithubPostCommentToleratesRepoHashPrefix],
+    ['github: postComment throws when response has no id', testGithubPostCommentThrowsOnFailure],
+    ['github: mentionUser normalizes handle to @handle', testGithubMentionUser],
+    ['github: createSubIssue creates child + native link', testGithubCreateSubIssueCreatesChildAndLinks],
+    ['github: createSubIssue omits blank description', testGithubCreateSubIssueOmitsDescriptionWhenBlank],
+    ['github: createSubIssue tolerates native-link failure', testGithubCreateSubIssueSucceedsWhenNativeLinkFails],
+    ['github: createSubIssue throws when child not created', testGithubCreateSubIssueThrowsWhenChildNotCreated],
     ['fetchTicket: returns the issue with id var', testFetchTicketReturnsIssue],
     ['fetchTicket: null when issue missing', testFetchTicketNullWhenMissing],
     ['postComment: builds commentCreate mutation', testPostCommentBuildsMutation],
