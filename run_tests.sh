@@ -18,6 +18,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$SCRIPT_DIR/bin/read-config.sh"
+source "$SCRIPT_DIR/bin/image-needs-rebuild.sh"
 
 # Single source of truth for the suite list — executed either directly
 # (self-hosted) or inside `docker run -c` (host). $MUADDIB is the only free
@@ -76,10 +77,16 @@ if [ -n "${WORKER_INDEX:-}" ]; then
     MUADDIB="$SCRIPT_DIR" bash -c "$TEST_SCRIPT"
 else
     WORKER_IMAGE="${MUADDIB_PROJECT_NAME}-worker:latest"
+    WORKER_DOCKERFILE="$(muaddib_worker_dockerfile "$SCRIPT_DIR" "$REPO_ROOT")"
+    MUADDIB_DOCKER_PREFIX="$(muaddib_docker_prefix "$REPO_ROOT")"
+    MUADDIB_BUILD_HASH="$(muaddib_image_build_hash "$SCRIPT_DIR" "$WORKER_DOCKERFILE")"
 
-    if ! docker image inspect "$WORKER_IMAGE" >/dev/null 2>&1; then
-        echo "→ Building worker image…"
-        docker build -f "$REPO_ROOT/muaddib/Dockerfile.worker" -t "$WORKER_IMAGE" "$REPO_ROOT"
+    if muaddib_image_needs_rebuild "$WORKER_IMAGE" "$MUADDIB_BUILD_HASH"; then
+        echo "→ Building worker image (missing or stale)…"
+        docker build -f "$SCRIPT_DIR/Dockerfile.base" -t muaddib-base:latest "$REPO_ROOT"
+        docker build --build-arg "MUADDIB_PREFIX=$MUADDIB_DOCKER_PREFIX" \
+            --label "muaddib.build-hash=$MUADDIB_BUILD_HASH" \
+            -f "$WORKER_DOCKERFILE" -t "$WORKER_IMAGE" "$REPO_ROOT"
     fi
 
     echo "→ Running tests in container…"

@@ -11,6 +11,7 @@ set -euo pipefail
 BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
 FLEET_DIR="$(cd "$BIN_DIR/.." && pwd)"
 source "$FLEET_DIR/bin/read-config.sh"
+source "$FLEET_DIR/bin/image-needs-rebuild.sh"
 cd "$FLEET_DIR"
 
 # When spawn-worker.sh is called from inside the dispatch Docker container
@@ -110,25 +111,21 @@ STATE_FILE="$FLEET_DIR/status/worker-${WORKER}.state"
 
 echo "→ Spawning ${PROJECT}: API :${API_PORT}  DB :${DB_PORT}  sketch :${SKETCH_PORT}  branch ${BRANCH}"
 
-# Build the shared worker image once if it doesn't exist. All workers share
-# quotethat-worker:latest — nothing worker-specific is baked in. To force a
-# rebuild (e.g. after lockfile changes): `docker rmi quotethat-worker:latest`.
+# Build the shared worker image if it's missing or stale (worker-entrypoint.sh
+# and claude/ aren't re-synced from git at container runtime the way the rest
+# of the repo is — see bin/image-needs-rebuild.sh for why this can't just be
+# "does the tag exist"). To force a rebuild regardless: `docker rmi
+# ${MUADDIB_PROJECT_NAME}-worker:latest`.
 export MUADDIB_WORKER_IMAGE="${MUADDIB_PROJECT_NAME}-worker:latest"
-if ! docker image inspect "$MUADDIB_WORKER_IMAGE" >/dev/null 2>&1; then
-    echo "→ Building worker image (first run or image removed)…"
-    PROJECT_DOCKERFILE="$REPO_ROOT/.muaddib/Dockerfile.worker"
-    WORKER_DOCKERFILE="$FLEET_DIR/Dockerfile.worker"
-    [ -f "$PROJECT_DOCKERFILE" ] && WORKER_DOCKERFILE="$PROJECT_DOCKERFILE"
+WORKER_DOCKERFILE="$(muaddib_worker_dockerfile "$FLEET_DIR" "$REPO_ROOT")"
+MUADDIB_DOCKER_PREFIX="$(muaddib_docker_prefix "$REPO_ROOT")"
+MUADDIB_BUILD_HASH="$(muaddib_image_build_hash "$FLEET_DIR" "$WORKER_DOCKERFILE")"
 
-    # Consuming projects have muaddib nested at REPO_ROOT/muaddib, so
-    # Dockerfile.worker's COPY sources are prefixed muaddib/ (its default).
-    # Self-hosting builds with REPO_ROOT already at muaddib's own root — no
-    # prefix needed, so it's overridden to empty.
-    MUADDIB_DOCKER_PREFIX="muaddib/"
-    [ -d "$REPO_ROOT/muaddib" ] || MUADDIB_DOCKER_PREFIX=""
-
+if muaddib_image_needs_rebuild "$MUADDIB_WORKER_IMAGE" "$MUADDIB_BUILD_HASH"; then
+    echo "→ Building worker image (missing or stale)…"
     docker build -f "$FLEET_DIR/Dockerfile.base" -t muaddib-base:latest "$REPO_ROOT"
     docker build --build-arg "MUADDIB_PREFIX=$MUADDIB_DOCKER_PREFIX" \
+        --label "muaddib.build-hash=$MUADDIB_BUILD_HASH" \
         -f "$WORKER_DOCKERFILE" -t "$MUADDIB_WORKER_IMAGE" "$REPO_ROOT"
 fi
 
