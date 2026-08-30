@@ -331,7 +331,7 @@ function resolveRoute(labels) {
       workflowFile: path.join(FLEET_DIR, "workflows/feature-fast.json"),
     };
   }
-  if (labels.includes("muaddib:plan") || labels.includes("plan")) {
+  if (labels.includes("muaddib:plan") || labels.includes("plan") || labels.includes("plan-only")) {
     return {
       entryPoint: "muaddib-plan.sh",
       workflowFile: path.join(FLEET_DIR, "workflows/plan.json"),
