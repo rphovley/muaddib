@@ -13,7 +13,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { _loadConfig: loadConfig } = require('../start-servers');
+const { _loadConfig: loadConfig, _findServersHook: findServersHook } = require('../start-servers');
 const { writeManifest } = require('./test-utils');
 
 let pass = 0;
@@ -146,6 +146,41 @@ async function testCustomFrontendsFiltered() {
   }
 }
 
+async function testNoHookFound() {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ss-hook-'));
+  try {
+    assert(findServersHook(tmp) === null, 'a repo with no .muaddib/hooks/on-servers-start should have no hook');
+  } finally {
+    fs.rmSync(tmp, { recursive: true });
+  }
+}
+
+async function testJsHookFound() {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ss-hook-'));
+  try {
+    const hooksDir = path.join(tmp, '.muaddib', 'hooks');
+    fs.mkdirSync(hooksDir, { recursive: true });
+    const hookPath = path.join(hooksDir, 'on-servers-start.js');
+    fs.writeFileSync(hookPath, '// noop');
+    assert(findServersHook(tmp) === hookPath, `expected ${hookPath}, got ${findServersHook(tmp)}`);
+  } finally {
+    fs.rmSync(tmp, { recursive: true });
+  }
+}
+
+async function testShHookFound() {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ss-hook-'));
+  try {
+    const hooksDir = path.join(tmp, '.muaddib', 'hooks');
+    fs.mkdirSync(hooksDir, { recursive: true });
+    const hookPath = path.join(hooksDir, 'on-servers-start.sh');
+    fs.writeFileSync(hookPath, '#!/usr/bin/env bash\n');
+    assert(findServersHook(tmp) === hookPath, `expected ${hookPath}, got ${findServersHook(tmp)}`);
+  } finally {
+    fs.rmSync(tmp, { recursive: true });
+  }
+}
+
 // ── run ───────────────────────────────────────────────────────────────────────
 
 (async () => {
@@ -155,6 +190,9 @@ async function testCustomFrontendsFiltered() {
   await run('custom config loaded verbatim', testCustomConfig);
   await run('custom API project identified by seedScript', testCustomApiProjectPicked);
   await run('custom frontends filtered by devScript/no-seedScript', testCustomFrontendsFiltered);
+  await run('no on-servers-start hook found when absent', testNoHookFound);
+  await run('on-servers-start.js hook found when present', testJsHookFound);
+  await run('on-servers-start.sh hook found when present', testShHookFound);
 
   process.stdout.write(`\n${pass}/${pass + fail} passed\n`);
   if (fail > 0) process.exit(1);

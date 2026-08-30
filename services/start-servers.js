@@ -1,11 +1,19 @@
 #!/usr/bin/env node
 'use strict';
 // Servers job — started by the orchestrator at container boot.
-// Runs DB migrations, preview seed, starts API + frontend dev servers, and
-// opens tunnels. Tries cloudflared first; on 429 or any immediate failure
-// falls back to localhost.run (SSH, no binary required).
-// Emits tunnel_ready when all URLs are confirmed, then keeps background
-// processes alive until the container exits.
+//
+// Thin by design: a project isn't required to have anything to preview at
+// all (no DB, no dev server — e.g. muaddib itself). Default behavior is to
+// signal ready immediately. A project that needs migrations/seed/dev-servers/
+// tunnels implements .muaddib/hooks/on-servers-start(.js|.sh) itself and owns
+// the whole thing, including emitting tunnel_ready when actually ready — same
+// contract as .muaddib/hooks/on-worker-start.sh (default does nothing;
+// implementing it means owning the behavior).
+//
+// The tunnel/port helpers below (tries cloudflared, falls back to
+// localhost.run, waits for a port) are generic — nothing here is
+// project-specific — so they're exported for a hook to reuse rather than
+// reimplement.
 //
 // Required env: WORKER_INDEX
 
@@ -241,101 +249,62 @@ async function openTunnel(port, cfLog, lrLog) {
   return fallback;
 }
 
+// ── project hook ──────────────────────────────────────────────────────────────
+
+function findServersHook(repoDir) {
+  for (const ext of ['.js', '.sh']) {
+    const p = path.join(repoDir, '.muaddib', 'hooks', `on-servers-start${ext}`);
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const config = loadConfig(REPO);
-  const apiProject = config.projects.find((p) => p.seedScript);
-  if (!apiProject) throw new Error('No API project (with seedScript) found in .muaddib/manifest.json');
-  const frontendProjects = config.projects.filter((p) => !p.seedScript && p.devScript);
+  loadConfig(REPO); // validates .muaddib/manifest.json exists and is well-formed
 
-  // 1. Migrations
-  log('running migrations...');
-  runSync('npm', ['run', '--prefix', apiProject.path, 'migrate:up']);
+  const hookPath = findServersHook(REPO);
 
-  // 2. Preview seed
-  log('running preview seed...');
-  const seedResult = spawnSync(
-    'npx', ['--prefix', apiProject.path, 'tsx', apiProject.seedScript],
-    { cwd: REPO, stdio: ['ignore', 'pipe', 'pipe'], env: process.env },
-  );
-
-  let previewEmail = '(seed failed — see /tmp/seed-preview.log)';
-  let previewPassword = '';
-  let hoMagicLink = '';
-  try {
-    if (seedResult.stderr) fs.writeFileSync('/tmp/seed-preview.log', seedResult.stderr);
-    const lines = (seedResult.stdout || '').toString().trim().split('\n');
-    const json = JSON.parse(lines[lines.length - 1]);
-    previewEmail    = json.email               || previewEmail;
-    previewPassword = json.password            || '';
-    hoMagicLink     = json.homeowner_magic_link || '';
-  } catch (_) {}
-
-  // 3. API dev server
-  log('starting API dev server...');
-  startWithRestart('sh', ['-c', apiProject.devScript], '/tmp/preview-api.log');
-  await waitForPort(apiProject.port);
-  log(`API server ready on :${apiProject.port}`);
-
-  // 4. API tunnel (needed before frontends so VITE_API_URL is known)
-  const apiTunnelUrl = await openTunnel(apiProject.port, '/tmp/cf-api.log', '/tmp/lr-api.log');
-
-  // 5. Frontend dev servers
-  if (frontendProjects.length > 0) {
-    log('starting frontend dev servers...');
-    for (const p of frontendProjects) {
-      startWithRestart('sh', ['-c', p.devScript], `/tmp/preview-${p.name}.log`, { env: { VITE_API_URL: apiTunnelUrl } });
-    }
-    const frontendPorts = frontendProjects.filter((p) => p.port).map((p) => p.port);
-    if (frontendPorts.length > 0) {
-      log(`waiting for frontend servers on :${frontendPorts.join(' and :')} (up to 60 s)...`);
-      await Promise.all(frontendPorts.map((port) => waitForPort(port)));
-      log(`frontend servers ready on :${frontendPorts.join(' and :')}`);
-    }
+  if (!hookPath) {
+    log('no .muaddib/hooks/on-servers-start hook — nothing to preview, signaling ready');
+    spawnSync('node', [EMIT_CLI, WORKER, 'servers', 'tunnel_ready',
+      JSON.stringify({ api: '', frontends: {} }),
+    ], { stdio: 'inherit' });
+    setInterval(() => {}, 30_000);
+    return;
   }
 
-  // 6. Frontend tunnels (parallel — independent ports)
-  const frontendUrlMap = new Map();
-  await Promise.all(
-    frontendProjects.filter((p) => p.port).map(async (p) => {
-      const url = await openTunnel(p.port, `/tmp/cf-${p.name}.log`, `/tmp/lr-${p.name}.log`);
-      frontendUrlMap.set(p.name, url);
-    }),
-  );
+  log(`running project hook: ${hookPath}`);
+  const runtime = hookPath.endsWith('.js') ? 'node' : 'bash';
+  const hookLog = '/tmp/on-servers-start.log';
+  const hookProc = startBg(runtime, [hookPath], hookLog);
 
-  // 7. Write shared env file and worker state
-  const URLS_FILE = `/tmp/preview-urls-${WORKER}.env`;
-  const envLines = [`API_TUNNEL_URL=${apiTunnelUrl}`];
-  for (const p of frontendProjects.filter((fp) => fp.port)) {
-    envLines.push(`${p.name.toUpperCase()}_URL=${frontendUrlMap.get(p.name) || ''}`);
-  }
-  envLines.push(`PREVIEW_EMAIL=${previewEmail}`);
-  envLines.push(`PREVIEW_PASSWORD=${previewPassword}`);
-  envLines.push(`HO_MAGIC_LINK=${hoMagicLink}`);
-  fs.writeFileSync(URLS_FILE, envLines.join('\n') + '\n');
-  log(`wrote ${URLS_FILE}`);
-
-  spawnSync('node', [STATE_CLI, WORKER, 'set', 'api_tunnel_url', apiTunnelUrl], { stdio: 'inherit' });
-  for (const p of frontendProjects.filter((fp) => fp.port)) {
-    spawnSync('node', [STATE_CLI, WORKER, 'set', `${p.name}_url`, frontendUrlMap.get(p.name) || ''], { stdio: 'inherit' });
-  }
-
-  // 8. Signal orchestrator
-  // Nested, not spread — a frontend project literally named "api" (a
-  // misconfiguration: devScript+port but no seedScript) would otherwise
-  // silently clobber the real API tunnel URL at the top level.
-  log('emitting tunnel_ready');
-  spawnSync('node', [EMIT_CLI, WORKER, 'servers', 'tunnel_ready',
-    JSON.stringify({ api: apiTunnelUrl, frontends: Object.fromEntries(frontendUrlMap) }),
-  ], { stdio: 'inherit' });
-
-  log('servers running');
-  // Keep this process alive so spawned dev servers stay running.
-  setInterval(() => {}, 30_000);
+  return new Promise((_resolve, reject) => {
+    hookProc.on('exit', (code) => {
+      if (code !== 0) reject(new Error(`on-servers-start hook exited ${code} — see ${hookLog}`));
+      // exit 0: hook decided its own work is done; nothing further to supervise.
+    });
+    // Keep this process alive so anything the hook itself spawned (dev
+    // servers, tunnels) keeps running — mirrors the built-in flow's own
+    // trailing keep-alive, just with the hook owning what "alive" means.
+    setInterval(() => {}, 30_000);
+  });
 }
 
-module.exports = { _loadConfig: loadConfig };
+module.exports = {
+  _loadConfig: loadConfig,
+  _findServersHook: findServersHook,
+  // Reusable by a project's own on-servers-start hook — generic tunnel/port
+  // mechanics, nothing project-specific, no reason to reimplement them.
+  runSync,
+  startBg,
+  startWithRestart,
+  waitForPort,
+  openTunnel,
+  EMIT_CLI,
+  STATE_CLI,
+};
 
 if (require.main === module) {
   main().catch((err) => {
