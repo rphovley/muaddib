@@ -19,6 +19,7 @@ const net = require('net');
 const https = require('https');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
+const { resolveMuaddibRoot } = require('../orchestrator/muaddib-root');
 
 const WORKER = process.env.WORKER_INDEX || '0';
 const REPO_URL = (process.env.REPO_URL || '').trim();
@@ -33,8 +34,9 @@ const REPO = REPO_URL
   .replace(/^github\.com\//, '')
   .replace(/\.git$/, '');
 
-const EMIT_CLI = path.join(REPO_DIR, 'muaddib/orchestrator/emit-cli.js');
-const RECEIVER_SCRIPT = path.join(REPO_DIR, 'muaddib/services/webhook-receiver.js');
+const MUADDIB_ROOT = resolveMuaddibRoot(REPO_DIR);
+const EMIT_CLI = path.join(MUADDIB_ROOT, 'orchestrator/emit-cli.js');
+const RECEIVER_SCRIPT = path.join(MUADDIB_ROOT, 'services/webhook-receiver.js');
 const COMMENT_FLAG = `/tmp/wf-comment-${WORKER}`;
 const RECEIVER_LOG = `/tmp/webhook-receiver.log`;
 const TUNNEL_LOG = `/tmp/cf-webhook.log`;

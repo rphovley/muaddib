@@ -15,10 +15,12 @@ const { startJob } = require('./job');
 const { run } = require('./runner');
 const { noteStatus, AGENT_STATUS_DIR } = require('./status');
 const { getRunData, sumTotals, estimateCost, formatSummary, postRunRecord } = require('./token-tracker');
+const { resolveMuaddibRoot } = require('./muaddib-root');
 
 const WORKER         = parseInt(process.env.WORKER_INDEX || '1', 10);
 const REPO           = process.env.REPO_DIR || '/home/worker/repo';
-const EMIT_CLI       = path.join(REPO, 'muaddib/orchestrator/emit-cli.js');
+const MUADDIB_ROOT   = resolveMuaddibRoot(REPO);
+const EMIT_CLI       = path.join(MUADDIB_ROOT, 'orchestrator/emit-cli.js');
 const WORK_TYPE_FILE = `/tmp/work-type-${WORKER}`;
 const MOCK_JOBS      = process.env.MOCK_JOBS === '1';
 const LINEAR_ISSUE   = process.env.LINEAR_ISSUE_IDENTIFIER || parseTicketId();
@@ -80,7 +82,7 @@ function serviceCmd(svc) {
     };
     return stubs[svc.name] || `echo "unknown mock service: ${svc.name}"; exit 1`;
   }
-  const scriptPath = path.join(REPO, 'muaddib', svc.script);
+  const scriptPath = path.join(MUADDIB_ROOT, svc.script);
   const runtime = scriptPath.endsWith('.js') ? 'node' : 'bash';
   return `${runtime} '${scriptPath}'`;
 }
@@ -151,7 +153,7 @@ async function main() {
   console.log(`[orchestrator w${WORKER}] work type: ${workType}`);
 
   const workflowFile = process.env.WORKFLOW_FILE
-    || path.join(REPO, `muaddib/workflows/${workType}.json`);
+    || path.join(MUADDIB_ROOT, 'workflows', `${workType}.json`);
   const definition = JSON.parse(fs.readFileSync(workflowFile, 'utf8'));
 
   note('STARTING_SERVICES');

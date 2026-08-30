@@ -15,4 +15,8 @@ while [ "$N" -le 64 ] \
 done
 
 echo "→ muaddib plan on worker ${N}: ${TICKET}"
-WORKFLOW_FILE=muaddib/workflows/plan.json exec "$DIR/bin/spawn-worker.sh" "$N" "/muaddib ${TICKET}"
+# Host-side path — spawn-worker.sh already translates anything under
+# REPO_ROOT into the right container path, nested-submodule or not. (A
+# relative path here would instead resolve against the container's CWD,
+# which has the same nested-submodule assumption baked in.)
+WORKFLOW_FILE="$DIR/workflows/plan.json" exec "$DIR/bin/spawn-worker.sh" "$N" "/muaddib ${TICKET}"

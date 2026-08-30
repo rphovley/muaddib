@@ -15,4 +15,6 @@ while [ "$N" -le 64 ] \
 done
 
 echo "→ muaddib:fast on worker ${N}: ${TICKET}"
-WORKFLOW_FILE="/home/worker/repo/muaddib/workflows/feature-fast.json" exec "$DIR/bin/spawn-worker.sh" "$N" "/muaddib ${TICKET}"
+# Host-side path — spawn-worker.sh already translates anything under
+# REPO_ROOT into the right container path, nested-submodule or not.
+WORKFLOW_FILE="$DIR/workflows/feature-fast.json" exec "$DIR/bin/spawn-worker.sh" "$N" "/muaddib ${TICKET}"
