@@ -23,6 +23,10 @@
 // testRealStartupFailsCleanlyOnBadConfig — running as the real entry point (require.main===module)
 //                                    with bad config fails fast with a clean FATAL log, not an
 //                                    uncaught exception from inside an async callback
+// testValidateEnvPassesWithAllTokens — validateEnv() succeeds when all four required vars are set
+// testValidateEnvThrowsOnMissingAccountTokens — validateEnv() throws, naming the missing
+//                                    CLAUDE_CODE_OAUTH_TOKEN/GITHUB_TOKEN (fail fast at startup
+//                                    rather than silently at worker-spawn time)
 
 const fs = require("fs");
 const os = require("os");
@@ -544,6 +548,10 @@ async function testRealStartupFailsCleanlyOnBadConfig() {
           REPO_ROOT: tmpDir,
           LINEAR_API_KEY: "test-key",
           LINEAR_TEAM_ID: "test-team",
+          // Set the account tokens so validateEnv() passes — this test targets
+          // the bad-config failure path, not the missing-token env check.
+          CLAUDE_CODE_OAUTH_TOKEN: "test-oauth",
+          GITHUB_TOKEN: "test-gh",
           DISPATCH_PORT: "0",
         },
       },
@@ -561,6 +569,58 @@ async function testRealStartupFailsCleanlyOnBadConfig() {
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
+}
+
+// ─── validateEnv ──────────────────────────────────────────────────────────────
+// validateEnv() gates startup on the required env vars. LINEAR_TEAM_ID is
+// captured as a module-load-time const, so these run in a subprocess with a
+// controlled env (like the config tests above) rather than mutating process.env
+// in-process, where that const would already be frozen.
+
+function callValidateEnvInSubprocess(env) {
+  return spawnSync(
+    process.execPath,
+    ["-e", `require(${JSON.stringify(DISPATCH_DAEMON_PATH)}).validateEnv()`],
+    { encoding: "utf8", env },
+  );
+}
+
+async function testValidateEnvPassesWithAllTokens() {
+  const r = callValidateEnvInSubprocess({
+    ...process.env,
+    LINEAR_API_KEY: "test-key",
+    LINEAR_TEAM_ID: "test-team",
+    CLAUDE_CODE_OAUTH_TOKEN: "test-oauth",
+    GITHUB_TOKEN: "test-gh",
+  });
+  if (r.status !== 0)
+    throw new Error(
+      `expected validateEnv() to pass with all four vars set, got exit ${r.status}: ${r.stderr}`,
+    );
+}
+
+async function testValidateEnvThrowsOnMissingAccountTokens() {
+  const env = {
+    ...process.env,
+    LINEAR_API_KEY: "test-key",
+    LINEAR_TEAM_ID: "test-team",
+  };
+  // The two account-level tokens are the regression under test — a daemon
+  // started non-interactively (no ~/.zshrc) inherits neither.
+  delete env.CLAUDE_CODE_OAUTH_TOKEN;
+  delete env.GITHUB_TOKEN;
+  const r = callValidateEnvInSubprocess(env);
+  if (r.status === 0)
+    throw new Error(
+      "expected validateEnv() to throw when CLAUDE_CODE_OAUTH_TOKEN/GITHUB_TOKEN are missing, got exit 0",
+    );
+  if (
+    !r.stderr.includes("CLAUDE_CODE_OAUTH_TOKEN") ||
+    !r.stderr.includes("GITHUB_TOKEN")
+  )
+    throw new Error(
+      `error should name both missing account tokens, got: ${r.stderr}`,
+    );
 }
 
 // ─── runner ──────────────────────────────────────────────────────────────────
@@ -644,6 +704,14 @@ async function main() {
     [
       "config: real startup (require.main) fails cleanly on bad config, not an uncaught exception",
       testRealStartupFailsCleanlyOnBadConfig,
+    ],
+    [
+      "validateEnv: passes with all four required vars set",
+      testValidateEnvPassesWithAllTokens,
+    ],
+    [
+      "validateEnv: throws naming CLAUDE_CODE_OAUTH_TOKEN/GITHUB_TOKEN when absent",
+      testValidateEnvThrowsOnMissingAccountTokens,
     ],
   ];
 

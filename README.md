@@ -205,6 +205,17 @@ job, in a later milestone.
 1. **Subscription token:** `claude setup-token` → `export CLAUDE_CODE_OAUTH_TOKEN=…`
 2. **GitHub token:** a fine-grained PAT scoped to this repo, **push + open-PR
    only** (no merge, no admin) → `export GITHUB_TOKEN=…`
+
+   > **Unattended dispatch startup.** `~/.zshrc` exports these two tokens for
+   > *interactive* shells only — a dispatch daemon started at reboot / launchd /
+   > cron inherits neither and worker spawning breaks silently. For that path
+   > they must also live in an account-level, `chmod 600`, git-ignored
+   > `~/.muaddib/conductor-secrets.env`, which `dispatch.sh` sources at startup
+   > (shell env still wins). `./muaddib/install.sh` creates and populates that
+   > file for you from the template (`.muaddib/conductor-secrets.env.example`).
+   > Moving the exports to `~/.zshenv` is deliberately **not** done — it would
+   > expose the tokens to every process on the machine.
+
 3. **App secrets:** copy the template and fill in dev/local values:
 
    ```bash

@@ -4,6 +4,10 @@ non-prod.env
 # Self-hosting SDLC Pack secrets (only .muaddib/secrets.env.example is tracked)
 .muaddib/secrets.env
 
+# Account-level daemon secrets. The real file lives in ~/.muaddib/, but guard
+# against an accidental repo-local copy (only the .example is tracked).
+conductor-secrets.env
+
 # Per-worker env files — contain the subscription + GitHub tokens
 .worker-*.env
 
