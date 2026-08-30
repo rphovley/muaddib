@@ -94,6 +94,13 @@ function validateEnv() {
   const missing = [];
   if (!process.env.LINEAR_API_KEY) missing.push("LINEAR_API_KEY");
   if (!LINEAR_TEAM_ID) missing.push("LINEAR_TEAM_ID");
+  // Account-level tokens: the daemon passes these straight through to
+  // spawn-worker.sh (which hard-requires both), so a daemon started without
+  // them — e.g. non-interactively at reboot/launchd, where ~/.zshrc never runs
+  // — would break silently at worker-spawn time. Fail fast at startup instead.
+  // (dispatch.sh sources ~/.muaddib/conductor-secrets.env to supply them.)
+  if (!process.env.CLAUDE_CODE_OAUTH_TOKEN) missing.push("CLAUDE_CODE_OAUTH_TOKEN");
+  if (!process.env.GITHUB_TOKEN) missing.push("GITHUB_TOKEN");
   if (missing.length > 0)
     throw new Error(`Missing required env: ${missing.join(", ")}`);
 }
@@ -579,7 +586,7 @@ async function main() {
   log(`ready — port ${PORT}, max workers ${MAX_WORKERS}`);
 }
 
-module.exports = { resolveRoute, handleEvent, cleanupWorkerFiles, cleanupOrphanedStatusFiles, getProjectName };
+module.exports = { validateEnv, resolveRoute, handleEvent, cleanupWorkerFiles, cleanupOrphanedStatusFiles, getProjectName };
 
 if (require.main === module) {
   main().catch((err) => {

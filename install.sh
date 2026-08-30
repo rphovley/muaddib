@@ -44,6 +44,21 @@ env_set() {
     printf '%s=%s\n' "$key" "$val" >> "$ENV_FILE"
 }
 
+# Same as env_get/env_set, but operate on an explicit file (used for the
+# account-level conductor-secrets.env, which lives outside the repo in $HOME).
+cenv_get() {
+    local file="$1" key="$2"
+    grep -E "^${key}=" "$file" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '\r' || true
+}
+
+cenv_set() {
+    local file="$1" key="$2" val="$3"
+    grep -v -E "^[[:space:]]*#?[[:space:]]*${key}=" "$file" > "${file}.tmp" 2>/dev/null \
+        && mv "${file}.tmp" "$file"
+    printf '%s=%s\n' "$key" "$val" >> "$file"
+    chmod 600 "$file"
+}
+
 # True if the value looks like an unfilled placeholder.
 is_placeholder() {
     case "${1:-}" in
@@ -128,6 +143,8 @@ check_shell_token() {
         err "$var not set"
         info "$how"
         info "Add 'export ${var}=...' to ~/.zshrc or ~/.bashrc to persist."
+        info "For unattended (reboot/launchd/cron) dispatch startup it must also live in"
+        info "~/.muaddib/conductor-secrets.env — step 5 records it there when it's in your shell."
     fi
 }
 
@@ -303,9 +320,54 @@ for _var in LINEAR_API_KEY LINEAR_TEAM_ID; do
     fi
 done
 
-# ─── 5. Worker Docker image ───────────────────────────────────────────────────
+# ─── 5. Conductor secrets (unattended dispatch startup) ───────────────────────
 
-step "5. Worker Docker image"
+step "5. Conductor secrets (unattended dispatch startup)"
+
+CONDUCTOR_ENV_EXAMPLE="$REPO_ROOT/.muaddib/conductor-secrets.env.example"
+CONDUCTOR_ENV_FILE="${CONDUCTOR_SECRETS_FILE:-$HOME/.muaddib/conductor-secrets.env}"
+
+printf "${DIM}     Sourced by dispatch.sh at startup so reboot/launchd/cron runs inherit the account${RESET}\n"
+printf "${DIM}     tokens (~/.zshrc only exports them for interactive shells). Not ~/.zshenv — see template.${RESET}\n"
+
+mkdir -p "$(dirname "$CONDUCTOR_ENV_FILE")"
+if [ ! -f "$CONDUCTOR_ENV_FILE" ]; then
+    cp "$CONDUCTOR_ENV_EXAMPLE" "$CONDUCTOR_ENV_FILE"
+    chmod 600 "$CONDUCTOR_ENV_FILE"
+    ok "Created ${CONDUCTOR_ENV_FILE/#$HOME/\~} from template (chmod 600)"
+else
+    chmod 600 "$CONDUCTOR_ENV_FILE"
+    ok "${CONDUCTOR_ENV_FILE/#$HOME/\~} exists (chmod 600)"
+fi
+
+# Populate from the current shell env when the vars are set (shell env wins).
+# CLAUDE_CODE_OAUTH_TOKEN / GITHUB_TOKEN are the ones that break non-interactive
+# startup; LINEAR_* are optional here (they can stay in .muaddib/secrets.env).
+for _cvar in CLAUDE_CODE_OAUTH_TOKEN GITHUB_TOKEN LINEAR_API_KEY LINEAR_TEAM_ID; do
+    _cval="${!_cvar:-}"
+    if [ -n "$_cval" ]; then
+        if is_placeholder "$(cenv_get "$CONDUCTOR_ENV_FILE" "$_cvar")"; then
+            cenv_set "$CONDUCTOR_ENV_FILE" "$_cvar" "$_cval"
+            ok "${_cvar} written to conductor-secrets.env from shell env"
+        else
+            ok "${_cvar} already set in conductor-secrets.env"
+        fi
+    elif ! is_placeholder "$(cenv_get "$CONDUCTOR_ENV_FILE" "$_cvar")"; then
+        ok "${_cvar} set in conductor-secrets.env"
+    else
+        case "$_cvar" in
+            CLAUDE_CODE_OAUTH_TOKEN|GITHUB_TOKEN)
+                note "${_cvar} not in shell env or conductor-secrets.env — needed for unattended startup"
+                info "Add it to ${CONDUCTOR_ENV_FILE/#$HOME/\~} (or export it in your shell before re-running)." ;;
+            *)
+                info "${_cvar} not set here (optional — can stay in .muaddib/secrets.env / your shell)." ;;
+        esac
+    fi
+done
+
+# ─── 6. Worker Docker image ───────────────────────────────────────────────────
+
+step "6. Worker Docker image"
 
 if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
     WORKER_IMAGE="${MUADDIB_PROJECT_NAME}-worker:latest"

@@ -64,6 +64,18 @@ not exported machine-wide. Explicitly reject moving the exports to
 machine able to read a Claude subscription token and a GitHub PAT, not just
 the daemon that needs them. Scoped as an issue under Milestone 4.
 
+**Status (issue #40): implemented.** `dispatch.sh` now sources
+`${CONDUCTOR_SECRETS_FILE:-~/.muaddib/conductor-secrets.env}` before
+`docker compose up`, exporting each `KEY=value` only when that var isn't already
+set (shell env wins — interactive `muaddib:start` is unchanged; a missing file
+is a no-op). `dispatch-daemon.js`'s `validateEnv()` now also requires
+`CLAUDE_CODE_OAUTH_TOKEN` / `GITHUB_TOKEN`, so a daemon started without them
+fails fast at startup instead of breaking silently at worker-spawn time. A
+tracked `.muaddib/conductor-secrets.env.example` template documents the file, and
+`install.sh` creates `~/.muaddib/conductor-secrets.env` (`chmod 600`,
+git-ignored) and populates it from the shell env. `.zshenv` remains deliberately
+unused for the reason above.
+
 ## Not yet a blocker, but worth knowing
 
 `worker-entrypoint.sh` sources `"$WORKDIR/muaddib/bin/read-config.sh"` — a path
