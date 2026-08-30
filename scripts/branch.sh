@@ -14,7 +14,16 @@ set -euo pipefail
 
 WORKER="$WORKER_INDEX"
 REPO="${REPO_DIR:-/home/worker/repo}"
-STATE_CLI="$REPO/muaddib/orchestrator/state-cli.js"
+
+# Consuming projects have muaddib checked out as a nested submodule
+# (REPO/muaddib); muaddib building itself has no such nesting — the clone
+# IS muaddib, so its own orchestrator/ sits directly at REPO.
+if [ -d "$REPO/muaddib" ]; then
+    MUADDIB_ROOT="$REPO/muaddib"
+else
+    MUADDIB_ROOT="$REPO"
+fi
+STATE_CLI="$MUADDIB_ROOT/orchestrator/state-cli.js"
 
 log() { echo "[branch w${WORKER}] $*"; }
 
