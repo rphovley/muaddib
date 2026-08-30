@@ -36,6 +36,34 @@ These are two separate open items, not yet resolved — don't assume scaffolding
    same test files directly via `node` (see the body of `run_tests.sh`'s `docker run`
    block for the exact list) with no docker wrapper. Needs its own ticket.
 
+## Conductor/dispatch-daemon credential bootstrapping — real gap, not hypothetical
+
+`CLAUDE_CODE_OAUTH_TOKEN` and `GITHUB_TOKEN` are exported unconditionally in
+`~/.zshrc`. But `.zshrc` is, by zsh's own convention, sourced only for
+*interactive* shells — never a background daemon, cron job, or launchd
+process, regardless of what's written inside it. Confirmed by reading
+`dispatch-daemon.js`: it does zero credential validation beyond
+`LINEAR_API_KEY`/`LINEAR_TEAM_ID` in `validateEnv()`, and spawns workers via
+`spawn(SPAWN_WORKER, [...], { env: { ...process.env } })` — a bare passthrough
+of whatever it happened to inherit at its own startup. It has no independent
+way to acquire these tokens; it only works today because it's always been
+started from a shell that had already sourced `.zshrc`. Reboot the machine,
+or start it any other way, and spawning silently breaks (worker spawn fails
+downstream; the daemon itself never notices).
+
+This blocks genuine unattended autonomy for both `dispatch-daemon.js` today
+and the future Conductor — not a future concern, a present one, discovered
+via a live self-hosting test rather than by inspection.
+
+**Direction:** a dedicated, narrowly-scoped, `chmod 600`, git-ignored secrets
+file — e.g. `~/.muaddib/conductor-secrets.env` — sourced explicitly by
+whichever daemon needs it, at its own startup. Mirrors `.muaddib/secrets.env`
+one level up: scoped to the one process that needs account-level credentials,
+not exported machine-wide. Explicitly reject moving the exports to
+`.zshenv` (sourced unconditionally) — that would make every process on the
+machine able to read a Claude subscription token and a GitHub PAT, not just
+the daemon that needs them. Scoped as an issue under Milestone 4.
+
 ## Not yet a blocker, but worth knowing
 
 `worker-entrypoint.sh` sources `"$WORKDIR/muaddib/bin/read-config.sh"` — a path

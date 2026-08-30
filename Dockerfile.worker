@@ -4,6 +4,11 @@
 # Or use a project's .muaddib/Dockerfile.worker to override this file.
 FROM muaddib-base:latest
 
+# Consuming projects have muaddib nested at the build context's muaddib/
+# subdirectory; self-hosting builds directly from muaddib's own root, where
+# these paths have no prefix at all. spawn-worker.sh sets this per build.
+ARG MUADDIB_PREFIX=muaddib/
+
 WORKDIR /home/worker/repo
 
 # Bake the full repo source + .git into the image so startup only needs a
@@ -31,13 +36,13 @@ RUN set -e; \
     done
 
 WORKDIR /home/worker
-COPY --chown=worker:worker muaddib/claude/settings.json /home/worker/.claude/settings.json
-COPY --chown=worker:worker muaddib/claude/skills/ /home/worker/.claude/skills/
+COPY --chown=worker:worker ${MUADDIB_PREFIX}claude/settings.json /home/worker/.claude/settings.json
+COPY --chown=worker:worker ${MUADDIB_PREFIX}claude/skills/ /home/worker/.claude/skills/
 # Pre-seed onboarding state so claude skips the theme picker / welcome / trust
 # dialog and goes straight to the task. The entrypoint's `claude mcp add` merges
 # mcpServers into this same file at runtime.
-COPY --chown=worker:worker muaddib/claude/claude.json /home/worker/.claude.json
-COPY --chown=worker:worker muaddib/claude/tmux.conf /home/worker/.tmux.conf
-COPY --chown=worker:worker muaddib/worker-entrypoint.sh /home/worker/worker-entrypoint.sh
+COPY --chown=worker:worker ${MUADDIB_PREFIX}claude/claude.json /home/worker/.claude.json
+COPY --chown=worker:worker ${MUADDIB_PREFIX}claude/tmux.conf /home/worker/.tmux.conf
+COPY --chown=worker:worker ${MUADDIB_PREFIX}worker-entrypoint.sh /home/worker/worker-entrypoint.sh
 
 ENTRYPOINT ["bash", "/home/worker/worker-entrypoint.sh"]
