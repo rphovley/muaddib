@@ -173,6 +173,7 @@ await test('run(): no plan comment → plan_status=not_found', async () => {
     worker,
     task: 'https://linear.app/quotethat/issue/QUO-99/fix-the-thing',
     repo,
+    ticketSource: 'linear',
   });
 
   assert('returns plan_status not_found', result.planStatus === 'not_found');
@@ -197,7 +198,7 @@ await test('run(): plan comment on issue → plan_status=found, plan.md written'
     },
   };
 
-  const result = await run(mockGql(issue), { worker, task: 'QUO-99', repo });
+  const result = await run(mockGql(issue), { worker, task: 'QUO-99', repo, ticketSource: 'linear' });
 
   assert('returns plan_status found', result.planStatus === 'found');
   assert('state plan_status is found', readState(worker).plan_status === 'found');
@@ -226,7 +227,7 @@ await test('run(): plan comment on parent → plan_status=found', async () => {
     },
   };
 
-  const result = await run(mockGql(issue), { worker, task: 'QUO-99', repo });
+  const result = await run(mockGql(issue), { worker, task: 'QUO-99', repo, ticketSource: 'linear' });
 
   assert('returns plan_status found', result.planStatus === 'found');
   assert('plan.md written from parent comment', fs.existsSync(path.join(repo, '.muaddib', 'plan.md')));
@@ -250,7 +251,7 @@ await test('run(): own comment takes precedence over parent comment', async () =
     },
   };
 
-  await run(mockGql(issue), { worker, task: 'QUO-99', repo });
+  await run(mockGql(issue), { worker, task: 'QUO-99', repo, ticketSource: 'linear' });
 
   const planContent = fs.readFileSync(path.join(repo, '.muaddib', 'plan.md'), 'utf8');
   assert('own plan wins over parent', planContent.includes('own plan content'));
@@ -260,7 +261,7 @@ await test('run(): own comment takes precedence over parent comment', async () =
 await test('run(): missing identifier throws', async () => {
   let threw = false;
   try {
-    await run(mockGql(BASE_ISSUE), { worker: 14, task: 'not-a-ticket-url', repo: makeRepo() });
+    await run(mockGql(BASE_ISSUE), { worker: 14, task: 'not-a-ticket-url', repo: makeRepo(), ticketSource: 'linear' });
   } catch (err) {
     threw = err.message.includes('Could not extract');
   }
@@ -270,7 +271,7 @@ await test('run(): missing identifier throws', async () => {
 await test('run(): issue not found throws', async () => {
   let threw = false;
   try {
-    await run(async () => ({ issue: null }), { worker: 15, task: 'QUO-99', repo: makeRepo() });
+    await run(async () => ({ issue: null }), { worker: 15, task: 'QUO-99', repo: makeRepo(), ticketSource: 'linear' });
   } catch (err) {
     threw = err.message.includes('not found');
   }
@@ -280,7 +281,7 @@ await test('run(): issue not found throws', async () => {
 await test('run(): graphql error propagates', async () => {
   let threw = false;
   try {
-    await run(async () => { throw new Error('network failure'); }, { worker: 16, task: 'QUO-99', repo: makeRepo() });
+    await run(async () => { throw new Error('network failure'); }, { worker: 16, task: 'QUO-99', repo: makeRepo(), ticketSource: 'linear' });
   } catch (err) {
     threw = err.message === 'network failure';
   }
