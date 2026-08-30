@@ -23,7 +23,8 @@ const MUADDIB_ROOT   = resolveMuaddibRoot(REPO);
 const EMIT_CLI       = path.join(MUADDIB_ROOT, 'orchestrator/emit-cli.js');
 const WORK_TYPE_FILE = `/tmp/work-type-${WORKER}`;
 const MOCK_JOBS      = process.env.MOCK_JOBS === '1';
-const LINEAR_ISSUE   = process.env.LINEAR_ISSUE_IDENTIFIER || parseTicketId();
+const TICKET_SOURCE_KIND = (process.env.TICKET_SOURCE || 'linear').toLowerCase();
+const LINEAR_ISSUE   = process.env.TICKET_IDENTIFIER || process.env.LINEAR_ISSUE_IDENTIFIER || parseTicketId();
 const LINEAR_API_KEY = process.env.LINEAR_API_KEY || '';
 
 let currentState = '';
@@ -47,6 +48,8 @@ function note(s) {
 // ─── Linear work-type detection ──────────────────────────────────────────────
 
 function getWorkType() {
+  // A raw ticket has no labels to inspect at all — always 'feature', no fetch.
+  if (TICKET_SOURCE_KIND === 'raw') return Promise.resolve('feature');
   if (!LINEAR_ISSUE || !LINEAR_API_KEY) return Promise.resolve('feature');
   // getTicketSource() runs inside the chain so a misconfigured TICKET_SOURCE
   // (a synchronous throw) degrades to 'feature' via .catch, exactly like a
