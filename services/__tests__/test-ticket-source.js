@@ -7,7 +7,7 @@
 // backend selection and the linear-webhook.js compatibility shim.
 
 const assert = require('assert');
-const { getTicketSource, createLinearSource } = require('../ticket-source');
+const { getTicketSource, createLinearSource, createGithubSource } = require('../ticket-source');
 
 // A fake graphql client: records each call and returns a scripted response.
 // `respond` maps a substring of the query to the data it should resolve with.
@@ -62,6 +62,119 @@ async function testEnvSelectsSource() {
 
 async function testUnknownSourceThrows() {
   assert.throws(() => getTicketSource('jira'), /unknown ticket source/i);
+}
+
+async function testExplicitGithub() {
+  assert.strictEqual(getTicketSource('github').name, 'github');
+  assert.strictEqual(getTicketSource('GITHUB').name, 'github');
+}
+
+// ─── GitHub backend (read path) ──────────────────────────────────────────────────
+
+// A fake REST client: records each requested path and returns a scripted
+// response. `respond` maps a substring of the path to the payload (or a
+// function of the path).
+function fakeApi(respond) {
+  const calls = [];
+  const api = async (path) => {
+    calls.push({ path });
+    for (const [needle, data] of Object.entries(respond)) {
+      if (path.includes(needle)) {
+        return typeof data === 'function' ? data(path) : data;
+      }
+    }
+    throw new Error(`fakeApi: no scripted response for path: ${path}`);
+  };
+  api.calls = calls;
+  return api;
+}
+
+// A representative GitHub issue payload (only the fields fetchTicket reads).
+function githubIssueFixture() {
+  return {
+    node_id: 'I_kwDO_abc123',
+    number: 34,
+    title: 'Implement GitHub Issues ticket source',
+    body: 'The read path for a GitHub backend.',
+    html_url: 'https://github.com/rphovley/muaddib/issues/34',
+    state: 'open',
+    labels: [{ name: 'enhancement' }, { name: 'muaddib' }],
+    assignee: { login: 'rphovley' },
+    user: { login: 'octocat' },
+  };
+}
+
+async function testGithubFetchTicketMapsFields() {
+  const api = fakeApi({ '/issues/34': githubIssueFixture() });
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  const result = await src.fetchTicket('34');
+  assert.deepStrictEqual(api.calls[0], { path: '/repos/rphovley/muaddib/issues/34' });
+  assert.deepStrictEqual(result, {
+    id: 'I_kwDO_abc123',
+    identifier: 'muaddib#34',
+    title: 'Implement GitHub Issues ticket source',
+    description: 'The read path for a GitHub backend.',
+    url: 'https://github.com/rphovley/muaddib/issues/34',
+    labels: { nodes: [{ name: 'enhancement' }, { name: 'muaddib' }] },
+    state: { name: 'open' },
+    assignee: 'rphovley',
+    createdBy: 'octocat',
+  });
+}
+
+async function testGithubFetchTicketStripsLeadingHash() {
+  const api = fakeApi({ '/issues/34': githubIssueFixture() });
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  await src.fetchTicket('#34');
+  assert.deepStrictEqual(api.calls[0], { path: '/repos/rphovley/muaddib/issues/34' });
+}
+
+async function testGithubFetchTicketNullWhenMissing() {
+  // The real client resolves null on a 404; the fake mirrors that here.
+  const api = fakeApi({ '/issues/404': null });
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  assert.strictEqual(await src.fetchTicket('404'), null);
+}
+
+async function testGithubFetchTicketNormalizesEmptyBodyAndLabels() {
+  const issue = { ...githubIssueFixture(), body: null, labels: [], assignee: null, state: 'closed' };
+  const api = fakeApi({ '/issues/34': issue });
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  const result = await src.fetchTicket('34');
+  assert.strictEqual(result.description, '');
+  assert.deepStrictEqual(result.labels, { nodes: [] });
+  assert.deepStrictEqual(result.state, { name: 'closed' });
+  assert.strictEqual(result.assignee, null);
+}
+
+async function testGithubRequiresOwnerRepo() {
+  const prevOwner = process.env.GITHUB_OWNER;
+  const prevRepo = process.env.GITHUB_REPO;
+  delete process.env.GITHUB_OWNER;
+  delete process.env.GITHUB_REPO;
+  try {
+    const src = createGithubSource({ api: fakeApi({}) });
+    await assert.rejects(() => src.fetchTicket('1'), /GITHUB_OWNER and GITHUB_REPO/);
+  } finally {
+    if (prevOwner === undefined) delete process.env.GITHUB_OWNER;
+    else process.env.GITHUB_OWNER = prevOwner;
+    if (prevRepo === undefined) delete process.env.GITHUB_REPO;
+    else process.env.GITHUB_REPO = prevRepo;
+  }
+}
+
+async function testGithubWriteMethodsNotImplemented() {
+  const src = createGithubSource({ api: fakeApi({}), owner: 'o', repo: 'r' });
+  assert.throws(() => src.graphql(), /not implemented in the read-only GitHub backend/);
+  // verifySignature stays a non-throwing false (like raw.js) so a stray webhook
+  // POST is cleanly rejected at the gate instead of crashing the handler.
+  assert.strictEqual(src.verifySignature(), false);
+  await assert.rejects(() => src.postComment(), /not implemented in the read-only GitHub backend/);
+  await assert.rejects(() => src.createSubIssue(), /not implemented in the read-only GitHub backend/);
+  await assert.rejects(() => src.registerWatch(), /not implemented in the read-only GitHub backend/);
+  await assert.rejects(() => src.deregisterWatch(), /not implemented in the read-only GitHub backend/);
+  // mentionUser stays a working pure helper across backends.
+  assert.strictEqual(src.mentionUser('@paul'), '@paul');
 }
 
 // ─── fetchTicket ────────────────────────────────────────────────────────────────
@@ -198,6 +311,13 @@ async function main() {
     ['factory: explicit + case-insensitive linear', testExplicitLinear],
     ['factory: TICKET_SOURCE env selects backend', testEnvSelectsSource],
     ['factory: unknown source throws', testUnknownSourceThrows],
+    ['factory: explicit + case-insensitive github', testExplicitGithub],
+    ['github: fetchTicket maps every field to normalized shape', testGithubFetchTicketMapsFields],
+    ['github: fetchTicket strips a leading # from the id', testGithubFetchTicketStripsLeadingHash],
+    ['github: fetchTicket null when issue missing (404)', testGithubFetchTicketNullWhenMissing],
+    ['github: fetchTicket normalizes empty body/labels/state', testGithubFetchTicketNormalizesEmptyBodyAndLabels],
+    ['github: fetchTicket requires GITHUB_OWNER/GITHUB_REPO', testGithubRequiresOwnerRepo],
+    ['github: write/watch methods are not implemented', testGithubWriteMethodsNotImplemented],
     ['fetchTicket: returns the issue with id var', testFetchTicketReturnsIssue],
     ['fetchTicket: null when issue missing', testFetchTicketNullWhenMissing],
     ['postComment: builds commentCreate mutation', testPostCommentBuildsMutation],

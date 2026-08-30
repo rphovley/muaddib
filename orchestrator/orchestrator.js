@@ -50,7 +50,12 @@ function note(s) {
 function getWorkType() {
   // A raw ticket has no labels to inspect at all — always 'feature', no fetch.
   if (TICKET_SOURCE_KIND === 'raw') return Promise.resolve('feature');
-  if (!LINEAR_ISSUE || !LINEAR_API_KEY) return Promise.resolve('feature');
+  if (!LINEAR_ISSUE) return Promise.resolve('feature');
+  // The credential requirement is source-specific: Linear needs LINEAR_API_KEY,
+  // but the GitHub source authenticates with GITHUB_TOKEN. Gating on
+  // LINEAR_API_KEY alone would skip the fetch for github and never let labels
+  // drive bug detection — so only require it for the Linear source.
+  if (TICKET_SOURCE_KIND === 'linear' && !LINEAR_API_KEY) return Promise.resolve('feature');
   // getTicketSource() runs inside the chain so a misconfigured TICKET_SOURCE
   // (a synchronous throw) degrades to 'feature' via .catch, exactly like a
   // network/GraphQL error — never crashing orchestrator startup.
