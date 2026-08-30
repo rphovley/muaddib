@@ -103,7 +103,7 @@ node "$STATE_CLI" "$WORKER" set needs_sketch "true"   # or "false"
 
 ## Step 5a — No questions needed: post plan (unless sketch is pending) and finish
 
-If `needs_questions=false` and `needs_sketch=false`, post `.muaddib/plan.md` as a `## Plan` comment on the Linear ticket using `mcp__linear__save_comment`, then signal done.
+If `needs_questions=false` and `needs_sketch=false`: if `$STATE_TICKET_URL` is non-empty, post `.muaddib/plan.md` as a `## Plan` comment on the Linear ticket using `mcp__linear__save_comment`. If `$STATE_TICKET_URL` is empty (no real ticket — e.g. a free-form task), skip the comment entirely; the plan already lives in `.muaddib/plan.md`. Either way, then signal done.
 
 If `needs_questions=false` but `needs_sketch=true`, **do not post `## Plan` yet** — the plan isn't final until the operator has reviewed and approved the prototype. The `sketch` step posts the (possibly revised) `## Plan` itself once that happens. Just signal done here so the workflow moves on to `sketch`:
 
@@ -115,7 +115,7 @@ touch "$STEP_DONE_FILE"
 
 If `needs_questions=true`:
 
-**Post questions to Linear** using `mcp__linear__save_comment`. Mention the ticket assignee in the comment body so they receive a Linear notification. Format:
+**Post questions to Linear** using `mcp__linear__save_comment` — only if `$STATE_TICKET_URL` is non-empty. Mention the ticket assignee in the comment body so they receive a Linear notification. Format:
 
 ```
 Questions before implementing — @<assignee>:
@@ -125,6 +125,8 @@ Questions before implementing — @<assignee>:
 
 (Reply in this TUI session — the worker is waiting.)
 ```
+
+Skip this call entirely if `$STATE_TICKET_URL` is empty (no real ticket, e.g. a free-form task) — there's no reporter or assignee to notify. Still fire the notify below and signal done either way.
 
 **Fire macOS notify** via the event bus:
 
