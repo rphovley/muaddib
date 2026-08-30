@@ -44,12 +44,22 @@ const TMP_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-test-'));
 process.env.STATE_DIR        = TMP_DIR;
 process.env.AGENT_STATUS_DIR = TMP_DIR;
 process.env.MOCK_JOBS        = '1';
-process.env.REPO_DIR         = path.join(__dirname, '../../..');
+
+// __tests__ -> orchestrator -> muaddib's own root: always exactly 2 levels
+// up regardless of whether muaddib is nested under a consuming project or
+// is itself the repo (self-hosting). Feeding this straight into REPO_DIR
+// works either way, since runner.js's own resolveMuaddibRoot() is a no-op
+// when it's already given the muaddib root directly (muaddib never nests
+// itself) — no need to re-derive "3 levels up to escape the nesting" here,
+// which only worked for the nested case and silently broke self-hosting
+// (hung the whole suite: notify.sh got written to a path under a directory
+// that was never created, and later mkScript()'s path.relative() assumed
+// the same wrong root).
+const MUADDIB_DIR = path.join(__dirname, '../..');
+process.env.REPO_DIR = MUADDIB_DIR;
 
 const { run, evaluateCondition } = require('../runner');
 const stateModule = require('../state');
-
-const MUADDIB_DIR = path.join(process.env.REPO_DIR, 'muaddib');
 const STATE_CLI   = path.join(__dirname, '../state-cli.js');
 const EMIT_CLI    = path.join(__dirname, '../emit-cli.js');
 
