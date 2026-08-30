@@ -1,7 +1,7 @@
 # Dispatch daemon image — lightweight Node.js container that listens for Linear
 # webhooks via a cloudflared tunnel and routes new tickets to worker containers.
 # BUILD CONTEXT IS THE REPO ROOT:
-#   docker build -f muaddib/Dockerfile.dispatch -t quotethat-dispatch .
+#   docker build -f muaddib/Dockerfile.dispatch -t <project>-dispatch .
 #
 # Does NOT bake source — the repo is bind-mounted at runtime (/repo).
 # Requires /var/run/docker.sock so it can call `docker compose` to spawn workers.
