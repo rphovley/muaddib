@@ -94,9 +94,14 @@ function startService(svc) {
   const logFile = path.join(AGENT_STATUS_DIR, `worker-${WORKER}-${svc.name}.log`);
   const opts = { logFile };
   if (!svc.readyEvent) { startJob(WORKER, svc.name, cmd, {}, opts); return Promise.resolve(); }
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const sub = subscribe(WORKER, (ev) => {
-      if (ev.job === svc.name && ev.event === svc.readyEvent) { sub.kill(); resolve(); }
+      if (ev.job !== svc.name) return;
+      if (ev.event === svc.readyEvent) { sub.kill(); resolve(); }
+      else if (ev.event === 'failed') {
+        sub.kill();
+        reject(new Error(`service "${svc.name}" failed before emitting ${svc.readyEvent} (exitCode=${ev.payload && ev.payload.exitCode})`));
+      }
     });
     startJob(WORKER, svc.name, cmd, {}, opts);
   });
