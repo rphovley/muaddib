@@ -71,3 +71,32 @@ export MUADDIB_PORT_API MUADDIB_PORT_DB MUADDIB_PORT_SKETCH
 # yields "Unknown command". Empty when unset → workers use the account default.
 MUADDIB_MODEL="$(jq -r '.model // empty' "$_MUADDIB_CONFIG")"
 export MUADDIB_MODEL
+
+# Ticket backend selection. Committed in the manifest so a project *declares* its
+# backend instead of relying on an ad-hoc TICKET_SOURCE env var (which still wins
+# as an override where it's forwarded — see spawn-worker.sh). Default "linear"
+# keeps existing manifests working. Validated here — a typo'd backend should fail
+# loud, not silently fall back (matches the "no guessed/empty values" convention
+# above).
+MUADDIB_TICKET_SOURCE="$(jq -r '.ticketSource // "linear"' "$_MUADDIB_CONFIG")"
+case "$MUADDIB_TICKET_SOURCE" in
+    linear|github) ;;
+    *)
+        echo "muaddib: $_MUADDIB_CONFIG has invalid \"ticketSource\": \"$MUADDIB_TICKET_SOURCE\" (must be \"linear\" or \"github\")" >&2
+        return 1 2>/dev/null || exit 1
+        ;;
+esac
+export MUADDIB_TICKET_SOURCE
+
+# GitHub backend identifiers. Empty/absent for Linear-only projects — Linear's own
+# identifier stays the LINEAR_TEAM_ID secret env var, not the committed manifest.
+# `// empty` so a Linear project isn't forced to carry them; when ticketSource is
+# "github" both are required, so fail loud if either is missing.
+MUADDIB_GITHUB_OWNER="$(jq -r '.githubOwner // empty' "$_MUADDIB_CONFIG")"
+MUADDIB_GITHUB_REPO="$(jq -r '.githubRepo // empty' "$_MUADDIB_CONFIG")"
+export MUADDIB_GITHUB_OWNER MUADDIB_GITHUB_REPO
+
+if [ "$MUADDIB_TICKET_SOURCE" = "github" ] && { [ -z "$MUADDIB_GITHUB_OWNER" ] || [ -z "$MUADDIB_GITHUB_REPO" ]; }; then
+    echo "muaddib: $_MUADDIB_CONFIG sets \"ticketSource\":\"github\" but is missing \"githubOwner\"/\"githubRepo\"" >&2
+    return 1 2>/dev/null || exit 1
+fi

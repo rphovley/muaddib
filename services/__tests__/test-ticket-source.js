@@ -29,8 +29,19 @@ function fakeGraphql(respond) {
 // ─── factory ───────────────────────────────────────────────────────────────────
 
 async function testDefaultIsLinear() {
-  const src = getTicketSource();
-  assert.strictEqual(src.name, 'linear');
+  // Verifies the true default (no env var set) — must not inherit whatever
+  // TICKET_SOURCE happens to be ambient in the process (e.g. a self-hosted
+  // worker dispatched via muaddib-task.sh sets TICKET_SOURCE=raw for itself,
+  // which every process it spawns — including this check suite — inherits).
+  const prev = process.env.TICKET_SOURCE;
+  delete process.env.TICKET_SOURCE;
+  try {
+    const src = getTicketSource();
+    assert.strictEqual(src.name, 'linear');
+  } finally {
+    if (prev === undefined) delete process.env.TICKET_SOURCE;
+    else process.env.TICKET_SOURCE = prev;
+  }
 }
 
 async function testExplicitLinear() {
@@ -153,7 +164,10 @@ async function testDeregisterWatch() {
 
 async function testVerifySignature() {
   const crypto = require('crypto');
-  const src = getTicketSource();
+  // Explicit — this test exercises Linear's real HMAC check specifically,
+  // not factory-default resolution, so it shouldn't depend on (or be broken
+  // by) whatever TICKET_SOURCE happens to be ambient in the process.
+  const src = getTicketSource('linear');
   const secret = 'sekret';
   const body = Buffer.from('{"a":1}');
   const sig = crypto.createHmac('sha256', secret).update(body).digest('hex');
