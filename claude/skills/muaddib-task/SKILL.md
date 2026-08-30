@@ -240,16 +240,13 @@ Print the PR URL as the final line of output.
 
 ## Step 11 — Enter FEEDBACK mode (fleet only)
 
-Skip if `WORKER_INDEX` is not set. Skip if `WORKER_INDEX` is set but the task has no associated Linear ticket (the feedback loop requires a Linear ticket for comment routing; leave a note in the PR body that feedback should be left as PR comments and the reviewer should re-run `/muaddib-task` manually).
+Skip if `WORKER_INDEX` is not set. Skip if `WORKER_INDEX` is set but the task has no ticket in Linear (the platform) specifically — not just "a tracked ticket" of any kind (a GitHub issue does not count here). Note: `watch-feedback.sh` itself is GitHub-native, not Linear-dependent — it watches PR comments via a GitHub webhook, nothing about the watcher mechanism requires Linear. This condition isn't gating on a technical requirement of the watcher; the actual reasoning for restricting it to Linear tickets specifically is unresolved. If skipping, leave a note in the PR body that feedback should be left as PR comments and the reviewer should re-run `/muaddib-task` manually.
 
 ```bash
 printf 'FEEDBACK %s\n' "$(date -u +%FT%TZ)" \
     > "/var/run/agent-status/worker-${WORKER_INDEX}.state" 2>/dev/null || true
 
 PR_NUMBER="$PR_NUMBER" \
-LINEAR_ISSUE_ID="<issue UUID if known>" \
-LINEAR_ISSUE_IDENTIFIER="<identifier if known>" \
-LINEAR_TEAM_ID="<teamId if known>" \
 nohup /home/worker/repo/muaddib/watch-feedback.sh \
     > /tmp/feedback-watcher.log 2>&1 &
 ```
