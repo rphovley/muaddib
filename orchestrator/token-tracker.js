@@ -5,27 +5,41 @@ const os = require('os');
 const https = require('https');
 const http = require('http');
 
-const CLAUDE_PROJECTS = process.env.CLAUDE_PROJECTS_DIR
-  || path.join(os.homedir(), '.claude', 'projects');
+// Read fresh on every call rather than cached at module load — tests (and
+// anything else sourcing this as a live-reloadable module) override this env
+// var at runtime and expect it to take effect immediately.
+function claudeProjectsDir() {
+  return process.env.CLAUDE_PROJECTS_DIR || path.join(os.homedir(), '.claude', 'projects');
+}
 const AGENT_STATUS_DIR = process.env.AGENT_STATUS_DIR || '/var/run/agent-status';
 
 function tokenFile(worker) {
   return path.join(AGENT_STATUS_DIR, `worker-${worker}-tokens.json`);
 }
 
+// Small tolerance for clock skew between Date.now() (sinceMs is captured via
+// this) and the filesystem's own mtime stamping — observed empirically in a
+// containerized environment: a file's mtimeMs can read a fraction of a
+// millisecond *earlier* than a Date.now() captured immediately before
+// writing it, which would otherwise wrongly exclude a session written right
+// at the cutoff. Comfortably larger than any observed skew (sub-ms) and far
+// smaller than any realistic gap to an actually-unrelated older session.
+const MTIME_SKEW_TOLERANCE_MS = 100;
+
 // Find JSONL session files modified at or after sinceMs across all project dirs.
 function findRecentSessions(sinceMs) {
   const result = [];
   try {
-    for (const proj of fs.readdirSync(CLAUDE_PROJECTS)) {
-      const dir = path.join(CLAUDE_PROJECTS, proj);
+    const claudeProjects = claudeProjectsDir();
+    for (const proj of fs.readdirSync(claudeProjects)) {
+      const dir = path.join(claudeProjects, proj);
       let entries;
       try { entries = fs.readdirSync(dir); } catch (_) { continue; }
       for (const f of entries) {
         if (!f.endsWith('.jsonl')) continue;
         const fp = path.join(dir, f);
         try {
-          if (fs.statSync(fp).mtimeMs >= sinceMs) result.push(fp);
+          if (fs.statSync(fp).mtimeMs >= sinceMs - MTIME_SKEW_TOLERANCE_MS) result.push(fp);
         } catch (_) {}
       }
     }
