@@ -24,6 +24,7 @@
 
 const { linearSource, createLinearSource } = require('./linear');
 const { rawSource } = require('./raw');
+const { githubSource, createGithubSource } = require('./github');
 
 function getTicketSource(kind) {
   const which = (kind || process.env.TICKET_SOURCE || 'linear').toLowerCase();
@@ -33,14 +34,13 @@ function getTicketSource(kind) {
     case 'raw':
       return rawSource;
     case 'github':
-      // Declared-but-not-yet-implemented backend. The manifest schema and
-      // read-config.sh already accept ticketSource="github" to unblock a future
-      // GitHub backend, so this value can legitimately reach a worker — fail with
-      // a clear, intentional message rather than the generic "unknown" case below.
-      throw new Error('ticket source "github" is declared in the manifest but not yet implemented (no GitHub backend exists yet)');
+      // Read-only GitHub Issues backend (see ./github.js). Implements the read
+      // path — fetchTicket(number) → a Linear-shaped ticket; write/watch methods
+      // are explicit "not implemented" stubs pending a later milestone.
+      return githubSource;
     default:
-      throw new Error(`unknown ticket source: "${which}" (supported: linear, raw)`);
+      throw new Error(`unknown ticket source: "${which}" (supported: linear, raw, github)`);
   }
 }
 
-module.exports = { getTicketSource, createLinearSource };
+module.exports = { getTicketSource, createLinearSource, createGithubSource };
