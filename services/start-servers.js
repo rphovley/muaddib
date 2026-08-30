@@ -15,11 +15,13 @@ const net = require('net');
 const https = require('https');
 const { spawn, spawnSync } = require('child_process');
 const { readMuaddibConfig } = require('./muaddib-config');
+const { resolveMuaddibRoot } = require('../orchestrator/muaddib-root');
 
 const WORKER = process.env.WORKER_INDEX || '1';
 const REPO = process.env.REPO_DIR || '/home/worker/repo';
-const EMIT_CLI = path.join(REPO, 'muaddib/orchestrator/emit-cli.js');
-const STATE_CLI = path.join(REPO, 'muaddib/orchestrator/state-cli.js');
+const MUADDIB_ROOT = resolveMuaddibRoot(REPO);
+const EMIT_CLI = path.join(MUADDIB_ROOT, 'orchestrator/emit-cli.js');
+const STATE_CLI = path.join(MUADDIB_ROOT, 'orchestrator/state-cli.js');
 
 function log(msg) { process.stdout.write(`[start-servers w${WORKER}] ${msg}\n`); }
 

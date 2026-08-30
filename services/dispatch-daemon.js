@@ -28,9 +28,10 @@ const {
   flush,
 } = require("./dispatch-queue");
 const { readMuaddibConfig } = require("./muaddib-config");
+const { resolveMuaddibRoot } = require("../orchestrator/muaddib-root");
 
 const REPO_ROOT = process.env.REPO_ROOT || path.join(__dirname, "../..");
-const FLEET_DIR = path.join(REPO_ROOT, "muaddib");
+const FLEET_DIR = resolveMuaddibRoot(REPO_ROOT);
 const SPAWN_WORKER = path.join(FLEET_DIR, "bin/spawn-worker.sh");
 
 // Lazy — config is only read (and validated) the first time something

@@ -27,10 +27,12 @@ const { startJob } = require('./job');
 const state = require('./state');
 const { noteStatus, AGENT_STATUS_DIR } = require('./status');
 const { recordStep } = require('./token-tracker');
+const { resolveMuaddibRoot } = require('./muaddib-root');
 
 const REPO = process.env.REPO_DIR || '/home/worker/repo';
+const MUADDIB_ROOT = resolveMuaddibRoot(REPO);
 const MOCK_JOBS = process.env.MOCK_JOBS === '1';
-const STATE_CLI = path.join(REPO, 'muaddib/orchestrator/state-cli.js');
+const STATE_CLI = path.join(MUADDIB_ROOT, 'orchestrator/state-cli.js');
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -183,7 +185,7 @@ function makeNotifyFlusher(worker, notifyScript) {
 
 async function runScriptStep(worker, step) {
   const extraEnv = buildExtraEnv(worker, step.stateReads);
-  const scriptPath = path.join(REPO, 'muaddib', step.script);
+  const scriptPath = path.join(MUADDIB_ROOT, step.script);
   const env = { ...process.env, ...extraEnv, WORKER_INDEX: String(worker) };
   const runtime = scriptPath.endsWith('.js') ? 'node' : 'bash';
 
@@ -199,7 +201,7 @@ async function runScriptStep(worker, step) {
   if (output) process.stdout.write(output);
 
   if (r.status !== 0) {
-    throw new Error(`script ${step.id} exited ${r.status} — see muaddib/status/worker-${worker}-${step.id}.log`);
+    throw new Error(`script ${step.id} exited ${r.status} — see status/worker-${worker}-${step.id}.log`);
   }
 }
 
@@ -226,7 +228,7 @@ async function runClaudeTuiStep(worker, step, ticketId) {
     WORKER_INDEX: String(worker),
   };
   const cmd = claudeTuiCmd(worker, step, ticketId);
-  const notifyScript = path.join(REPO, 'muaddib/services/notify.sh');
+  const notifyScript = path.join(MUADDIB_ROOT, 'services/notify.sh');
 
   // Spawns notify.sh directly — no bus `emit` here. runClaudeTuiStep already
   // runs inside this process, so it doesn't need the notify event's other
@@ -341,7 +343,7 @@ async function run(worker, workflowPath, ticketId) {
   const definition = JSON.parse(fs.readFileSync(workflowPath, 'utf8'));
   console.log(`[runner w${worker}] workflow: ${definition.name}`);
 
-  const notifyScript = path.join(REPO, 'muaddib/services/notify.sh');
+  const notifyScript = path.join(MUADDIB_ROOT, 'services/notify.sh');
   const flushNotify = makeNotifyFlusher(worker, notifyScript);
 
   for (const step of definition.workflow) {
