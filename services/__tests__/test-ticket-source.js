@@ -178,12 +178,12 @@ async function testGithubRequiresOwnerRepo() {
 
 async function testGithubWatchMethodsNotImplemented() {
   const src = createGithubSource({ api: fakeApi({}), owner: 'o', repo: 'r' });
-  assert.throws(() => src.graphql(), /not implemented in the read-only GitHub backend/);
+  assert.throws(() => src.graphql(), /later-milestone stub in the GitHub backend/);
   // verifySignature stays a non-throwing false (like raw.js) so a stray webhook
   // POST is cleanly rejected at the gate instead of crashing the handler.
   assert.strictEqual(src.verifySignature(), false);
-  await assert.rejects(() => src.registerWatch(), /not implemented in the read-only GitHub backend/);
-  await assert.rejects(() => src.deregisterWatch(), /not implemented in the read-only GitHub backend/);
+  await assert.rejects(() => src.registerWatch(), /later-milestone stub in the GitHub backend/);
+  await assert.rejects(() => src.deregisterWatch(), /later-milestone stub in the GitHub backend/);
 }
 
 // ─── GitHub backend (write path) ─────────────────────────────────────────────────

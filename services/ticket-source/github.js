@@ -133,13 +133,13 @@ function createGithubSource(opts = {}) {
   }
 
   const notImplemented = (method) => {
-    throw new Error(`${method}() is not implemented in the read-only GitHub backend`);
+    throw new Error(`${method}() is a later-milestone stub in the GitHub backend`);
   };
 
   return {
     name: 'github',
 
-    // No escape-hatch client in the read-only backend.
+    // No raw-client escape hatch yet; a later-milestone (graphql) concern.
     graphql() {
       notImplemented('graphql');
     },
