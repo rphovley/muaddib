@@ -9,8 +9,8 @@
 
 const fs = require('fs');
 const path = require('path');
-const https = require('https');
 const { subscribe } = require('./events');
+const { getTicketSource } = require('../services/ticket-source');
 const { startJob } = require('./job');
 const { run } = require('./runner');
 const { noteStatus, AGENT_STATUS_DIR } = require('./status');
@@ -47,29 +47,18 @@ function note(s) {
 // ─── Linear work-type detection ──────────────────────────────────────────────
 
 function getWorkType() {
-  return new Promise((resolve) => {
-    if (!LINEAR_ISSUE || !LINEAR_API_KEY) return resolve('feature');
-    const body = JSON.stringify({
-      query: `query { issue(id:"${LINEAR_ISSUE}") { labels { nodes { name } } } }`,
-    });
-    const req = https.request({
-      hostname: 'api.linear.app', path: '/graphql', method: 'POST',
-      headers: { Authorization: LINEAR_API_KEY, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-    }, (res) => {
-      let data = '';
-      res.on('data', (c) => { data += c; });
-      res.on('end', () => {
-        try {
-          const labels = (JSON.parse(data)?.data?.issue?.labels?.nodes || [])
-            .map((l) => l.name.toLowerCase());
-          resolve(['bug', 'fix', 'defect'].some((t) => labels.includes(t)) ? 'bug' : 'feature');
-        } catch (_) { resolve('feature'); }
-      });
-    });
-    req.on('error', () => resolve('feature'));
-    req.write(body);
-    req.end();
-  });
+  if (!LINEAR_ISSUE || !LINEAR_API_KEY) return Promise.resolve('feature');
+  // getTicketSource() runs inside the chain so a misconfigured TICKET_SOURCE
+  // (a synchronous throw) degrades to 'feature' via .catch, exactly like a
+  // network/GraphQL error — never crashing orchestrator startup.
+  return Promise.resolve()
+    .then(() => getTicketSource().fetchTicket(LINEAR_ISSUE))
+    .then((ticket) => {
+      const labels = ((ticket && ticket.labels && ticket.labels.nodes) || [])
+        .map((l) => l.name.toLowerCase());
+      return ['bug', 'fix', 'defect'].some((t) => labels.includes(t)) ? 'bug' : 'feature';
+    })
+    .catch(() => 'feature');
 }
 
 // ─── service startup ─────────────────────────────────────────────────────────
