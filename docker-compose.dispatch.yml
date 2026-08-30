@@ -4,7 +4,7 @@
 # Managed via dispatch.sh (which sets HOST_FLEET_DIR automatically):
 #   npm run muaddib:start   →  dispatch.sh --bg   (detached, restart: unless-stopped)
 #   npm run muaddib:stop    →  dispatch.sh --stop  (deregisters webhook, removes container)
-#   docker compose -p quotethat-dispatch -f muaddib/docker-compose.dispatch.yml logs -f
+#   docker compose -p <project>-dispatch -f muaddib/docker-compose.dispatch.yml logs -f
 #
 # Prerequisites — export in shell before muaddib:start:
 #   CLAUDE_CODE_OAUTH_TOKEN  (claude setup-token)
@@ -16,7 +16,7 @@ services:
     build:
       context: ..
       dockerfile: muaddib/Dockerfile.dispatch
-    image: ${MUADDIB_DISPATCH_IMAGE:-quotethat-dispatch:latest}
+    image: ${MUADDIB_DISPATCH_IMAGE:?run via dispatch.sh — it sets MUADDIB_DISPATCH_IMAGE automatically}
     restart: unless-stopped
     env_file:
       - ../.muaddib/secrets.env
