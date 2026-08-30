@@ -287,6 +287,28 @@ await test('run(): graphql error propagates', async () => {
   assert('graphql error propagates', threw);
 });
 
+await test('run(): TICKET_SOURCE=raw uses TASK text directly, no gql call', async () => {
+  const failIfCalled = async () => { throw new Error('gql should not be called for a raw ticket'); };
+  const result = await run(failIfCalled, {
+    worker: 17, repo: makeRepo(), ticketSource: 'raw',
+    task: 'Fix the flaky retry test in payments',
+  });
+  assert('planStatus is not_found (no comment thread on a raw ticket)', result.planStatus === 'not_found');
+  assert('title is the task text', result.issue.title === 'Fix the flaky retry test in payments');
+  assert('identifier is a slug, not a Linear ID', /^fix-the-flaky/.test(result.issue.identifier));
+  assert('url is null (no external ticket)', result.issue.url === null);
+});
+
+await test('run(): TICKET_SOURCE=raw throws on empty TASK', async () => {
+  let threw = false;
+  try {
+    await run(null, { worker: 18, repo: makeRepo(), ticketSource: 'raw', task: '' });
+  } catch (err) {
+    threw = err.message.includes('TASK is empty');
+  }
+  assert('throws a clear error', threw);
+});
+
 // ─── results ──────────────────────────────────────────────────────────────────
 
 console.log(`\n${'─'.repeat(60)}`);

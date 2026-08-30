@@ -1,13 +1,24 @@
 #!/usr/bin/env node
 'use strict';
-// Fetches a Linear ticket (identifier + title + comments) from $TASK URL,
-// detects an existing "## Plan" comment, and writes worker state.
-// Outputs the full issue JSON to /tmp/ticket-${WORKER_INDEX}.json.
+// Fetches the ticket for this worker's task and writes worker state.
+// Outputs the ticket JSON to /tmp/ticket-${WORKER_INDEX}.json.
+//
+// TICKET_SOURCE=raw: the whole TASK text IS the ticket — no identifier to
+// extract, no network call, no comments to scan for a plan (there's no
+// comment thread on a raw ticket at all). Routes through
+// services/ticket-source's raw backend.
+//
+// Otherwise (Linear, the default): keeps its own richer, comment-aware query
+// rather than going through TicketSource's fetchTicket() — that interface
+// method doesn't return comments, and this script hydrates .muaddib/plan.md
+// from an existing "## Plan" comment, which needs them. Deliberately not
+// generalized further than the raw case actually requires.
 
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const state = require('../orchestrator/state');
+const { getTicketSource } = require('../services/ticket-source');
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -111,6 +122,34 @@ async function run(gql, opts = {}) {
   const worker = opts.worker ?? Number(process.env.WORKER_INDEX ?? '0');
   const task = (opts.task ?? process.env.TASK ?? '').trim();
   const repo = (opts.repo ?? process.env.REPO ?? process.cwd()).trim();
+  const ticketSourceKind = (opts.ticketSource ?? process.env.TICKET_SOURCE ?? 'linear').toLowerCase();
+
+  if (ticketSourceKind === 'raw') {
+    if (!task) throw new Error('TICKET_SOURCE=raw but TASK is empty — nothing to use as the ticket');
+
+    process.stderr.write('[fetch-ticket] raw source — using TASK text directly, no fetch\n');
+
+    const source = opts.rawSource ?? getTicketSource('raw');
+    const issue = await source.fetchTicket(task);
+
+    const outPath = `/tmp/ticket-${worker}.json`;
+    fs.writeFileSync(outPath, JSON.stringify(issue, null, 2) + '\n');
+    process.stderr.write(`[fetch-ticket] wrote ${outPath}\n`);
+
+    // No comment thread on a raw ticket — nothing to hydrate .muaddib/plan.md from.
+    const planStatus = 'not_found';
+
+    state.merge(worker, {
+      ticket_identifier: issue.identifier,
+      ticket_url: issue.url,
+      ticket_title: issue.title,
+      plan_status: planStatus,
+    });
+
+    process.stderr.write(`[fetch-ticket] done — plan_status=${planStatus}\n`);
+
+    return { issue, planStatus };
+  }
 
   const identifier = extractIdentifier(task);
   if (!identifier) throw new Error(`Could not extract a Linear identifier from TASK: "${task}"`);

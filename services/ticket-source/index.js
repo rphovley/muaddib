@@ -1,8 +1,9 @@
 'use strict';
 // TicketSource — the one internal seam every ticket-backend touch point in
-// muaddib goes through. Today the only implementation is Linear; the milestone
-// this lands under adds GitHub Issues as a sibling. Callers ask for a source
-// via getTicketSource() and never import a backend directly.
+// muaddib goes through. Implementations: Linear, and "raw" (free-form task
+// text — no external backend, see ./raw.js). The milestone this lands under
+// adds GitHub Issues as a further sibling. Callers ask for a source via
+// getTicketSource() and never import a backend directly.
 //
 // The interface (see services/ticket-source/linear.js for the Linear impl):
 //
@@ -19,14 +20,17 @@
 // Select a backend with the TICKET_SOURCE env var (default: "linear").
 
 const { linearSource, createLinearSource } = require('./linear');
+const { rawSource } = require('./raw');
 
 function getTicketSource(kind) {
   const which = (kind || process.env.TICKET_SOURCE || 'linear').toLowerCase();
   switch (which) {
     case 'linear':
       return linearSource;
+    case 'raw':
+      return rawSource;
     default:
-      throw new Error(`unknown ticket source: "${which}" (supported: linear)`);
+      throw new Error(`unknown ticket source: "${which}" (supported: linear, raw)`);
   }
 }
 
