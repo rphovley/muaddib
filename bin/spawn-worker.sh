@@ -119,8 +119,17 @@ if ! docker image inspect "$MUADDIB_WORKER_IMAGE" >/dev/null 2>&1; then
     PROJECT_DOCKERFILE="$REPO_ROOT/.muaddib/Dockerfile.worker"
     WORKER_DOCKERFILE="$FLEET_DIR/Dockerfile.worker"
     [ -f "$PROJECT_DOCKERFILE" ] && WORKER_DOCKERFILE="$PROJECT_DOCKERFILE"
+
+    # Consuming projects have muaddib nested at REPO_ROOT/muaddib, so
+    # Dockerfile.worker's COPY sources are prefixed muaddib/ (its default).
+    # Self-hosting builds with REPO_ROOT already at muaddib's own root — no
+    # prefix needed, so it's overridden to empty.
+    MUADDIB_DOCKER_PREFIX="muaddib/"
+    [ -d "$REPO_ROOT/muaddib" ] || MUADDIB_DOCKER_PREFIX=""
+
     docker build -f "$FLEET_DIR/Dockerfile.base" -t muaddib-base:latest "$REPO_ROOT"
-    docker build -f "$WORKER_DOCKERFILE" -t "$MUADDIB_WORKER_IMAGE" "$REPO_ROOT"
+    docker build --build-arg "MUADDIB_PREFIX=$MUADDIB_DOCKER_PREFIX" \
+        -f "$WORKER_DOCKERFILE" -t "$MUADDIB_WORKER_IMAGE" "$REPO_ROOT"
 fi
 
 # MUADDIB_COMPOSE_FILES (base + project overlay, if any) comes from
