@@ -39,7 +39,7 @@ run_test() {
 # FAKE_NPM_EXIT controls npm exit code (default 0).
 make_fake_repo() {
   local dir="$1"
-  mkdir -p "$dir/bin" "$dir/muaddib/orchestrator" "$dir/muaddib/scripts"
+  mkdir -p "$dir/bin" "$dir/muaddib/orchestrator" "$dir/muaddib/scripts" "$dir/.muaddib"
 
   cat > "$dir/bin/git" <<'EOF'
 #!/usr/bin/env bash
@@ -58,8 +58,23 @@ EOF
   chmod +x "$dir/bin/npm"
 
   cp "$STATE_CLI" "$dir/muaddib/orchestrator/state-cli.js"
-  cp "$REPO_ROOT/orchestrator/state.js"  "$dir/muaddib/orchestrator/state.js"
+  cp "$REPO_ROOT/orchestrator/state.js"      "$dir/muaddib/orchestrator/state.js"
+  cp "$REPO_ROOT/orchestrator/file-lock.js"  "$dir/muaddib/orchestrator/file-lock.js"
   cp "$CHECKS_SCRIPT" "$dir/muaddib/scripts/run-checks.sh"
+
+  # run-checks.sh reads .muaddib/manifest.json for the projects[] array —
+  # shaped to match every FAKE_DIFF path the tests below actually use.
+  cat > "$dir/.muaddib/manifest.json" <<'EOF'
+{
+  "projectName": "test",
+  "projects": [
+    { "name": "api", "path": "projects/api", "checkScript": "api:check" },
+    { "name": "portal", "path": "projects/portal", "checkScript": "portal:check" },
+    { "name": "homeowner", "path": "projects/homeowner", "checkScript": "homeowner:check" },
+    { "name": "app_install", "path": "projects/app_install", "checkScript": "app_install:check" }
+  ]
+}
+EOF
 }
 
 # Run run-checks.sh inside a fake repo and return its exit code.
@@ -124,10 +139,12 @@ test_multi_project_one_fails() {
   local repo="$tmp/repo"
   make_fake_repo "$repo"
 
-  # Selective npm stub: fail for portal, pass for everything else
+  # Selective npm stub: fail for portal, pass for everything else.
+  # run-checks.sh invokes `npm run <checkScript>` — the script *name*
+  # (from manifest.json, e.g. "portal:check"), never the project path.
   cat > "$repo/bin/npm" <<'EOF'
 #!/usr/bin/env bash
-if [[ "$*" == *"projects/portal"* ]]; then exit 1; fi
+if [[ "$*" == *"portal:check"* ]]; then exit 1; fi
 exit 0
 EOF
   chmod +x "$repo/bin/npm"
