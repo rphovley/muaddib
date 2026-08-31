@@ -23,6 +23,10 @@ function titleize(text) {
 const rawSource = {
   name: 'raw',
 
+  // No external system to watch — a raw ticket is the task text itself, so the
+  // dispatch daemon has nothing to poll or subscribe to for this backend.
+  watchMode: 'none',
+
   // No backend API to escape-hatch into.
   graphql() {
     throw new Error('raw ticket source has no backend — graphql() is not supported');

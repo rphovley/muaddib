@@ -8,9 +8,15 @@
 // The interface (see services/ticket-source/linear.js for the Linear impl):
 //
 //   name                                        string identifier of the backend
+//   watchMode                                   how the dispatch daemon learns about issues:
+//                                                 'webhook' (Linear — registerWatch + verifySignature),
+//                                                 'poll'    (GitHub — pollIssues on an interval),
+//                                                 'none'    (raw — no external system to watch)
+//   signatureHeader                             (webhook mode) inbound header carrying the signature
 //   graphql(query, variables)                   raw client escape hatch (backend-specific)
 //   verifySignature(rawBody, header, secret)    validate an inbound webhook signature
 //   fetchTicket(id)                          -> the ticket object (or null)
+//   pollIssues()                             -> (poll mode) the open issues, normalized like fetchTicket
 //   postComment(id, body)                    -> { commentId }
 //   mentionUser(handle)                      -> comment-body markup that notifies handle
 //   createSubIssue(parentId, title, desc)    -> the created child ticket

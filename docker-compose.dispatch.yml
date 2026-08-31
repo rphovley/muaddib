@@ -35,8 +35,12 @@ services:
       # saved when the container was first created.
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:?export CLAUDE_CODE_OAUTH_TOKEN before running muaddib:start}
       GITHUB_TOKEN: ${GITHUB_TOKEN:?export GITHUB_TOKEN before running muaddib:start}
-      LINEAR_API_KEY: ${LINEAR_API_KEY:?export LINEAR_API_KEY before running muaddib:start}
-      LINEAR_TEAM_ID: ${LINEAR_TEAM_ID:?export LINEAR_TEAM_ID before running muaddib:start}
+      # LINEAR_* are required only for a Linear (webhook) ticket source — the JS
+      # validateEnv() enforces the real per-source requirement at startup. Left
+      # optional here so a github-configured daemon (watchMode 'poll') can start
+      # without them.
+      LINEAR_API_KEY: ${LINEAR_API_KEY:-}
+      LINEAR_TEAM_ID: ${LINEAR_TEAM_ID:-}
       DISPATCH_PORT: ${DISPATCH_PORT:-3999}
     volumes:
       # Repo bind-mount: daemon and spawn-worker.sh read workflows, scripts, etc.

@@ -32,7 +32,13 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
-const { resolveRoute, handleEvent, cleanupWorkerFiles } = require("../dispatch-daemon");
+const {
+  resolveRoute,
+  handleEvent,
+  dispatchIssue,
+  pollAndDispatch,
+  cleanupWorkerFiles,
+} = require("../dispatch-daemon");
 const { writeManifest } = require("./test-utils");
 
 function assertRoute(labels, expectedEntryPoint) {
@@ -571,11 +577,13 @@ async function testRealStartupFailsCleanlyOnBadConfig() {
   }
 }
 
-// ─── validateEnv ──────────────────────────────────────────────────────────────
-// validateEnv() gates startup on the required env vars. LINEAR_TEAM_ID is
-// captured as a module-load-time const, so these run in a subprocess with a
-// controlled env (like the config tests above) rather than mutating process.env
-// in-process, where that const would already be frozen.
+// ─── validateEnv (source-aware) ─────────────────────────────────────────────────
+// validateEnv() now reads the manifest (via ticketSource()) to decide which vars
+// are required: LINEAR_* only for a webhook source, GITHUB_OWNER/GITHUB_REPO for
+// the github source, and the account tokens always. So these run in a subprocess
+// with BOTH a controlled env and a REPO_ROOT pointing at a temp manifest — the
+// ticket source and the env vars are under test together. (LINEAR_TEAM_ID is also
+// a module-load-time const, another reason a fresh process is needed.)
 
 function callValidateEnvInSubprocess(env) {
   return spawnSync(
@@ -585,31 +593,100 @@ function callValidateEnvInSubprocess(env) {
   );
 }
 
-async function testValidateEnvPassesWithAllTokens() {
-  const r = callValidateEnvInSubprocess({
-    ...process.env,
-    LINEAR_API_KEY: "test-key",
-    LINEAR_TEAM_ID: "test-team",
-    CLAUDE_CODE_OAUTH_TOKEN: "test-oauth",
-    GITHUB_TOKEN: "test-gh",
-  });
+// Runs validateEnv() against a temp manifest with a clean-slate env plus the
+// given overrides. Returns the spawnSync result.
+function runValidateEnv(manifest, envOverrides) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "muaddib-test-"));
+  writeManifest(tmpDir, JSON.stringify(manifest));
+  const env = { ...process.env };
+  // Clear every var under test so the ambient (fleet-worker) env can't leak in.
+  for (const k of [
+    "LINEAR_API_KEY",
+    "LINEAR_TEAM_ID",
+    "GITHUB_OWNER",
+    "GITHUB_REPO",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "GITHUB_TOKEN",
+    "TICKET_SOURCE",
+  ]) {
+    delete env[k];
+  }
+  Object.assign(env, envOverrides, { REPO_ROOT: tmpDir });
+  try {
+    return callValidateEnvInSubprocess(env);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+async function testValidateEnvWebhookPassesWithLinear() {
+  const r = runValidateEnv(
+    { projectName: "p", ticketSource: "linear" },
+    {
+      LINEAR_API_KEY: "test-key",
+      LINEAR_TEAM_ID: "test-team",
+      CLAUDE_CODE_OAUTH_TOKEN: "test-oauth",
+      GITHUB_TOKEN: "test-gh",
+    },
+  );
   if (r.status !== 0)
     throw new Error(
-      `expected validateEnv() to pass with all four vars set, got exit ${r.status}: ${r.stderr}`,
+      `expected validateEnv() to pass for a linear source with all tokens, got exit ${r.status}: ${r.stderr}`,
     );
 }
 
+async function testValidateEnvWebhookThrowsWithoutLinear() {
+  const r = runValidateEnv(
+    { projectName: "p", ticketSource: "linear" },
+    { CLAUDE_CODE_OAUTH_TOKEN: "test-oauth", GITHUB_TOKEN: "test-gh" },
+  );
+  if (r.status === 0)
+    throw new Error(
+      "expected validateEnv() to throw for a linear source with LINEAR_* absent, got exit 0",
+    );
+  if (!r.stderr.includes("LINEAR_API_KEY") || !r.stderr.includes("LINEAR_TEAM_ID"))
+    throw new Error(`error should name the missing LINEAR_* vars, got: ${r.stderr}`);
+}
+
+async function testValidateEnvGithubIgnoresLinear() {
+  // A github source needs no LINEAR_* at all; owner/repo come from the manifest.
+  const r = runValidateEnv(
+    { projectName: "p", ticketSource: "github", githubOwner: "o", githubRepo: "r" },
+    { CLAUDE_CODE_OAUTH_TOKEN: "test-oauth", GITHUB_TOKEN: "test-gh" },
+  );
+  if (r.status !== 0)
+    throw new Error(
+      `expected validateEnv() to pass for a github source (no LINEAR_*, owner/repo from manifest), got exit ${r.status}: ${r.stderr}`,
+    );
+}
+
+async function testValidateEnvGithubThrowsWithoutOwnerRepo() {
+  // github source, but the manifest omits githubOwner/githubRepo and the env
+  // supplies neither — the daemon can't resolve a repo to poll.
+  const r = runValidateEnv(
+    { projectName: "p", ticketSource: "github" },
+    { CLAUDE_CODE_OAUTH_TOKEN: "test-oauth", GITHUB_TOKEN: "test-gh" },
+  );
+  if (r.status === 0)
+    throw new Error(
+      "expected validateEnv() to throw for a github source with no owner/repo, got exit 0",
+    );
+  if (!r.stderr.includes("GITHUB_OWNER") || !r.stderr.includes("GITHUB_REPO"))
+    throw new Error(`error should name GITHUB_OWNER/GITHUB_REPO, got: ${r.stderr}`);
+  // A github source must NOT demand LINEAR_* — that's the whole point.
+  if (r.stderr.includes("LINEAR_API_KEY"))
+    throw new Error(`github source should not require LINEAR_API_KEY, got: ${r.stderr}`);
+}
+
 async function testValidateEnvThrowsOnMissingAccountTokens() {
-  const env = {
-    ...process.env,
-    LINEAR_API_KEY: "test-key",
-    LINEAR_TEAM_ID: "test-team",
-  };
-  // The two account-level tokens are the regression under test — a daemon
-  // started non-interactively (no ~/.zshrc) inherits neither.
-  delete env.CLAUDE_CODE_OAUTH_TOKEN;
-  delete env.GITHUB_TOKEN;
-  const r = callValidateEnvInSubprocess(env);
+  // The account tokens are required regardless of source (passed to
+  // spawn-worker.sh) — a daemon started non-interactively (no ~/.zshrc)
+  // inherits neither. Use a linear manifest with LINEAR_* present so only the
+  // account tokens are the failing vars under test.
+  const r = runValidateEnv(
+    { projectName: "p", ticketSource: "linear" },
+    { LINEAR_API_KEY: "test-key", LINEAR_TEAM_ID: "test-team" },
+  );
   if (r.status === 0)
     throw new Error(
       "expected validateEnv() to throw when CLAUDE_CODE_OAUTH_TOKEN/GITHUB_TOKEN are missing, got exit 0",
@@ -621,6 +698,87 @@ async function testValidateEnvThrowsOnMissingAccountTokens() {
     throw new Error(
       `error should name both missing account tokens, got: ${r.stderr}`,
     );
+}
+
+// ─── dispatchIssue / pollAndDispatch (source-neutral routing core) ───────────────
+// dispatchIssue is the shared decision both the webhook and poll paths funnel
+// through; pollAndDispatch normalizes a source's polled issues and calls it.
+// These mirror the handleEvent log-capture tests above, asserting on the skip
+// messages so they never actually spawn a worker.
+
+async function testDispatchIssueNoRoute() {
+  const logged = await captureLog(() =>
+    dispatchIssue({ identifier: "GH-900", labels: ["wontfix"], assigneeId: null }),
+  );
+  if (!logged.includes("no route matched"))
+    throw new Error(`expected "no route matched", got: ${logged}`);
+  if (!logged.includes("GH-900"))
+    throw new Error(`expected identifier in log, got: ${logged}`);
+}
+
+async function testDispatchIssueAssigneeGuardSkips() {
+  process.env.DISPATCH_ASSIGNEE_ID = "octocat";
+  try {
+    // Assignee guard runs before route resolution, so an 'auto' label still
+    // gets skipped (and no worker spawns) when the assignee doesn't match.
+    const logged = await captureLog(() =>
+      dispatchIssue({ identifier: "GH-901", labels: ["auto"], assigneeId: "someone-else" }),
+    );
+    if (!logged.includes("≠ DISPATCH_ASSIGNEE_ID"))
+      throw new Error(`expected assignee-mismatch skip, got: ${logged}`);
+    if (!logged.includes("GH-901"))
+      throw new Error(`expected identifier in log, got: ${logged}`);
+  } finally {
+    delete process.env.DISPATCH_ASSIGNEE_ID;
+  }
+}
+
+async function testPollAndDispatchRoutesEachIssue() {
+  // A fake poll source: two issues, neither carrying 'auto' — both take the
+  // "no route matched" branch, proving pollAndDispatch iterates every issue and
+  // extracts/lowercases labels.nodes[].name (no worker spawns).
+  const source = {
+    pollIssues: async () => [
+      { identifier: "GH-10", labels: { nodes: [{ name: "Enhancement" }] }, assignee: null },
+      { identifier: "GH-11", labels: { nodes: [] }, assignee: null },
+    ],
+  };
+  const logged = await captureLog(() => pollAndDispatch(source));
+  if (!logged.includes("GH-10") || !logged.includes("GH-11"))
+    throw new Error(`expected both issues processed, got: ${logged}`);
+  // 'Enhancement' lowercases to 'enhancement' — still not a route.
+  if (!logged.includes("no route matched"))
+    throw new Error(`expected "no route matched" for non-auto labels, got: ${logged}`);
+}
+
+async function testPollAndDispatchAssigneePassthrough() {
+  // Proves pollAndDispatch forwards issue.assignee (a GitHub login) into the
+  // assignee guard.
+  process.env.DISPATCH_ASSIGNEE_ID = "target-user";
+  try {
+    const source = {
+      pollIssues: async () => [
+        { identifier: "GH-20", labels: { nodes: [{ name: "auto" }] }, assignee: "other-user" },
+      ],
+    };
+    const logged = await captureLog(() => pollAndDispatch(source));
+    if (!logged.includes("GH-20") || !logged.includes("≠ DISPATCH_ASSIGNEE_ID"))
+      throw new Error(`expected assignee-mismatch skip via poll, got: ${logged}`);
+  } finally {
+    delete process.env.DISPATCH_ASSIGNEE_ID;
+  }
+}
+
+async function testPollAndDispatchSwallowsPollError() {
+  // A pollIssues() failure is logged and swallowed — the interval keeps ticking.
+  const source = {
+    pollIssues: async () => {
+      throw new Error("GitHub REST 503");
+    },
+  };
+  const logged = await captureLog(() => pollAndDispatch(source));
+  if (!logged.includes("poll error") || !logged.includes("GitHub REST 503"))
+    throw new Error(`expected the poll error to be logged, got: ${logged}`);
 }
 
 // ─── runner ──────────────────────────────────────────────────────────────────
@@ -706,12 +864,41 @@ async function main() {
       testRealStartupFailsCleanlyOnBadConfig,
     ],
     [
-      "validateEnv: passes with all four required vars set",
-      testValidateEnvPassesWithAllTokens,
+      "validateEnv: webhook source passes with LINEAR_* + account tokens",
+      testValidateEnvWebhookPassesWithLinear,
+    ],
+    [
+      "validateEnv: webhook source throws naming LINEAR_* when absent",
+      testValidateEnvWebhookThrowsWithoutLinear,
+    ],
+    [
+      "validateEnv: github source needs no LINEAR_* (owner/repo from manifest)",
+      testValidateEnvGithubIgnoresLinear,
+    ],
+    [
+      "validateEnv: github source throws naming GITHUB_OWNER/GITHUB_REPO when unresolved",
+      testValidateEnvGithubThrowsWithoutOwnerRepo,
     ],
     [
       "validateEnv: throws naming CLAUDE_CODE_OAUTH_TOKEN/GITHUB_TOKEN when absent",
       testValidateEnvThrowsOnMissingAccountTokens,
+    ],
+    ["dispatchIssue: no route matched → skipped", testDispatchIssueNoRoute],
+    [
+      "dispatchIssue: assignee guard skips a mismatched ticket",
+      testDispatchIssueAssigneeGuardSkips,
+    ],
+    [
+      "pollAndDispatch: routes each polled issue through the core",
+      testPollAndDispatchRoutesEachIssue,
+    ],
+    [
+      "pollAndDispatch: forwards the issue assignee into the guard",
+      testPollAndDispatchAssigneePassthrough,
+    ],
+    [
+      "pollAndDispatch: logs and swallows a pollIssues failure",
+      testPollAndDispatchSwallowsPollError,
     ],
   ];
 

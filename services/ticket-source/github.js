@@ -139,6 +139,13 @@ function createGithubSource(opts = {}) {
   return {
     name: 'github',
 
+    // How the dispatch daemon learns about new/relabeled issues for this
+    // backend: 'poll'. Unlike Linear's inbound webhook, GitHub issues are
+    // discovered by the daemon periodically calling pollIssues() below — no
+    // public endpoint, tunnel, or webhook registration required (the daemon
+    // already hard-requires GITHUB_TOKEN, and authenticated REST is cheap).
+    watchMode: 'poll',
+
     // No raw-client escape hatch yet; a later-milestone (graphql) concern.
     graphql() {
       notImplemented('graphql');
@@ -164,6 +171,34 @@ function createGithubSource(opts = {}) {
       const { owner, repo } = resolveRepo();
       const issue = await api(`/repos/${owner}/${repo}/issues/${number}`);
       return normalizeIssue(issue, { repo });
+    },
+
+    // pollIssues() → the repo's open issues, each normalized through
+    // normalizeIssue (fetchTicket's shape). This is the 'poll' watch path the
+    // dispatch daemon drives on an interval in place of a webhook.
+    //
+    // GitHub's list-issues endpoint returns pull requests too (a PR is an issue
+    // with a `pull_request` key), so those are dropped — muaddib only dispatches
+    // on real issues. Requires GITHUB_OWNER/GITHUB_REPO like every other method.
+    async pollIssues() {
+      const { owner, repo } = resolveRepo();
+      // Paginate: GitHub caps a page at per_page=100, so a repo with more than
+      // 100 open issues would otherwise silently drop every auto-labeled issue
+      // past the first page. Walk pages until one comes back short (or empty).
+      const perPage = 100;
+      const all = [];
+      for (let page = 1; ; page++) {
+        // eslint-disable-next-line no-await-in-loop
+        const pageIssues = await api(
+          `/repos/${owner}/${repo}/issues?state=open&per_page=${perPage}&page=${page}`
+        );
+        if (!Array.isArray(pageIssues) || pageIssues.length === 0) break;
+        all.push(...pageIssues);
+        if (pageIssues.length < perPage) break;
+      }
+      return all
+        .filter((issue) => issue && !issue.pull_request)
+        .map((issue) => normalizeIssue(issue, { repo }));
     },
 
     // postComment(id, body) → { commentId }. POSTs to the issue's comments

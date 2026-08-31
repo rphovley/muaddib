@@ -176,6 +176,61 @@ async function testGithubRequiresOwnerRepo() {
   }
 }
 
+// ─── watchMode (how the dispatch daemon learns about issues) ────────────────────
+
+async function testWatchModes() {
+  // Linear is webhook-driven and advertises the inbound signature header so the
+  // daemon reads it from the source instead of hardcoding a Linear-specific name.
+  const linear = getTicketSource('linear');
+  assert.strictEqual(linear.watchMode, 'webhook');
+  assert.strictEqual(linear.signatureHeader, 'linear-signature');
+  // GitHub is polled — no webhook, no signature header.
+  assert.strictEqual(getTicketSource('github').watchMode, 'poll');
+  // Raw has no external system to watch.
+  assert.strictEqual(getTicketSource('raw').watchMode, 'none');
+}
+
+// ─── GitHub backend (poll path) ──────────────────────────────────────────────────
+
+async function testGithubPollIssuesMapsAndFiltersPRs() {
+  // The list-issues endpoint returns PRs too (they carry a `pull_request` key) —
+  // those must be dropped; real issues are normalized like fetchTicket.
+  const issues = [
+    githubIssueFixture(),
+    { ...githubIssueFixture(), number: 40, pull_request: { url: 'x' } }, // a PR — dropped
+  ];
+  const api = fakeApi({ '/issues?state=open': issues });
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  const result = await src.pollIssues();
+  assert.strictEqual(api.calls[0].path, '/repos/rphovley/muaddib/issues?state=open&per_page=100&page=1');
+  assert.strictEqual(result.length, 1);
+  assert.strictEqual(result[0].identifier, 'muaddib#34');
+  assert.deepStrictEqual(result[0].labels, { nodes: [{ name: 'enhancement' }, { name: 'muaddib' }] });
+}
+
+async function testGithubPollIssuesEmptyWhenNotArray() {
+  // A defensive/degenerate response (not a list) yields [] rather than a throw.
+  const api = fakeApi({ '/issues?state=open': null });
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  assert.deepStrictEqual(await src.pollIssues(), []);
+}
+
+async function testGithubPollIssuesRequiresOwnerRepo() {
+  const prevOwner = process.env.GITHUB_OWNER;
+  const prevRepo = process.env.GITHUB_REPO;
+  delete process.env.GITHUB_OWNER;
+  delete process.env.GITHUB_REPO;
+  try {
+    const src = createGithubSource({ api: fakeApi({}) });
+    await assert.rejects(() => src.pollIssues(), /GITHUB_OWNER and GITHUB_REPO/);
+  } finally {
+    if (prevOwner === undefined) delete process.env.GITHUB_OWNER;
+    else process.env.GITHUB_OWNER = prevOwner;
+    if (prevRepo === undefined) delete process.env.GITHUB_REPO;
+    else process.env.GITHUB_REPO = prevRepo;
+  }
+}
+
 async function testGithubWatchMethodsNotImplemented() {
   const src = createGithubSource({ api: fakeApi({}), owner: 'o', repo: 'r' });
   assert.throws(() => src.graphql(), /later-milestone stub in the GitHub backend/);
@@ -443,6 +498,10 @@ async function main() {
     ['github: fetchTicket null when issue missing (404)', testGithubFetchTicketNullWhenMissing],
     ['github: fetchTicket normalizes empty body/labels/state', testGithubFetchTicketNormalizesEmptyBodyAndLabels],
     ['github: fetchTicket requires GITHUB_OWNER/GITHUB_REPO', testGithubRequiresOwnerRepo],
+    ['watchMode: linear=webhook (+header), github=poll, raw=none', testWatchModes],
+    ['github: pollIssues maps issues and filters out PRs', testGithubPollIssuesMapsAndFiltersPRs],
+    ['github: pollIssues returns [] on a non-array response', testGithubPollIssuesEmptyWhenNotArray],
+    ['github: pollIssues requires GITHUB_OWNER/GITHUB_REPO', testGithubPollIssuesRequiresOwnerRepo],
     ['github: watch methods are not implemented', testGithubWatchMethodsNotImplemented],
     ['github: postComment builds the POST comment request', testGithubPostCommentBuildsPost],
     ['github: postComment tolerates a repo# prefix', testGithubPostCommentToleratesRepoHashPrefix],
