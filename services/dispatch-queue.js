@@ -1,25 +1,19 @@
 'use strict';
 
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
-const { readMuaddibConfig } = require('./muaddib-config');
+const { resolveAccountDir } = require('../orchestrator/account-dir');
 
 // MUADDIB_DISPATCH_DIR is the explicit override — production dispatch sets it to
 // the mounted host dir (docker-compose.dispatch.yml), and tests point it at a
 // temp dir. With no override, default to the account-level per-project dir
 // ~/.muaddib/<project>/ so nothing generated lands in the repo tree (matching
-// where per-worker env files now live). MUADDIB_ACCOUNT_DIR (exported by
-// read-config.sh) is honored so the JS default can't diverge from the shell's
-// notion of the account dir. If neither is set and the manifest can't be read,
-// degrade to the repo root rather than crash module load.
+// where per-worker env files now live). The resolution (MUADDIB_ACCOUNT_DIR →
+// manifest projectName → degrade to the ~/.muaddib account root, still outside
+// the repo tree) lives in the shared resolveAccountDir helper so this and other
+// callers can't diverge on it.
 function defaultBaseDir() {
-  if (process.env.MUADDIB_ACCOUNT_DIR) return process.env.MUADDIB_ACCOUNT_DIR;
-  try {
-    const { projectName } = readMuaddibConfig(process.env.REPO_ROOT || path.join(__dirname, '../..'));
-    if (projectName) return path.join(os.homedir(), '.muaddib', projectName);
-  } catch (_) {}
-  return path.join(__dirname, '../..');
+  return resolveAccountDir(process.env.REPO_ROOT || path.join(__dirname, '../..'));
 }
 
 const BASE_DIR = process.env.MUADDIB_DISPATCH_DIR || defaultBaseDir();
