@@ -36,31 +36,38 @@ function extractIdentifier(task, sourceKind = 'linear') {
   if (!task) return null;
 
   if (sourceKind === 'github') {
-    // GitHub issue URL: https://github.com/owner/repo/issues/36
-    const urlMatch = task.match(/\/issues\/(\d+)/);
+    // A real ticket reference is never free-form text, it's the tool's single
+    // argument. muaddib.sh (and muaddib-fast.sh/muaddib-plan.sh) pass TASK as
+    // "/<skill-name> <ticket>", not just "<ticket>", so strip that known
+    // slash-command wrapper first, then require the ENTIRE remainder to be a
+    // ticket reference. Anchoring to the whole remainder means neither a stray
+    // digit inside a sentence (e.g. "/muaddib-task Investigate why there's only
+    // 32 items left") nor an issue URL merely mentioned inside a free-form task
+    // is misread as a ticket number.
+    const stripped = task.replace(/^\/\S+\s+/, '').trim();
+    // GitHub issue URL as the whole argument: https://github.com/owner/repo/issues/36
+    const urlMatch = stripped.match(/^https?:\/\/\S*\/issues\/(\d+)(?:[/?#]\S*)?$/);
     if (urlMatch) return urlMatch[1];
     // Else a bare "36" or "#36" — github.js's issueNumber() tolerates '#'/'repo#',
-    // so a bare number token is all the generic backend needs. No Linear-shaped
-    // regex on the github path. muaddib.sh (and muaddib-fast.sh/muaddib-plan.sh)
-    // pass TASK as "/<skill-name> <ticket>", not just "<ticket>" — strip that
-    // known slash-command wrapper first, rather than scanning for a number
-    // anywhere in the string: a real ticket reference is never free-form text,
-    // it's the tool's single argument, so requiring the ENTIRE remainder to be
-    // just a number means a stray digit inside a real sentence (e.g.
-    // "/muaddib-task Investigate why there's only 32 items left") is correctly
-    // rejected instead of misread as ticket #32.
-    const stripped = task.replace(/^\/\S+\s+/, '').trim();
+    // so a bare number token is all the generic backend needs.
     const bareMatch = stripped.match(/^#?(\d+)$/);
     if (bareMatch) return bareMatch[1];
     return null;
   }
 
-  // Linear (default).
+  // Linear (default). Like the github branch, a ticket reference is the tool's
+  // single argument, never free-form text — muaddib.sh passes TASK as
+  // "/<skill-name> <ticket>", so strip that known slash-command wrapper, then
+  // require the whole remainder to be a ticket reference.
+  const stripped = task.replace(/^\/\S+\s+/, '').trim();
   // Full Linear URL: https://linear.app/team/issue/QUO-123/...
-  const urlMatch = task.match(/\/issue\/([A-Z]+-\d+)/i);
+  const urlMatch = stripped.match(/\/issue\/([A-Z]+-\d+)/i);
   if (urlMatch) return urlMatch[1].toUpperCase();
-  // Identifier anywhere in the string: bare "QUO-123" or "QUO-123 some description"
-  const bareMatch = task.match(/\b([A-Z]+-\d+)\b/i);
+  // Else a bare "QUO-123" as the ENTIRE argument. Anchoring to the whole
+  // remainder (not \b…\b anywhere) means a stray identifier-shaped token like
+  // "GPT-4" or "utf-8" embedded in a free-form task isn't misrouted to a
+  // nonexistent ticket.
+  const bareMatch = stripped.match(/^([A-Z]+-\d+)$/i);
   if (bareMatch) return bareMatch[1].toUpperCase();
   return null;
 }

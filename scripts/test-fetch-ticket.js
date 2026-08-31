@@ -117,12 +117,17 @@ assert(
   extractIdentifier('https://github.com/org/repo') === null
 );
 assert(
-  'extracts identifier at start of longer description',
-  extractIdentifier('QUO-7 Fix the login bug') === 'QUO-7'
+  // muaddib.sh passes TASK as "/<skill-name> <ticket>"; the known slash-command
+  // wrapper is stripped before matching.
+  'finds a bare identifier after a /muaddib prefix',
+  extractIdentifier('/muaddib QUO-7') === 'QUO-7'
 );
 assert(
-  'extracts identifier from middle of string',
-  extractIdentifier('Ticket QUO-7 needs fixing') === 'QUO-7'
+  // A ticket reference is the tool's single argument, never free-form text — an
+  // identifier-shaped token embedded in a sentence must NOT be misread as a
+  // ticket reference (the GPT-4 / utf-8 false-positive class).
+  'rejects an identifier embedded in a free-form sentence',
+  extractIdentifier('Ticket QUO-7 needs fixing') === null
 );
 
 // github source kind — bare issue numbers, not Linear-shaped ids.

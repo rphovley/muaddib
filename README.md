@@ -118,8 +118,21 @@ Linear-only projects, and both required when `ticketSource` is `"github"`.
 `read-config.sh` exports these as `MUADDIB_TICKET_SOURCE` /
 `MUADDIB_GITHUB_OWNER` / `MUADDIB_GITHUB_REPO`. `spawn-worker.sh` forwards them
 into the worker as `TICKET_SOURCE` (defaulted from the manifest — an explicit
-`TICKET_SOURCE` env var still wins, e.g. `muaddib-task.sh`'s `raw` dispatch) plus
+`TICKET_SOURCE` env var still wins, e.g. the `raw` dispatch below) plus
 `GITHUB_OWNER`/`GITHUB_REPO`, where `services/ticket-source` selects the backend.
+
+`linear`, `github`, and `raw` are peer backends, and `muaddib.sh` is the single
+entry point for all three. It auto-detects its argument: a ticket reference for
+the project's declared `ticketSource` (a Linear URL / `TEAM-123`, or — on a
+github project — a GitHub issues URL / bare issue number) dispatches as a ticket
+and lets the manifest's `ticketSource` pick linear vs github inside the worker;
+anything else is free-form task text and dispatches through the `raw` backend
+(`services/ticket-source/raw.js` synthesizes a ticket from the text). Detection
+reuses `fetch-ticket.js`'s `extractIdentifier()` — for github it requires the
+whole argument to be `#?<number>`, so a stray digit in a sentence isn't misread
+as an issue number. `muaddib.sh --raw` (and its thin alias `muaddib-task.sh`)
+skips detection and forces `raw`, for task text that could itself look like a
+ticket reference (e.g. free-form text containing `QUO-123`).
 
 ## Preview server config (`services/start-servers.js`, `dispatch-daemon.js`)
 
@@ -257,11 +270,26 @@ cache entirely.
 
 ## Usage
 
-Primary entrypoint — from the repo root, spawn a worker that runs `/muaddib` on a
-Linear ticket (auto-picks a free worker number) and **drops you into its session**:
+Primary entrypoint — from the repo root, spawn a worker (auto-picks a free worker
+number) and **drops you into its session**. One command covers all three ticket
+sources; `muaddib.sh` auto-detects whether the argument is a ticket reference or
+free-form task text:
 
 ```bash
+# Ticket reference → runs /muaddib on it (linear or github, per the manifest):
 npm run muaddib https://linear.app/quotethat/issue/QUO-227/...   # or just: npm run muaddib QUO-227
+npm run muaddib https://github.com/owner/repo/issues/36          # or just: npm run muaddib 36   (github project)
+
+# Free-form task text → dispatched through the raw backend, no ticket needed:
+npm run muaddib "fix the auth token expiry bug in the portal"
+```
+
+To force raw dispatch when task text could itself look like a ticket reference,
+use `--raw` (or the thin alias `muaddib-task.sh`):
+
+```bash
+npm run muaddib -- --raw "investigate QUO-123 regression"   # treat as task text, not ticket QUO-123
+./muaddib/muaddib-task.sh "investigate QUO-123 regression"  # same thing
 ```
 
 ### Interacting with a worker
