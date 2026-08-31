@@ -41,6 +41,7 @@ project-specific — all customisation lives here.
 | `.muaddib/docker/docker-compose.worker.yml` | Project compose overlay — services/env the generic `docker-compose.worker.yml` doesn't carry (e.g. a DB sidecar). Layered in via an extra `-f` when present. |
 | `~/.muaddib/<project>/workers/.worker-N.env` | Per-worker ephemeral env file. Written by `spawn-worker.sh` **outside the repo tree** (it carries the subscription + GitHub tokens); regenerated every spawn, never edit by hand. |
 | `~/.muaddib/<project>/dispatch.json`, `dispatch-queue.json` | Dispatch daemon's dedup ledger + pending-spawn queue, kept outside the repo tree. In the dispatch container these persist via a host bind-mount (`MUADDIB_DISPATCH_DIR`). |
+| `~/.muaddib/<project>/session/session.json` | Session Context — live, **ephemeral** working state for a single Conductor run, kept outside the repo tree so it can never be committed. Thrown away at run end, never accumulates. See "Session Context" below. |
 | `.muaddib/plan.md` | Current implementation plan written by the muaddib fleet agent. Not tracked by git. |
 
 ### Hook contract
@@ -255,6 +256,56 @@ It's committed (not gitignored), like `.muaddib/manifest.json` and
 the code. Nothing writes real Handoff Records yet — this is just the storage
 mechanism and ID generator; deciding *what* goes in one is the Conductor's
 job, in a later milestone.
+
+## Session Context (`~/.muaddib/<project>/session/`)
+
+Goal Context and the Decision Log are the *durable* context stores — committed
+in the repo tree, meant to persist across runs. Session Context is their
+**ephemeral** counterpart: live working state a single Conductor run needs
+while it's running, thrown away at run end and never accumulating across runs.
+
+Because it's throwaway per-run state, it lives at
+`~/.muaddib/<project>/session/session.json` — **outside the repo tree**, the
+same place the per-worker env files and the dispatch ledger live, so ephemeral
+run state can never be committed. (The account dir is resolved by the shared
+`orchestrator/account-dir.js` helper: `MUADDIB_ACCOUNT_DIR` if set — exported
+by `bin/read-config.sh` — else `~/.muaddib/<project>` from the manifest's
+`projectName`, else the `~/.muaddib` account root (still outside the repo tree).
+`services/dispatch-queue.js` resolves its
+ledger dir through the same helper, so the two can't diverge.) No gitignore
+entry is needed — the file isn't in the tree in the first place.
+
+Storage is an **opaque key/value bag**, exactly like the per-worker
+`orchestrator/state.js` — `orchestrator/session-context.js` exposes generic
+`get`/`set`/`merge`/`unset`/`read`/`write(repoDir, …)` over one JSON file. No
+concrete fields are defined: the shape is minimal for now and deliberately
+doesn't anticipate Conductor internals. Writes go through the same O_EXCL file
+lock (`orchestrator/file-lock.js`) and atomic temp-file rename as `state.js`,
+so concurrent writers can't interleave or expose partial JSON.
+
+Ephemerality ships as two guarantees that hold today even though no Conductor
+drives a run lifecycle yet:
+
+- **`clear(repoDir)`** (aliased `discard`) removes the session file — the
+  explicit hook a run-end caller will use later.
+- **`begin(repoDir)`** wipes any stale file up front, so a run that crashed
+  before clearing can't leak its state into the next run.
+
+Together they make "no accumulation across runs" hold now, mechanism-only,
+with nothing orchestrating it — that's the Conductor's job, in a later
+milestone.
+
+Bash and markdown skills reach it through `session-context-cli.js` (the same
+pattern as `state-cli.js`/`decision-log-cli.js`), resolving `repoDir` from
+`REPO_DIR`:
+
+```bash
+node orchestrator/session-context-cli.js begin              # wipe any stale run state
+node orchestrator/session-context-cli.js set phase implementing
+node orchestrator/session-context-cli.js get phase          # -> implementing
+node orchestrator/session-context-cli.js get-all            # the whole bag as JSON
+node orchestrator/session-context-cli.js clear              # discard at run end
+```
 
 ## Prerequisites (one-time)
 
