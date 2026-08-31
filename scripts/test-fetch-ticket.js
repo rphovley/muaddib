@@ -125,6 +125,28 @@ assert(
   extractIdentifier('Ticket QUO-7 needs fixing') === 'QUO-7'
 );
 
+// github source kind — bare issue numbers, not Linear-shaped ids.
+assert(
+  "github: extracts number from an issue URL",
+  extractIdentifier('https://github.com/rphovley/muaddib/issues/36', 'github') === '36'
+);
+assert(
+  'github: accepts a bare number',
+  extractIdentifier('36', 'github') === '36'
+);
+assert(
+  "github: strips a leading '#'",
+  extractIdentifier('#36', 'github') === '36'
+);
+assert(
+  'github: returns null for a Linear-shaped id',
+  extractIdentifier('QUO-7', 'github') === null
+);
+assert(
+  "explicit 'linear' kind matches the default behavior",
+  extractIdentifier('QUO-7', 'linear') === 'QUO-7'
+);
+
 console.log('\n── findPlanComment ────────────────────────────────────────────');
 
 assert(
@@ -308,6 +330,52 @@ await test('run(): TICKET_SOURCE=raw throws on empty TASK', async () => {
     threw = err.message.includes('TASK is empty');
   }
   assert('throws a clear error', threw);
+});
+
+await test('run(): TICKET_SOURCE=github routes through the generic backend', async () => {
+  const repo = makeRepo();
+  const worker = 19;
+  const githubIssue = {
+    id: 'MDU6SXNzdWU=',
+    identifier: 'muaddib#36',
+    title: 'Route the github source in fetch-ticket',
+    description: 'Some description',
+    url: 'https://github.com/rphovley/muaddib/issues/36',
+    labels: { nodes: [] },
+    state: { name: 'open' },
+  };
+  let fetchedWith = null;
+  const fakeSource = {
+    fetchTicket: async (id) => { fetchedWith = id; return githubIssue; },
+  };
+  const failIfCalled = async () => { throw new Error('gql should not be called for a github ticket'); };
+
+  const result = await run(failIfCalled, {
+    worker, repo, ticketSource: 'github', source: fakeSource,
+    task: 'https://github.com/rphovley/muaddib/issues/36',
+  });
+
+  assert('fetchTicket called with the bare issue number', fetchedWith === '36');
+  assert('planStatus is not_found (plan-comment scan is Linear-only)', result.planStatus === 'not_found');
+  assert('returns the normalized issue', result.issue.title === githubIssue.title);
+  assert('state has ticket_identifier', readState(worker).ticket_identifier === 'muaddib#36');
+  assert('state has ticket_url', readState(worker).ticket_url === githubIssue.url);
+  assert('state plan_status is not_found', readState(worker).plan_status === 'not_found');
+  assert('no plan.md written on the github path', !fs.existsSync(path.join(repo, '.muaddib', 'plan.md')));
+  assert('/tmp/ticket-N.json written', fs.existsSync(`/tmp/ticket-${worker}.json`));
+});
+
+await test('run(): TICKET_SOURCE=github with a not-found issue throws', async () => {
+  let threw = false;
+  const fakeSource = { fetchTicket: async () => null };
+  try {
+    await run(null, {
+      worker: 20, repo: makeRepo(), ticketSource: 'github', source: fakeSource, task: '36',
+    });
+  } catch (err) {
+    threw = err.message.includes('not found');
+  }
+  assert('throws when fetchTicket returns null', threw);
 });
 
 // ─── results ──────────────────────────────────────────────────────────────────

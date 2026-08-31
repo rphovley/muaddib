@@ -3,16 +3,24 @@
 // Fetches the ticket for this worker's task and writes worker state.
 // Outputs the ticket JSON to /tmp/ticket-${WORKER_INDEX}.json.
 //
-// TICKET_SOURCE=raw: the whole TASK text IS the ticket — no identifier to
-// extract, no network call, no comments to scan for a plan (there's no
-// comment thread on a raw ticket at all). Routes through
-// services/ticket-source's raw backend.
+// Three routes, keyed on TICKET_SOURCE:
 //
-// Otherwise (Linear, the default): keeps its own richer, comment-aware query
-// rather than going through TicketSource's fetchTicket() — that interface
-// method doesn't return comments, and this script hydrates .muaddib/plan.md
-// from an existing "## Plan" comment, which needs them. Deliberately not
-// generalized further than the raw case actually requires.
+// - raw: the whole TASK text IS the ticket — no identifier to extract, no
+//   network call, no comments to scan for a plan (there's no comment thread on
+//   a raw ticket at all). Routes through services/ticket-source's raw backend.
+//
+// - linear (the default): keeps its own richer, comment-aware GraphQL query
+//   rather than going through TicketSource's fetchTicket() — that interface
+//   method doesn't return comments, and this script hydrates .muaddib/plan.md
+//   from an existing "## Plan" comment (on the issue or its parent), which
+//   needs them.
+//
+// - github (and any future non-linear, non-raw backend): routes through the
+//   generic getTicketSource(kind).fetchTicket() interface, the same way
+//   orchestrator.js fetches. TicketSource.fetchTicket() exposes no comments, so
+//   plan-comment hydration is skipped here (plan_status='not_found', like raw);
+//   analyze-ticket simply (re)generates the plan when none is hydrated. See the
+//   generic branch in run() for the full rationale.
 
 const https = require('https');
 const fs = require('fs');
@@ -22,8 +30,24 @@ const { getTicketSource } = require('../services/ticket-source');
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
-function extractIdentifier(task) {
+// Extract the backend-native identifier from a TASK string. `sourceKind`
+// defaults to 'linear' so the existing single-arg callers/tests are unchanged.
+function extractIdentifier(task, sourceKind = 'linear') {
   if (!task) return null;
+
+  if (sourceKind === 'github') {
+    // GitHub issue URL: https://github.com/owner/repo/issues/36
+    const urlMatch = task.match(/\/issues\/(\d+)/);
+    if (urlMatch) return urlMatch[1];
+    // Else a bare "36" or "#36" — github.js's issueNumber() tolerates '#'/'repo#',
+    // so a bare number token is all the generic backend needs. No Linear-shaped
+    // regex on the github path.
+    const bareMatch = task.match(/^#?(\d+)\b/);
+    if (bareMatch) return bareMatch[1];
+    return null;
+  }
+
+  // Linear (default).
   // Full Linear URL: https://linear.app/team/issue/QUO-123/...
   const urlMatch = task.match(/\/issue\/([A-Z]+-\d+)/i);
   if (urlMatch) return urlMatch[1].toUpperCase();
@@ -151,13 +175,63 @@ async function run(gql, opts = {}) {
     return { issue, planStatus };
   }
 
-  const identifier = extractIdentifier(task);
-  if (!identifier) throw new Error(`Could not extract a Linear identifier from TASK: "${task}"`);
+  if (ticketSourceKind === 'linear') {
+    const identifier = extractIdentifier(task);
+    if (!identifier) throw new Error(`Could not extract a Linear identifier from TASK: "${task}"`);
 
-  process.stderr.write(`[fetch-ticket] fetching ${identifier}...\n`);
+    process.stderr.write(`[fetch-ticket] fetching ${identifier}...\n`);
 
-  const data = await gql(ISSUE_QUERY, { identifier });
-  const issue = data?.issue;
+    const data = await gql(ISSUE_QUERY, { identifier });
+    const issue = data?.issue;
+    if (!issue) throw new Error(`Issue ${identifier} not found`);
+
+    process.stderr.write(`[fetch-ticket] fetched: ${issue.title}\n`);
+
+    const outPath = `/tmp/ticket-${worker}.json`;
+    fs.writeFileSync(outPath, JSON.stringify(issue, null, 2) + '\n');
+    process.stderr.write(`[fetch-ticket] wrote ${outPath}\n`);
+
+    const ownComments = issue.comments?.nodes ?? [];
+    const parentComments = issue.parent?.comments?.nodes ?? [];
+    const planComment = findPlanComment([...ownComments, ...parentComments]);
+
+    let planStatus = 'not_found';
+    if (planComment) {
+      const planSection = extractPlanSection(planComment);
+      if (planSection) {
+        const planPath = path.join(repo, '.muaddib', 'plan.md');
+        fs.mkdirSync(path.dirname(planPath), { recursive: true });
+        fs.writeFileSync(planPath, planSection + '\n');
+        process.stderr.write(`[fetch-ticket] wrote .muaddib/plan.md (${planSection.length} chars)\n`);
+        planStatus = 'found';
+      }
+    }
+
+    state.merge(worker, {
+      ticket_identifier: issue.identifier,
+      ticket_url: issue.url,
+      ticket_title: issue.title,
+      plan_status: planStatus,
+    });
+
+    process.stderr.write(`[fetch-ticket] done — plan_status=${planStatus}\n`);
+
+    return { issue, planStatus };
+  }
+
+  // ─── generic backend branch (github, and any future non-linear/non-raw) ──────
+  // Route through the TicketSource interface the same way orchestrator.js does,
+  // rather than the Linear-only ISSUE_QUERY above. `opts.source` is the
+  // test-injection seam (mirrors the raw branch's `opts.rawSource`).
+  const identifier = extractIdentifier(task, ticketSourceKind);
+  if (!identifier) {
+    throw new Error(`Could not extract a ${ticketSourceKind} identifier from TASK: "${task}"`);
+  }
+
+  process.stderr.write(`[fetch-ticket] fetching ${identifier} via ${ticketSourceKind}...\n`);
+
+  const source = opts.source ?? getTicketSource(ticketSourceKind);
+  const issue = await source.fetchTicket(identifier);
   if (!issue) throw new Error(`Issue ${identifier} not found`);
 
   process.stderr.write(`[fetch-ticket] fetched: ${issue.title}\n`);
@@ -166,21 +240,13 @@ async function run(gql, opts = {}) {
   fs.writeFileSync(outPath, JSON.stringify(issue, null, 2) + '\n');
   process.stderr.write(`[fetch-ticket] wrote ${outPath}\n`);
 
-  const ownComments = issue.comments?.nodes ?? [];
-  const parentComments = issue.parent?.comments?.nodes ?? [];
-  const planComment = findPlanComment([...ownComments, ...parentComments]);
-
-  let planStatus = 'not_found';
-  if (planComment) {
-    const planSection = extractPlanSection(planComment);
-    if (planSection) {
-      const planPath = path.join(repo, '.muaddib', 'plan.md');
-      fs.mkdirSync(path.dirname(planPath), { recursive: true });
-      fs.writeFileSync(planPath, planSection + '\n');
-      process.stderr.write(`[fetch-ticket] wrote .muaddib/plan.md (${planSection.length} chars)\n`);
-      planStatus = 'found';
-    }
-  }
+  // Plan-comment scanning is Linear-only. TicketSource.fetchTicket() returns no
+  // comments, and GitHub REST has no parent-issue-with-nested-comments concept,
+  // so there is nothing to hydrate .muaddib/plan.md from here — plan_status is
+  // 'not_found', identical to the raw path. This is safe: analyze-ticket simply
+  // (re)generates the plan when none is hydrated. A GitHub-shaped plan lookup
+  // (an extra Issues-comments API call) is a deliberate follow-up, not this fix.
+  const planStatus = 'not_found';
 
   state.merge(worker, {
     ticket_identifier: issue.identifier,
