@@ -174,6 +174,48 @@ wants to log — `id`, `scope`, and `timestamp` are always computed by the
 module itself, never taken from `fields`, so they can't drift from the log's
 actual state.
 
+### Reading it back
+
+`readEntries` is fine for ID generation, but the wrong primitive for lookups
+once the log is large — it parses every line into memory. Two read functions
+avoid that:
+
+- **`getById(repoDir, id)`** returns the single record with that id, or `null`.
+  It streams the log through one lazy parser and stops on the first match, so
+  it never parses past the record it wanted.
+- **`search(repoDir, query, opts)`** does a case-insensitive free-text match
+  over each record's *content* fields (everything except the computed
+  `id`/`scope`/`timestamp`, which callers filter on explicitly rather than via
+  free text). It returns lightweight hits — `{ id, scope, timestamp, snippet }`,
+  where `snippet` is only the matched field and a bounded, ellipsized window
+  around the match — **never whole records**, so a broad query can't dump the
+  log into a caller's context. `opts.scope` restricts to one ticket/`FLEET`
+  scope; `opts.limit` (default 20) caps the number of hits. A caller that
+  decides a hit is relevant then `getById`s the full entry.
+
+Both share one internal iterator with `readEntries`, so all three skip
+malformed lines and treat a missing file as an empty log identically.
+
+Bash and markdown skills reach the read side through `decision-log-cli.js`
+(the same pattern as `state-cli.js`/`ticket-cli.js`), resolving `repoDir` from
+`REPO_DIR`:
+
+```bash
+node orchestrator/decision-log-cli.js get ADR-3-QUO-281            # prints the record, or exits 1 if absent
+node orchestrator/decision-log-cli.js search "magic link" --scope QUO-281 --limit 5
+```
+
+This read interface is what a future `search-before-ask` step calls to check
+whether a question was already answered before the Conductor escalates it, so
+it's built to be cheap to call repeatedly and safe to expose to bash.
+
+**Project History.** For now, Project History is satisfied *entirely* by
+search-over-Decision-Log — there is no separate history store. Per the guiding
+principle of not inventing a second store speculatively, that decision is
+deferred until the Conductor (Milestone 4) actually needs to consume something
+the Decision Log can't serve; if and when it does, that's the trigger to
+revisit this.
+
 IDs are `ADR-{seq}-{scope}`, where `scope` is a ticket id (`ADR-3-QUO-281`)
 or `FLEET` when a decision isn't scoped to one ticket (`ADR-1-FLEET`) —
 ticket-scoped and human-readable, borrowing uniqueness that already exists
