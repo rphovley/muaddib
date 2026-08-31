@@ -15,7 +15,10 @@ WORKER_API_PORT=$(muaddib_worker_port "$MUADDIB_PORT_API" api "$WORKER")
 WORKER_DB_PORT=$(muaddib_worker_port "$MUADDIB_PORT_DB" db "$WORKER")
 WORKER_SKETCH_PORT=$(muaddib_worker_port "$MUADDIB_PORT_SKETCH" sketch "$WORKER")
 export WORKER_API_PORT WORKER_DB_PORT WORKER_SKETCH_PORT
-export WORKER_ENV_FILE="$FLEET_DIR/.worker-${WORKER}.env"
+# Same path spawn-worker.sh wrote (MUADDIB_WORKERS_DIR from read-config.sh) — the
+# two previously drifted ($FLEET_DIR vs the repo .muaddib/), so teardown's rm below
+# never actually removed the real env file.
+export WORKER_ENV_FILE="$MUADDIB_WORKERS_DIR/.worker-${WORKER}.env"
 export WORKER_INDEX="$WORKER"
 export CLAUDE_SKILLS_DIR="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
 export HOST_TMPDIR="${TMPDIR:-/tmp}"
@@ -53,7 +56,7 @@ fi
 docker compose -p "$PROJECT" "${MUADDIB_COMPOSE_FILES[@]}" down -v
 
 # Remove env file (always).
-rm -f "$FLEET_DIR/.worker-${WORKER}.env"
+rm -f "$WORKER_ENV_FILE"
 
 if [ "$CURRENT_STATE" = "FAILED" ]; then
     TIMESTAMP="$(date +%Y%m%d-%H%M%S)"

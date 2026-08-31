@@ -13,5 +13,6 @@ quote-that-estimate-feature
 **/.envrc
 projects/api/src/config/keys
 muadib/non-prod.env
-muadib/.worker-*.env
+# Per-worker env files now live under ~/.muaddib/<project>/workers/, outside the
+# build context entirely — no exclusion needed for them here.
 muadib/status

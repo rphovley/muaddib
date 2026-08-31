@@ -57,6 +57,15 @@ fi
 export MUADDIB_PROJECT_NAME
 export MUADDIB_CONFIG_FILE="$_MUADDIB_CONFIG"
 
+# Account-level per-project dir — mirrors ~/.muaddib/conductor-secrets.env: it
+# holds muaddib state that is generated per-spawn/dispatch (per-worker env files,
+# the dispatch dedup ledger) and must NEVER live in the repo tree, where it could
+# be committed. Kept here — the single place MUADDIB_PROJECT_NAME is resolved — so
+# spawn and teardown can't drift on the path the way they used to. Workers get
+# their own subdir. MUADDIB_ACCOUNT_DIR is overridable for tests/relocation.
+export MUADDIB_ACCOUNT_DIR="${MUADDIB_ACCOUNT_DIR:-$HOME/.muaddib/$MUADDIB_PROJECT_NAME}"
+export MUADDIB_WORKERS_DIR="$MUADDIB_ACCOUNT_DIR/workers"
+
 # Per-worker port bases. No defaults here — a project must supply its own
 # range to avoid colliding with whatever else is running on the host. See
 # README "Port scheme".

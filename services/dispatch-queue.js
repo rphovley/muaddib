@@ -1,25 +1,66 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const { readMuaddibConfig } = require('./muaddib-config');
 
-// MUADDIB_DISPATCH_DIR is overridden in tests to a temp directory.
-const BASE_DIR = process.env.MUADDIB_DISPATCH_DIR || path.join(__dirname, '../..');
-const QUEUE_FILE = path.join(BASE_DIR, '.muaddib-dispatch-queue.json');
-const DEDUP_FILE = path.join(BASE_DIR, '.muaddib-dispatch.json');
+// MUADDIB_DISPATCH_DIR is the explicit override — production dispatch sets it to
+// the mounted host dir (docker-compose.dispatch.yml), and tests point it at a
+// temp dir. With no override, default to the account-level per-project dir
+// ~/.muaddib/<project>/ so nothing generated lands in the repo tree (matching
+// where per-worker env files now live). MUADDIB_ACCOUNT_DIR (exported by
+// read-config.sh) is honored so the JS default can't diverge from the shell's
+// notion of the account dir. If neither is set and the manifest can't be read,
+// degrade to the repo root rather than crash module load.
+function defaultBaseDir() {
+  if (process.env.MUADDIB_ACCOUNT_DIR) return process.env.MUADDIB_ACCOUNT_DIR;
+  try {
+    const { projectName } = readMuaddibConfig(process.env.REPO_ROOT || path.join(__dirname, '../..'));
+    if (projectName) return path.join(os.homedir(), '.muaddib', projectName);
+  } catch (_) {}
+  return path.join(__dirname, '../..');
+}
+
+const BASE_DIR = process.env.MUADDIB_DISPATCH_DIR || defaultBaseDir();
+const QUEUE_FILE = path.join(BASE_DIR, 'dispatch-queue.json');
+const DEDUP_FILE = path.join(BASE_DIR, 'dispatch.json');
+
+// Old (pre-relocation) ledger location: repo-tree basenames written to the repo
+// root. Read from here only as a one-time migration fallback so tickets already
+// dispatched before the upgrade aren't re-dispatched when the ledger moves.
+const OLD_BASE_DIR = path.join(__dirname, '../..');
+const OLD_QUEUE_FILE = path.join(OLD_BASE_DIR, '.muaddib-dispatch-queue.json');
+const OLD_DEDUP_FILE = path.join(OLD_BASE_DIR, '.muaddib-dispatch.json');
 
 let queue = [];
 let dispatched = new Set();
 
+function readJsonArray(file) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (Array.isArray(parsed)) return parsed;
+  } catch (_) {}
+  return null;
+}
+
 function loadFiles() {
-  try {
-    const q = JSON.parse(fs.readFileSync(QUEUE_FILE, 'utf8'));
-    if (Array.isArray(q)) queue = q;
-  } catch (_) {}
-  try {
-    const d = JSON.parse(fs.readFileSync(DEDUP_FILE, 'utf8'));
-    if (Array.isArray(d)) dispatched = new Set(d);
-  } catch (_) {}
+  // Prefer the current location; fall back to the pre-relocation ledger so an
+  // upgrade doesn't re-dispatch already-dispatched tickets. If the new file is
+  // absent (never written since the move) but the old one exists, adopt the old
+  // contents — the first markDispatched/flush then persists them to the new path.
+  const q = readJsonArray(QUEUE_FILE);
+  if (q) queue = q;
+  else if (BASE_DIR !== OLD_BASE_DIR) {
+    const oldQ = readJsonArray(OLD_QUEUE_FILE);
+    if (oldQ) queue = oldQ;
+  }
+  const d = readJsonArray(DEDUP_FILE);
+  if (d) dispatched = new Set(d);
+  else if (BASE_DIR !== OLD_BASE_DIR) {
+    const oldD = readJsonArray(OLD_DEDUP_FILE);
+    if (oldD) dispatched = new Set(oldD);
+  }
 }
 
 function saveQueue() {

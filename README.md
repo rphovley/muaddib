@@ -39,7 +39,8 @@ project-specific — all customisation lives here.
 | `.muaddib/secrets.env` | Your filled-in secrets (gitignored). Copy from `secrets.env.example`. |
 | `.muaddib/hooks/on-worker-start.sh` | Project hook run by the worker entrypoint after env is loaded. Executable; receives the full worker env. |
 | `.muaddib/docker/docker-compose.worker.yml` | Project compose overlay — services/env the generic `docker-compose.worker.yml` doesn't carry (e.g. a DB sidecar). Layered in via an extra `-f` when present. |
-| `.muaddib/.worker-N.env` | Per-worker ephemeral env file (gitignored). Written by `spawn-worker.sh`; never edit by hand. |
+| `~/.muaddib/<project>/workers/.worker-N.env` | Per-worker ephemeral env file. Written by `spawn-worker.sh` **outside the repo tree** (it carries the subscription + GitHub tokens); regenerated every spawn, never edit by hand. |
+| `~/.muaddib/<project>/dispatch.json`, `dispatch-queue.json` | Dispatch daemon's dedup ledger + pending-spawn queue, kept outside the repo tree. In the dispatch container these persist via a host bind-mount (`MUADDIB_DISPATCH_DIR`). |
 | `.muaddib/plan.md` | Current implementation plan written by the muaddib fleet agent. Not tracked by git. |
 
 ### Hook contract

@@ -24,16 +24,16 @@ function freshModule() {
 }
 
 function readQueueFile() {
-  try { return JSON.parse(fs.readFileSync(path.join(TMP_DIR, '.muaddib-dispatch-queue.json'), 'utf8')); } catch (_) { return []; }
+  try { return JSON.parse(fs.readFileSync(path.join(TMP_DIR, 'dispatch-queue.json'), 'utf8')); } catch (_) { return []; }
 }
 
 function readDedupFile() {
-  try { return JSON.parse(fs.readFileSync(path.join(TMP_DIR, '.muaddib-dispatch.json'), 'utf8')); } catch (_) { return []; }
+  try { return JSON.parse(fs.readFileSync(path.join(TMP_DIR, 'dispatch.json'), 'utf8')); } catch (_) { return []; }
 }
 
 function clearFiles() {
-  try { fs.unlinkSync(path.join(TMP_DIR, '.muaddib-dispatch-queue.json')); } catch (_) {}
-  try { fs.unlinkSync(path.join(TMP_DIR, '.muaddib-dispatch.json')); } catch (_) {}
+  try { fs.unlinkSync(path.join(TMP_DIR, 'dispatch-queue.json')); } catch (_) {}
+  try { fs.unlinkSync(path.join(TMP_DIR, 'dispatch.json')); } catch (_) {}
 }
 
 async function testIsDispatchedFalseInitially() {
