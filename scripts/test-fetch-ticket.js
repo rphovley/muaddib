@@ -143,14 +143,26 @@ assert(
   extractIdentifier('QUO-7', 'github') === null
 );
 assert(
-  // muaddib.sh passes TASK as "/muaddib <ticket>", not the bare ticket — the
-  // number must be found anywhere in the string, not just at position 0.
+  // muaddib.sh (and muaddib-fast.sh/muaddib-plan.sh) pass TASK as
+  // "/<skill-name> <ticket>", not the bare ticket — the known slash-command
+  // wrapper is stripped before matching.
   'github: finds a bare number after a /muaddib prefix',
   extractIdentifier('/muaddib 36', 'github') === '36'
 );
 assert(
   "github: finds a '#'-prefixed number after a /muaddib prefix",
   extractIdentifier('/muaddib #36', 'github') === '36'
+);
+assert(
+  // The whole point of stripping the prefix instead of scanning past it: a
+  // free-form sentence with an embedded number must NOT be misread as a
+  // ticket reference, even with a slash-command prefix in front of it.
+  "github: rejects a free-form sentence with an embedded number",
+  extractIdentifier("/muaddib-task Investigate why there's only 32 items left", 'github') === null
+);
+assert(
+  'github: rejects a free-form sentence with an embedded number, no prefix at all',
+  extractIdentifier("Help me figure out why there's only 32 items", 'github') === null
 );
 assert(
   "explicit 'linear' kind matches the default behavior",
