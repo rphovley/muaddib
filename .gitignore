@@ -8,8 +8,11 @@ non-prod.env
 # against an accidental repo-local copy (only the .example is tracked).
 conductor-secrets.env
 
-# Per-worker env files — contain the subscription + GitHub tokens
+# Per-worker env files (subscription + GitHub tokens) now live under
+# ~/.muaddib/<project>/workers/, outside any repo. Defense-in-depth guard against
+# a stray repo-local copy from an older layout.
 .worker-*.env
+.muaddib/.worker-*.env
 
 # Live worker status files
 status/
@@ -17,7 +20,15 @@ status/
 # Host-mounted screenshot inbox (contents are transient)
 screenshots/
 
-# Dispatch daemon runtime files
+# Dispatch daemon runtime files (dedup ledger + queue) now live under
+# ~/.muaddib/<project>/. When the manifest can't be read the queue module falls
+# back to writing dispatch-queue.json/dispatch.json in the repo tree — guard those
+# fallback names. The .muaddib-dispatch* entries are the older layout (still read
+# once for migration), kept as defense-in-depth alongside the daemon's pid/log.
+dispatch-queue.json
+dispatch.json
+../dispatch-queue.json
+../dispatch.json
 ../.muaddib-dispatch-queue.json
 ../.muaddib-dispatch.json
 ../.muaddib-dispatch.pid

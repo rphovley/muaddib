@@ -14,7 +14,7 @@ while IFS= read -r project; do
 done < <(docker compose ls --format json 2>/dev/null \
     | python3 -c "import sys,json; [print(p['Name']) for p in json.load(sys.stdin) if p['Name'].startswith(sys.argv[1])]" "${MUADDIB_PROJECT_NAME}-w" 2>/dev/null || true)
 
-for env_file in "$FLEET_DIR"/.worker-*.env; do
+for env_file in "$MUADDIB_WORKERS_DIR"/.worker-*.env; do
     [[ -f "$env_file" ]] || continue
     base="${env_file##*/.worker-}"
     n="${base%.env}"

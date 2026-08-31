@@ -22,6 +22,17 @@ services:
       - ../.muaddib/secrets.env
     environment:
       REPO_ROOT: /repo
+      # Dispatch dedup ledger + queue. The container runs as root (HOME=/root)
+      # and is recreated on restart, so writing to ~/.muaddib/<project>/ inside it
+      # would be lost. Point the queue module at the mounted host dir (see the
+      # volume below) so the ledger persists across container recreation.
+      MUADDIB_DISPATCH_DIR: /dispatch-state
+      # Also override the account dir to the same mounted host path. Without this,
+      # read-config.sh (sourced by spawn-worker.sh when the daemon launches a
+      # worker) would resolve MUADDIB_WORKERS_DIR under the container's /root/.muaddib,
+      # so per-worker env files would land inside the ephemeral container — invisible
+      # to the host teardown scripts. /dispatch-state is bind-mounted from the host.
+      MUADDIB_ACCOUNT_DIR: /dispatch-state
       # HOST_FLEET_DIR: real path of muaddib/ on the host machine.
       # When spawn-worker.sh calls `docker compose` from inside this container,
       # Docker resolves volume mounts against the HOST filesystem, not the
@@ -44,9 +55,15 @@ services:
       DISPATCH_PORT: ${DISPATCH_PORT:-3999}
     volumes:
       # Repo bind-mount: daemon and spawn-worker.sh read workflows, scripts, etc.
-      # Writes (status files, per-worker .env files) land on the host via this mount.
+      # Status-file writes land on the host via this mount. (Per-worker .env files
+      # now go to /dispatch-state — see MUADDIB_ACCOUNT_DIR above.)
       - ..:/repo
       # Host Docker socket: daemon calls `docker ps`; spawn-worker.sh calls
       # `docker compose up` to launch worker containers on the host daemon.
       - /var/run/docker.sock:/var/run/docker.sock
+      # Account-level per-project dir on the host, holding the dispatch dedup
+      # ledger + queue (MUADDIB_DISPATCH_DIR above). Persists the ledger across
+      # container recreation. dispatch.sh mkdir -p's the source first so it isn't
+      # root-created with wrong ownership.
+      - ${MUADDIB_ACCOUNT_DIR:?run via dispatch.sh — it sets MUADDIB_ACCOUNT_DIR automatically}:/dispatch-state
     working_dir: /repo/muaddib

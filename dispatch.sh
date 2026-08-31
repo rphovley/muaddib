@@ -22,6 +22,13 @@ export DISPATCH_PORT
 # host rather than against the container's bind-mount path.
 export HOST_FLEET_DIR="$FLEET_DIR"
 
+# Account-level per-project dir (MUADDIB_ACCOUNT_DIR from read-config.sh, honoring
+# any override) — bind-mounted into the dispatch container as /dispatch-state (see
+# docker-compose.dispatch.yml) to persist the dedup ledger. Create it here as the
+# invoking (non-root) user so the mount source exists and isn't lazily
+# root-created by Docker with the wrong ownership.
+mkdir -p "$MUADDIB_ACCOUNT_DIR"
+
 # ─── secrets for non-interactive startup ───────────────────────────────────────
 # ~/.zshrc exports these only for *interactive* shells, so a daemon started at
 # reboot / launchd / cron inherits neither — the docker-compose interpolation

@@ -65,7 +65,11 @@ SHARED_ENV="${WORKER_SHARED_ENV:-$REPO_ROOT/.muaddib/secrets.env}"
     echo "missing ${SHARED_ENV} — copy .muaddib/secrets.env.example to .muaddib/secrets.env and fill it in" >&2
     exit 1
 }
-ENV_FILE="$REPO_ROOT/.muaddib/.worker-${WORKER}.env"
+# Per-worker env file lives under the account-level dir (~/.muaddib/<project>/
+# workers/), never in the repo tree — it carries the subscription + GitHub tokens
+# and is regenerated every spawn. MUADDIB_WORKERS_DIR comes from read-config.sh.
+mkdir -p "$MUADDIB_WORKERS_DIR"
+ENV_FILE="$MUADDIB_WORKERS_DIR/.worker-${WORKER}.env"
 cp "$SHARED_ENV" "$ENV_FILE"
 # Guard against a missing trailing newline in secrets.env — without this, the
 # append below would land on the end of its last line and corrupt both values
@@ -123,10 +127,10 @@ echo "TICKET_SOURCE=${TICKET_SOURCE:-$MUADDIB_TICKET_SOURCE}" >>"$ENV_FILE"
 
 chmod 600 "$ENV_FILE"
 
-mkdir -p "$REPO_ROOT/.muaddib" && mkdir -p "$FLEET_DIR/status" && chmod 777 "$FLEET_DIR/status"
+mkdir -p "$FLEET_DIR/status" && chmod 777 "$FLEET_DIR/status"
 
 export WORKER_API_PORT="$API_PORT" WORKER_DB_PORT="$DB_PORT" WORKER_SKETCH_PORT="$SKETCH_PORT" \
-    WORKER_ENV_FILE="$REPO_ROOT/.muaddib/.worker-${WORKER}.env" WORKER_INDEX="$WORKER" \
+    WORKER_ENV_FILE="$ENV_FILE" WORKER_INDEX="$WORKER" \
     CLAUDE_SKILLS_DIR="$CLAUDE_SKILLS_DIR" \
     HOST_TMPDIR="${HOST_TMPDIR:-${TMPDIR:-/tmp}}" \
     HOST_DESKTOP="${HOST_DESKTOP:-$HOME/Desktop}"
