@@ -41,8 +41,12 @@ function extractIdentifier(task, sourceKind = 'linear') {
     if (urlMatch) return urlMatch[1];
     // Else a bare "36" or "#36" — github.js's issueNumber() tolerates '#'/'repo#',
     // so a bare number token is all the generic backend needs. No Linear-shaped
-    // regex on the github path.
-    const bareMatch = task.match(/^#?(\d+)\b/);
+    // regex on the github path. Not anchored to the start (matches Linear's own
+    // bareMatch below): muaddib.sh passes TASK as "/muaddib 36", not just "36",
+    // so the number must be found anywhere, not only at position 0. Requires a
+    // preceding boundary (start/whitespace/'#') so it doesn't grab digits out of
+    // an unrelated word.
+    const bareMatch = task.match(/(?:^|[\s#])(\d+)\b/);
     if (bareMatch) return bareMatch[1];
     return null;
   }

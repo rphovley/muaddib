@@ -143,6 +143,16 @@ assert(
   extractIdentifier('QUO-7', 'github') === null
 );
 assert(
+  // muaddib.sh passes TASK as "/muaddib <ticket>", not the bare ticket — the
+  // number must be found anywhere in the string, not just at position 0.
+  'github: finds a bare number after a /muaddib prefix',
+  extractIdentifier('/muaddib 36', 'github') === '36'
+);
+assert(
+  "github: finds a '#'-prefixed number after a /muaddib prefix",
+  extractIdentifier('/muaddib #36', 'github') === '36'
+);
+assert(
   "explicit 'linear' kind matches the default behavior",
   extractIdentifier('QUO-7', 'linear') === 'QUO-7'
 );
