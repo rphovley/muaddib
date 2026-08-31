@@ -38,6 +38,9 @@ TEST_SCRIPT='
     echo "=== orchestrator/test-runner ==="
     node "$MUADDIB/orchestrator/__tests__/test-runner.js"
 
+    echo "=== orchestrator/test-notify-format ==="
+    node "$MUADDIB/orchestrator/__tests__/test-notify-format.js"
+
     echo "=== orchestrator/test-state ==="
     node "$MUADDIB/orchestrator/__tests__/test-state.js"
 
@@ -73,6 +76,9 @@ TEST_SCRIPT='
 
     echo "=== services/test-ticket-source ==="
     node "$MUADDIB/services/__tests__/test-ticket-source.js"
+
+    echo "=== services/test-notify ==="
+    node "$MUADDIB/services/__tests__/test-notify.js"
 
     echo "=== services/test-linear-webhook ==="
     node "$MUADDIB/services/__tests__/test-linear-webhook.js"

@@ -12,7 +12,7 @@ const path = require('path');
 const { subscribe } = require('./events');
 const { getTicketSource } = require('../services/ticket-source');
 const { startJob } = require('./job');
-const { run } = require('./runner');
+const { run, notifyHuman } = require('./runner');
 const { noteStatus, AGENT_STATUS_DIR } = require('./status');
 const { getRunData, sumTotals, estimateCost, formatSummary, postRunRecord } = require('./token-tracker');
 const { resolveMuaddibRoot } = require('./muaddib-root');
@@ -176,7 +176,7 @@ async function main() {
 
   note('FEEDBACK');
   await new Promise((resolve) => {
-    const sub = subscribe(WORKER, (ev) => {
+    const sub = subscribe(WORKER, async (ev) => {
       if (ev.job === 'webhook' && ev.event === 'feedback' && currentState === 'FEEDBACK') {
         note('FEEDBACK_WORKING');
         const feedbackCmd = MOCK_JOBS
@@ -187,7 +187,21 @@ async function main() {
       if (ev.job === 'claude-feedback' && ev.event === 'done' && currentState === 'FEEDBACK_WORKING') {
         note('FEEDBACK');
       }
-      if (ev.job === 'webhook' && ev.event === 'merged') { sub.kill(); resolve(); }
+      if (ev.job === 'webhook' && ev.event === 'merged') {
+        // Quiet, informational tier (no alert sound) — proves the info path
+        // end-to-end through the same shared formatter/Slack sender the
+        // attention-needed alerts use.
+        try {
+          // Await so the fire-and-forget Slack send actually flushes before
+          // the DONE_FINAL process.exit(0) below tears the process down.
+          await notifyHuman(WORKER, {
+            kind: 'info',
+            message: `PR merged for ${LINEAR_ISSUE || 'this ticket'} — preview torn down`,
+          });
+        } catch (_) {}
+        sub.kill();
+        resolve();
+      }
     }, { fromEnd: true });
   });
 
