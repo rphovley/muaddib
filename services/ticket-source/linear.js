@@ -146,6 +146,15 @@ function createLinearSource(opts = {}) {
   return {
     name: 'linear',
 
+    // How the dispatch daemon learns about new/relabeled issues for this
+    // backend: 'webhook' — Linear POSTs to a registered webhook (registerWatch
+    // below), and the daemon verifies each inbound request's signature.
+    watchMode: 'webhook',
+
+    // The inbound header carrying the webhook signature, so the daemon reads it
+    // from the source instead of hardcoding a Linear-specific header name.
+    signatureHeader: 'linear-signature',
+
     // Escape hatch — the raw client, for callers that still need bespoke queries.
     graphql,
 
