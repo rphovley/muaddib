@@ -1,3 +1,7 @@
+# Node dependencies (this repo's first package.json carries the Claude Agent
+# SDK for services/conductor.js; the tree itself is never committed).
+node_modules/
+
 # Real secret bundle (only the .example is tracked)
 non-prod.env
 

@@ -1,0 +1,12 @@
+{
+  "name": "muaddib-fleet",
+  "version": "0.0.0",
+  "private": true,
+  "description": "muaddib fleet runtime — the repo's first package.json, carrying the Claude Agent SDK for the Conductor daemon (services/conductor.js). Everything else here still runs on Node builtins only.",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.252"
+  }
+}

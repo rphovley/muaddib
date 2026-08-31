@@ -89,6 +89,9 @@ TEST_SCRIPT='
     echo "=== services/test-dispatch-daemon ==="
     node "$MUADDIB/services/__tests__/test-dispatch-daemon.js"
 
+    echo "=== services/test-conductor ==="
+    node "$MUADDIB/services/__tests__/test-conductor.js"
+
     echo "=== services/test-start-servers-config ==="
     node "$MUADDIB/services/__tests__/test-start-servers-config.js"
 

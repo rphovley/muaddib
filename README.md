@@ -575,6 +575,45 @@ workflow just never runs any of this.
   parent, same as the plan fallback — since nothing on the planning worker's
   filesystem survives to the implementation run.
 
+## Conductor daemon (`services/conductor.js`)
+
+The **Conductor** is the fleet-level reasoning agent this README anticipates
+throughout (Decision Log, Session Context, `conductor-secrets.env`). Unlike
+Workers — which run inside the Claude Code CLI — the Conductor is
+**harness-independent**: a long-lived Node process built directly on the
+[Claude Agent SDK](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk),
+running with no Claude Code session at all.
+
+What ships today is the **process-lifecycle skeleton only** — start, stay
+running, self-health-check, shut down cleanly. No Fleet Control Surface tools are
+wired up yet; those land in later milestone issues. The self-health-check is a
+*cheap process-level liveness* probe (process alive, event loop responsive,
+`CLAUDE_CODE_OAUTH_TOKEN` present, SDK session object exists) that burns **zero
+tokens** on every heartbeat; a clearly-marked `deepHealthCheck` seam is left for a
+later issue to drop in a real SDK round-trip without reworking the loop.
+
+```bash
+./conductor.sh          # foreground (Ctrl-C stops cleanly)
+./conductor.sh --bg     # start detached (PID + logs under ~/.muaddib/)
+./conductor.sh --stop   # stop the --bg daemon
+```
+
+- **Auth.** Needs `CLAUDE_CODE_OAUTH_TOKEN` (the account-level subscription token,
+  the same secret dispatch uses). `conductor.sh` sources
+  `~/.muaddib/conductor-secrets.env` at startup so a non-interactive launch
+  (reboot / launchd / cron) still gets it; the daemon fails fast if it's missing.
+- **Heartbeat interval.** `CONDUCTOR_HEALTH_INTERVAL` (ms, default 30000) sets the
+  self-health-check cadence; `CONDUCTOR_MAX_LOOP_LAG` (ms, default 5000) is the
+  event-loop lag a heartbeat tolerates before reporting unhealthy.
+- **Dependency note.** This introduces the repo's **first `package.json` +
+  `node_modules`** (gitignored), a deliberate departure from the "Node builtins
+  only" convention, carrying the single `@anthropic-ai/claude-agent-sdk`
+  dependency. Run `npm install` at the repo root before starting on the host; the
+  base image (`Dockerfile.base`) installs it for the container path.
+- **Packaging.** Runs directly on the host / base image for now. Full container
+  packaging (a `docker-compose.conductor.yml` / `Dockerfile.conductor`,
+  install-script wiring analogous to dispatch) is deferred to a later milestone.
+
 ## Not yet wired (later layers)
 
 - **Egress allowlist.** Restrict outbound to GitHub/npm/Linear/Anthropic to blunt

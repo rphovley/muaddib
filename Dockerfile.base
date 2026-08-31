@@ -31,3 +31,15 @@ RUN npm install -g @anthropic-ai/claude-code
 RUN useradd -m -s /bin/bash worker
 USER worker
 RUN mkdir -p /home/worker/.claude /home/worker/repo
+
+# muaddib fleet runtime dependency: the Claude Agent SDK powering the Conductor
+# daemon (services/conductor.js) — the repo's first and only npm dependency.
+# Installed at /home/worker/ (the repo's *parent*) on purpose: /home/worker/repo
+# is a runtime bind-mount that shadows any repo-local node_modules, but Node's
+# node_modules ancestor lookup still resolves
+# `require("@anthropic-ai/claude-agent-sdk")` from
+# /home/worker/repo/services/conductor.js up here. Version kept in sync with the
+# root package.json (the source of truth for host installs).
+WORKDIR /home/worker
+RUN npm install --no-audit --no-fund @anthropic-ai/claude-agent-sdk@^0.3.252
+WORKDIR /home/worker/repo
