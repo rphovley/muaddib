@@ -45,7 +45,7 @@
           "id": "sketch-poll",
           "type": "claude-tui",
           "skill": "sketch-poll",
-          "awaitsReview": true,
+          "awaitsReview": "review",
           "stateReads": ["sketch_file", "sketch_url"],
           "stateWrites": ["sketch_status"]
         },

@@ -90,7 +90,14 @@ WORKER_INDEX=${WORKER}
 TASK="${TASK}"
 CLAUDE_PERMISSION_MODE=${CLAUDE_PERMISSION_MODE:-bypassPermissions}
 NODE_ENV=development
+MUADDIB_PROJECT_NAME=${MUADDIB_PROJECT_NAME}
 EOF
+
+# Slack notifications (optional). SLACK_WEBHOOK_URL is account-level — it comes
+# from ~/.muaddib/conductor-secrets.env (loaded above) like CLAUDE_CODE_OAUTH_TOKEN —
+# so forward it into the worker only when it's actually set. notify.js no-ops
+# cleanly when it's absent, so an unconfigured fleet is unaffected.
+[ -n "${SLACK_WEBHOOK_URL:-}" ] && echo "SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}" >>"$ENV_FILE"
 if [ -n "${WORKFLOW_FILE:-}" ]; then
   # muaddib-fast.sh / muaddib-plan.sh already set the worker path directly.
   # The dispatch daemon sets the dispatch container path (/repo/...) — translate

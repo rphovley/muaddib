@@ -28,6 +28,11 @@ const state = require('./state');
 const { noteStatus, AGENT_STATUS_DIR } = require('./status');
 const { recordStep } = require('./token-tracker');
 const { resolveMuaddibRoot } = require('./muaddib-root');
+const notifyFormat = require('./notify-format');
+
+// Slack is optional — never let a missing/broken module take the runner down.
+let slackNotify = null;
+try { slackNotify = require('../services/notify').notify; } catch (_) { slackNotify = null; }
 
 const REPO = process.env.REPO_DIR || '/home/worker/repo';
 const MUADDIB_ROOT = resolveMuaddibRoot(REPO);
@@ -141,6 +146,49 @@ function waitForJobCompletion(worker, jobName, opts = {}) {
   });
 }
 
+// ─── notification fan-out ──────────────────────────────────────────────────────
+
+// Read the project + ticket context that enriches a notification's title.
+// MUADDIB_PROJECT_NAME is forwarded into the worker by spawn-worker.sh;
+// ticket_title is written to state by the fetch-ticket step.
+function notifyContext(worker) {
+  let ticketTitle = '';
+  try { ticketTitle = state.get(worker, 'ticket_title') || ''; } catch (_) {}
+  return {
+    worker,
+    projectName: process.env.MUADDIB_PROJECT_NAME || '',
+    ticketTitle,
+  };
+}
+
+// Fire BOTH delivery channels — desktop (notify.sh) and Slack (services/
+// notify.js) — for one notification, from a single shared object built by
+// notify-format.js so the two channels always say the same thing. Fire-and-
+// forget: desktop is spawned detached; Slack's promise rejection is swallowed so
+// a webhook hiccup never breaks the workflow. Emits NO bus event, so a later
+// flushNotify() won't re-fire the same notification.
+function fireNotification(worker, notifyScript, { kind, message, url } = {}) {
+  const ctx = notifyContext(worker);
+  const note = notifyFormat.buildNotification({ ...ctx, kind, message, url });
+
+  if (fs.existsSync(notifyScript)) {
+    spawn(
+      'bash',
+      [notifyScript, String(worker), note.title, note.subtitle, note.tier, note.sound],
+      { stdio: 'ignore', detached: true }
+    ).unref();
+  } else {
+    console.log(`[runner w${worker}] NOTIFY: ${note.title} — ${note.subtitle}`);
+  }
+
+  if (slackNotify) {
+    return Promise.resolve()
+      .then(() => slackNotify({ ...ctx, kind, message, url }))
+      .catch(() => {});
+  }
+  return Promise.resolve();
+}
+
 // ─── notify flush ────────────────────────────────────────────────────────────
 
 // Read any new notify events from the bus since the last flush and fire
@@ -170,12 +218,15 @@ function makeNotifyFlusher(worker, notifyScript) {
         let ev;
         try { ev = JSON.parse(trimmed); } catch (_) { continue; }
         if (ev.event !== 'notify') continue;
-        const msg = (ev.payload && ev.payload.msg) || '';
-        if (fs.existsSync(notifyScript)) {
-          spawn('bash', [notifyScript, String(worker), msg], { stdio: 'ignore', detached: true }).unref();
-        } else {
-          console.log(`[runner w${worker}] NOTIFY: ${msg}`);
-        }
+        // A script-emitted notify event carries a free-form msg; it may also
+        // carry an optional kind/url (skills that want the richer tiers). The
+        // msg becomes the subtitle and the title is enriched from env + state.
+        const payload = ev.payload || {};
+        fireNotification(worker, notifyScript, {
+          kind: payload.kind,
+          message: payload.msg || '',
+          url: payload.url,
+        });
       }
     } catch (_) {}
   };
@@ -230,23 +281,19 @@ async function runClaudeTuiStep(worker, step, ticketId) {
   const cmd = claudeTuiCmd(worker, step, ticketId);
   const notifyScript = path.join(MUADDIB_ROOT, 'services/notify.sh');
 
-  // Spawns notify.sh directly — no bus `emit` here. runClaudeTuiStep already
-  // runs inside this process, so it doesn't need the notify event's other
-  // purpose: letting a script-run job (a separate process with no direct
-  // access to this function) request a notification via the bus, which
-  // flushNotify() picks up after the step. Emitting AND spawning directly
-  // here would double-fire: flushNotify() re-reads the same event once the
-  // step settles and spawns notify.sh a second time for the identical message.
-  const fireNotify = (msg) => {
-    if (fs.existsSync(notifyScript)) {
-      spawn('bash', [notifyScript, String(worker), msg], { stdio: 'ignore', detached: true }).unref();
-    }
-  };
+  // Fires the desktop + Slack channels directly (no bus `emit`). runClaudeTuiStep
+  // already runs inside this process, so it doesn't need the notify event's other
+  // purpose: letting a script-run job (a separate process with no direct access
+  // to this function) request a notification via the bus, which flushNotify()
+  // picks up after the step. Emitting AND firing directly here would double-fire:
+  // flushNotify() re-reads the same event once the step settles and fires a
+  // second time for the identical notification.
+  const fireNotify = (opts) => fireNotification(worker, notifyScript, opts);
 
   const onWarn = () => {
     const msg = `${step.id} is taking longer than expected — worker ${worker} may need input`;
     console.log(`[runner w${worker}] WARN: ${msg}`);
-    fireNotify(msg);
+    fireNotify({ kind: notifyFormat.KINDS.BLOCKED, message: msg });
   };
 
   // STEP_WARN_MS overrides the default (300 000 ms) — used in tests to trigger
@@ -262,9 +309,16 @@ async function runClaudeTuiStep(worker, step, ticketId) {
   // (in a finally) once the step settles, success or failure.
   if (step.awaitsReview) {
     noteStatus(worker, 'AWAITING_REVIEW');
-    // Same wording bin/attend.sh and spawn-worker.sh's notifier show for this
-    // state — one message across all three delivery paths, not three.
-    fireNotify('A workflow step needs your input');
+    // awaitsReview may be `true` (legacy) or an interaction-kind string
+    // ("review" / "question" / "blocked"). The truthy check above still gates
+    // the coarse status; the string now selects the subtitle. A bare `true`
+    // falls through to the generic "needs your input" wording (kind=undefined),
+    // preserving the historical message and matching bin/attend.sh /
+    // spawn-worker.sh's notifier for this state.
+    const kind = typeof step.awaitsReview === 'string' ? step.awaitsReview : undefined;
+    let url;
+    try { url = state.get(worker, 'ticket_url') || undefined; } catch (_) {}
+    fireNotify({ kind, url });
   }
 
   try {
@@ -356,4 +410,11 @@ async function run(worker, workflowPath, ticketId) {
   console.log(`[runner w${worker}] workflow complete`);
 }
 
-module.exports = { run, evaluateCondition, waitForJobCompletion };
+// Fire a notification for a worker from outside the step loop (e.g.
+// orchestrator.js's FEEDBACK loop firing an info-tier "PR merged"). Resolves the
+// desktop hook path itself so callers just pass the notification opts.
+function notifyHuman(worker, opts = {}) {
+  return fireNotification(worker, path.join(MUADDIB_ROOT, 'services/notify.sh'), opts);
+}
+
+module.exports = { run, evaluateCondition, waitForJobCompletion, notifyHuman };
