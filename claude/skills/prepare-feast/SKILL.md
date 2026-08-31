@@ -14,7 +14,9 @@ Fleet-safe variant of `/prepare-meal`. Programmatic — step order is fixed. The
 Fetch the ticket via the source-neutral ticket CLI (works for whatever `TICKET_SOURCE` the project uses — Linear or GitHub):
 
 ```bash
-TICKET_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/ticket-cli.js"
+MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
+if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
+TICKET_CLI="$MUADDIB_ROOT/orchestrator/ticket-cli.js"
 node "$TICKET_CLI" fetch "$ARGUMENTS"   # prints the ticket JSON
 ```
 
@@ -75,7 +77,9 @@ Trigger sub-ticket creation if **any** of these are true:
 **If triggered:**
 - For each work stream, create a sub-ticket via the source-neutral ticket CLI. The parent id is the original ticket identifier; the title is an argument; the description (the relevant portion of the plan — work-stream details + acceptance criteria) is piped in on stdin:
   ```bash
-  TICKET_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/ticket-cli.js"
+  MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
+  if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
+  TICKET_CLI="$MUADDIB_ROOT/orchestrator/ticket-cli.js"
   # Write the work-stream description to /tmp/substream-<n>.md first, then:
   node "$TICKET_CLI" create-sub-issue "<parent-identifier>" "<original title> — <work stream name>" \
       < "/tmp/substream-<n>.md"   # prints the child ticket JSON (identifier, url)
@@ -92,7 +96,9 @@ Trigger sub-ticket creation if **any** of these are true:
 Post a single comment on the *original* (parent) ticket via the source-neutral ticket CLI — write the body below to a temp file, then pipe it in on stdin:
 
 ```bash
-TICKET_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/ticket-cli.js"
+MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
+if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
+TICKET_CLI="$MUADDIB_ROOT/orchestrator/ticket-cli.js"
 node "$TICKET_CLI" post-comment "<parent-identifier>" < "/tmp/feast-plan-${WORKER_INDEX:-0}.md"
 ```
 

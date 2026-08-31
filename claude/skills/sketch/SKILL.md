@@ -78,7 +78,9 @@ recently opened session for this file.
 ## Step 4 — Record the file path and URL for the orchestrator and operator
 
 ```bash
-STATE_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/state-cli.js"
+MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
+if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
+STATE_CLI="$MUADDIB_ROOT/orchestrator/state-cli.js"
 node "$STATE_CLI" "$WORKER" set sketch_file "<absolute path to html-file>"
 node "$STATE_CLI" "$WORKER" set sketch_url "$SKETCH_URL"
 ```
@@ -102,7 +104,9 @@ the plan finalizes once you do.
 ```
 
 ```bash
-node "${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/emit-cli.js" \
+MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
+if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
+node "$MUADDIB_ROOT/orchestrator/emit-cli.js" \
     "${WORKER_INDEX:-0}" claude notify \
     "{\"msg\":\"${STATE_TICKET_IDENTIFIER:-$ARGUMENTS} prototype ready: ${SKETCH_URL}\"}"
 ```

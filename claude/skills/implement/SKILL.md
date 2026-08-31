@@ -16,13 +16,17 @@ Fleet implementation step. Never commits.
 Read `.muaddib/plan.md` in the repo root — this is the authoritative plan written by `analyze-ticket` / `ask-questions`; in the fleet flow it is written before this step, so it is normally present. If that file does not exist, re-hydrate it from the ticket's `## Plan` comment (own or parent) via the comment-aware fetch script, then read it:
 
 ```bash
-node "${REPO_DIR:-/home/worker/repo}/muaddib/scripts/fetch-ticket.js"   # re-writes .muaddib/plan.md from the ## Plan comment; source-neutral, no-op on raw
+MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
+if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
+node "$MUADDIB_ROOT/scripts/fetch-ticket.js"   # re-writes .muaddib/plan.md from the ## Plan comment; source-neutral, no-op on raw
 ```
 
 If `.muaddib/plan.md` is still absent (no `## Plan` comment exists, or a raw ticket with no comment thread), fall back to the ticket itself and work from its description as context:
 
 ```bash
-TICKET_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/ticket-cli.js"
+MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
+if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
+TICKET_CLI="$MUADDIB_ROOT/orchestrator/ticket-cli.js"
 node "$TICKET_CLI" fetch "$ARGUMENTS"   # prints the ticket JSON (title, description, url, labels)
 ```
 

@@ -23,7 +23,9 @@ ticket @mention, the macOS notify, and worker state). Echo the recorded
 attaches. This reprints every round since the orchestrator loops this skill.
 
 ```bash
-STATE_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/state-cli.js"
+MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
+if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
+STATE_CLI="$MUADDIB_ROOT/orchestrator/state-cli.js"
 WORKER="${WORKER_INDEX:-0}"
 SKETCH_URL="$(node "$STATE_CLI" "$WORKER" get sketch_url)"
 echo "──────────────────────────────────────────────────────────"

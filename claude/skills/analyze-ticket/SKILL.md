@@ -70,7 +70,9 @@ Questions are needed only if the "Open Questions" section is non-empty — i.e.,
 Write `needs_questions` to state:
 
 ```bash
-STATE_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/state-cli.js"
+MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
+if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
+STATE_CLI="$MUADDIB_ROOT/orchestrator/state-cli.js"
 WORKER="${WORKER_INDEX:-0}"
 node "$STATE_CLI" "$WORKER" set needs_questions "true"   # or "false"
 ```
@@ -96,7 +98,9 @@ the category doesn't override an explicit request to visualize it first.
 Write `needs_sketch` to state:
 
 ```bash
-STATE_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/state-cli.js"
+MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
+if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
+STATE_CLI="$MUADDIB_ROOT/orchestrator/state-cli.js"
 WORKER="${WORKER_INDEX:-0}"
 node "$STATE_CLI" "$WORKER" set needs_sketch "true"   # or "false"
 ```
@@ -106,7 +110,9 @@ node "$STATE_CLI" "$WORKER" set needs_sketch "true"   # or "false"
 If `needs_questions=false` and `needs_sketch=false`: if `$STATE_TICKET_URL` is non-empty, post `.muaddib/plan.md` as a `## Plan` comment on the ticket via the source-neutral ticket CLI (works for whatever `TICKET_SOURCE` the project uses — Linear, GitHub, or a no-op for raw):
 
 ```bash
-TICKET_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/ticket-cli.js"
+MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
+if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
+TICKET_CLI="$MUADDIB_ROOT/orchestrator/ticket-cli.js"
 # .muaddib/plan.md already starts with its own "## Plan" heading (Step 3
 # template). Bodies are large multi-line markdown, so pipe via stdin, not argv.
 node "$TICKET_CLI" post-comment "$ARGUMENTS" < "${REPO_DIR:-/home/worker/repo}/.muaddib/plan.md"
@@ -127,7 +133,9 @@ If `needs_questions=true`:
 **Post questions to the ticket** via the source-neutral ticket CLI — only if `$STATE_TICKET_URL` is non-empty. Mention the operator in the comment body so they receive a backend notification. Build the `@mention` markup with the CLI's `mention` subcommand (source-correct for Linear or GitHub) from a source-neutral handle, falling back to `LINEAR_USER_HANDLE`:
 
 ```bash
-TICKET_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/ticket-cli.js"
+MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
+if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
+TICKET_CLI="$MUADDIB_ROOT/orchestrator/ticket-cli.js"
 HANDLE="${TICKET_USER_HANDLE:-${LINEAR_USER_HANDLE:-}}"
 # Empty handle → empty MENTION; omit the "@<handle> —" prefix, don't crash.
 MENTION="$(node "$TICKET_CLI" mention "$HANDLE")"
@@ -146,7 +154,9 @@ Skip this call entirely if `$STATE_TICKET_URL` is empty (no real ticket, e.g. a 
 **Fire macOS notify** via the event bus:
 
 ```bash
-node "${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/emit-cli.js" \
+MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
+if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
+node "$MUADDIB_ROOT/orchestrator/emit-cli.js" \
     "${WORKER_INDEX:-0}" claude notify \
     "{\"msg\":\"${STATE_TICKET_IDENTIFIER} needs your input before implementing\"}"
 ```

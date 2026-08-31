@@ -31,7 +31,9 @@ List each viable approach with:
 2. Extract the ticket identifier from `$ARGUMENTS` (e.g. `QUO-274`).
 3. Post a comment via the source-neutral ticket CLI (correct for whatever `TICKET_SOURCE` the project uses — Linear, GitHub, or a no-op for raw). Build the `@mention` with the CLI, write the body to a temp file, then pipe it in on stdin:
    ```bash
-   TICKET_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/ticket-cli.js"
+   MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
+   if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
+   TICKET_CLI="$MUADDIB_ROOT/orchestrator/ticket-cli.js"
    MENTION="$(node "$TICKET_CLI" mention "${TICKET_USER_HANDLE:-${LINEAR_USER_HANDLE:-}}")"
    # Compose the body below into this file, using "$MENTION —" as the first-line
    # prefix when non-empty (omit it entirely when empty — do not crash).

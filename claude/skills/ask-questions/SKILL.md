@@ -31,7 +31,9 @@ Rewrite the plan with the answers folded in:
 Post the updated `.muaddib/plan.md` as a `## Plan` comment via the source-neutral ticket CLI (works for whatever `TICKET_SOURCE` the project uses — Linear, GitHub, or a no-op for raw). Skip if `$STATE_TICKET_URL` is empty (no real ticket).
 
 ```bash
-TICKET_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/ticket-cli.js"
+MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
+if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
+TICKET_CLI="$MUADDIB_ROOT/orchestrator/ticket-cli.js"
 # .muaddib/plan.md already starts with its own "## Plan" heading; bodies are
 # large multi-line markdown, so pipe via stdin, not argv. $STATE_TICKET_IDENTIFIER
 # is the source-neutral id the CLI accepts.

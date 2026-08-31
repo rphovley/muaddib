@@ -46,7 +46,9 @@ Worker: w<WORKER_INDEX> | Branch: <BRANCH>
 Build the `@<HANDLE> —` prefix with the source-neutral ticket CLI so the markup is correct for whatever `TICKET_SOURCE` the project uses:
 
 ```bash
-TICKET_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/ticket-cli.js"
+MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
+if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
+TICKET_CLI="$MUADDIB_ROOT/orchestrator/ticket-cli.js"
 MENTION="$(node "$TICKET_CLI" mention "${TICKET_USER_HANDLE:-${LINEAR_USER_HANDLE:-}}")"
 ```
 
@@ -63,7 +65,9 @@ Run both actions:
 **Post the comment** via the source-neutral ticket CLI — write the Step 3 body to a temp file, then pipe it in on stdin (the id is the identifier from `$ARGUMENTS`):
 
 ```bash
-TICKET_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/ticket-cli.js"
+MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
+if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
+TICKET_CLI="$MUADDIB_ROOT/orchestrator/ticket-cli.js"
 # Write the Step 3 comment body to this file first (it's large, multi-line markdown).
 node "$TICKET_CLI" post-comment "$ARGUMENTS" < "/tmp/grill-comment-${WORKER_INDEX:-0}.md"
 ```
