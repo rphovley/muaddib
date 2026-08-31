@@ -22,29 +22,21 @@ export DISPATCH_PORT
 # host rather than against the container's bind-mount path.
 export HOST_FLEET_DIR="$FLEET_DIR"
 
-# ─── account-level secrets (non-interactive startup) ──────────────────────────
-# ~/.zshrc exports CLAUDE_CODE_OAUTH_TOKEN / GITHUB_TOKEN only for *interactive*
-# shells, so a daemon started at reboot / launchd / cron inherits neither — the
-# docker-compose interpolation below (and spawn-worker.sh downstream) then fails.
-# Source an account-level secrets file to supply them, honoring the "shell env
-# wins over file" convention used elsewhere (spawn-worker.sh, install.sh): only
-# export a KEY the current environment doesn't already have. Missing file → no-op
-# (interactive shells already have the vars via ~/.zshrc). Deliberately NOT
-# ~/.zshenv — that would expose these tokens to every process on the machine.
+# ─── secrets for non-interactive startup ───────────────────────────────────────
+# ~/.zshrc exports these only for *interactive* shells, so a daemon started at
+# reboot / launchd / cron inherits neither — the docker-compose interpolation
+# below (both vars are hard ${VAR:?...} requirements in docker-compose.dispatch.yml)
+# then fails. Backfill from two files (shell env still wins over either — see
+# bin/load-env-file.sh):
+#   - CLAUDE_CODE_OAUTH_TOKEN is account-level (tied to the Claude subscription,
+#     not any one repo) — ~/.muaddib/conductor-secrets.env. Deliberately NOT
+#     ~/.zshenv — that would expose it to every process on the machine.
+#   - GITHUB_TOKEN is project-scoped (a PAT limited to this repo) — the
+#     project's own .muaddib/secrets.env, the same file spawn-worker.sh reads.
+source "$FLEET_DIR/bin/load-env-file.sh"
 CONDUCTOR_SECRETS_FILE="${CONDUCTOR_SECRETS_FILE:-$HOME/.muaddib/conductor-secrets.env}"
-if [ -f "$CONDUCTOR_SECRETS_FILE" ]; then
-  while IFS= read -r _line || [ -n "$_line" ]; do
-    _line="${_line#"${_line%%[![:space:]]*}"}"   # strip leading whitespace
-    [ -z "$_line" ] && continue                   # skip blank lines
-    case "$_line" in \#*) continue ;; esac        # skip comments
-    _line="${_line#export }"                       # strip optional leading 'export '
-    _key="${_line%%=*}"
-    [ "$_key" = "$_line" ] && continue            # no '=' → not a KEY=VALUE line
-    if [ -z "${!_key:-}" ]; then                  # shell env wins over the file
-      export "${_key}=${_line#*=}"
-    fi
-  done < "$CONDUCTOR_SECRETS_FILE"
-fi
+muaddib_load_env_file "$CONDUCTOR_SECRETS_FILE"
+muaddib_load_env_file "$FLEET_DIR/.muaddib/secrets.env"
 
 case "${1:-}" in
   --bg)

@@ -4,8 +4,9 @@
 #
 # Ports: base + worker number, bases come from .muaddib/manifest.json's workerPorts
 # (no defaults baked in here — see read-config.sh / README "Port scheme").
-# Secrets: subscription + GitHub tokens come from your shell env; non-prod app
-# secrets come from a local .muaddib/secrets.env, injected as VALUES into the container.
+# Secrets: subscription token comes from your shell env or ~/.muaddib/conductor-secrets.env;
+# GitHub token and non-prod app secrets come from a local .muaddib/secrets.env,
+# injected as VALUES into the container.
 set -euo pipefail
 
 BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -44,6 +45,16 @@ rm -rf "$MERGED_SKILLS" && mkdir -p "$MERGED_SKILLS"
 cp -r "$FLEET_DIR/claude/skills/." "$MERGED_SKILLS/"
 # Use the host-side path so docker compose mounts the right directory on the host.
 CLAUDE_SKILLS_DIR="$HOST_FLEET_DIR/status/.skills-${WORKER}"
+
+# Backfill from file if the invoking shell doesn't already have these (shell
+# env still wins — see bin/load-env-file.sh). CLAUDE_CODE_OAUTH_TOKEN is
+# account-level (~/.muaddib/conductor-secrets.env, not tied to any one repo);
+# GITHUB_TOKEN is project-scoped (a PAT limited to this repo), so it comes
+# from the project's own .muaddib/secrets.env — the same file read as
+# SHARED_ENV below for non-prod app config.
+source "$FLEET_DIR/bin/load-env-file.sh"
+muaddib_load_env_file "$HOME/.muaddib/conductor-secrets.env"
+muaddib_load_env_file "$REPO_ROOT/.muaddib/secrets.env"
 
 : "${CLAUDE_CODE_OAUTH_TOKEN:?export your subscription token first: run 'claude setup-token'}"
 : "${GITHUB_TOKEN:?export a repo-scoped GitHub token (push branches + open PRs only)}"
