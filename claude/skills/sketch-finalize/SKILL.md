@@ -16,7 +16,9 @@ posts it now, reflecting whatever the review loop changed.
 ## Step 1 — Export the prototype and gather the review history
 
 ```bash
-STATE_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/state-cli.js"
+MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
+if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
+STATE_CLI="$MUADDIB_ROOT/orchestrator/state-cli.js"
 WORKER="${WORKER_INDEX:-0}"
 SKETCH_FILE="$(node "$STATE_CLI" "$WORKER" get sketch_file)"
 NOTES="${REPO_DIR:-/home/worker/repo}/.muaddib/sketch/notes.md"
@@ -31,8 +33,17 @@ that's fine, just say so in Step 3.
 ## Step 2 — Post `## Plan`
 
 Post the current (possibly revised) `.muaddib/plan.md` as a `## Plan`
-comment via `mcp__linear__save_comment` — same format `analyze-ticket` would
-have used had it posted directly.
+comment via the source-neutral ticket CLI — same format `analyze-ticket`
+would have used had it posted directly (works for whatever `TICKET_SOURCE`
+the project uses — Linear, GitHub, or a no-op for raw):
+
+```bash
+MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
+if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
+TICKET_CLI="$MUADDIB_ROOT/orchestrator/ticket-cli.js"
+# .muaddib/plan.md already starts with its own "## Plan" heading; pipe via stdin.
+node "$TICKET_CLI" post-comment "$ARGUMENTS" < "${REPO_DIR:-/home/worker/repo}/.muaddib/plan.md"
+```
 
 ## Step 3 — Post `## Sketch`
 
@@ -57,6 +68,16 @@ just "prototyped the screen">
 \`\`\`
 
 </details>
+```
+
+Post it as a second comment via the same source-neutral ticket CLI — write
+the `## Sketch` body above to a temp file, then pipe it in on stdin:
+
+```bash
+MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
+if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
+TICKET_CLI="$MUADDIB_ROOT/orchestrator/ticket-cli.js"
+node "$TICKET_CLI" post-comment "$ARGUMENTS" < "/tmp/sketch-comment-${WORKER_INDEX:-0}.md"
 ```
 
 Keep the exported artifact lean (avoid large embedded base64 images) — it

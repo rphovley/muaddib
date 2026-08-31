@@ -26,9 +26,19 @@ Rewrite the plan with the answers folded in:
 - Update the "Solution" and "Work Streams" sections to reflect what was learned
 - Remove the "Open Questions" section (it is now resolved)
 
-## Step 4 — Post final plan to Linear
+## Step 4 — Post final plan to the ticket
 
-Post the updated `.muaddib/plan.md` as a `## Plan` comment on the Linear ticket using `mcp__linear__save_comment` (`STATE_TICKET_URL` identifies the issue).
+Post the updated `.muaddib/plan.md` as a `## Plan` comment via the source-neutral ticket CLI (works for whatever `TICKET_SOURCE` the project uses — Linear, GitHub, or a no-op for raw). Skip if `$STATE_TICKET_URL` is empty (no real ticket).
+
+```bash
+MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
+if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
+TICKET_CLI="$MUADDIB_ROOT/orchestrator/ticket-cli.js"
+# .muaddib/plan.md already starts with its own "## Plan" heading; bodies are
+# large multi-line markdown, so pipe via stdin, not argv. $STATE_TICKET_IDENTIFIER
+# is the source-neutral id the CLI accepts.
+node "$TICKET_CLI" post-comment "$STATE_TICKET_IDENTIFIER" < "${REPO_DIR:-/home/worker/repo}/.muaddib/plan.md"
+```
 
 ## Step 5 — Signal done
 

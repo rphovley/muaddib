@@ -14,7 +14,9 @@ Called by `plan.json`'s `sketch-review-loop` step (see
 ## Step 1 — Read the feedback and the current artifacts
 
 ```bash
-STATE_CLI="${REPO_DIR:-/home/worker/repo}/muaddib/orchestrator/state-cli.js"
+MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
+if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
+STATE_CLI="$MUADDIB_ROOT/orchestrator/state-cli.js"
 WORKER="${WORKER_INDEX:-0}"
 SKETCH_FILE="$(node "$STATE_CLI" "$WORKER" get sketch_file)"
 NOTES="${REPO_DIR:-/home/worker/repo}/.muaddib/sketch/notes.md"
