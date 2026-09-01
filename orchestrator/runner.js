@@ -376,14 +376,23 @@ async function runSingleStep(worker, step, ticketId, flushNotify) {
   console.log(`[runner w${worker}] start ${step.id} [${step.type}]`);
   emit(worker, 'runner', 'step_start', { id: step.id, type: step.type });
 
-  if (step.type === 'script') {
-    await runScriptStep(worker, step);
-  } else if (step.type === 'claude-tui') {
-    await runClaudeTuiStep(worker, step, ticketId);
-  } else if (step.type === 'loop') {
-    await runLoop(worker, step, ticketId, flushNotify);
-  } else {
-    throw new Error(`unknown step type: ${step.type}`);
+  try {
+    if (step.type === 'script') {
+      await runScriptStep(worker, step);
+    } else if (step.type === 'claude-tui') {
+      await runClaudeTuiStep(worker, step, ticketId);
+    } else if (step.type === 'loop') {
+      await runLoop(worker, step, ticketId, flushNotify);
+    } else {
+      throw new Error(`unknown step type: ${step.type}`);
+    }
+  } catch (err) {
+    // A throwing step never reaches the step_done below, so without a terminal
+    // signal here Fleet State would show the worker running this step with
+    // failed=false forever. Emit a failed event (naming the step) before
+    // propagating so the derived status reflects the failure.
+    emit(worker, 'runner', 'failed', { id: step.id, error: String((err && err.message) || err) });
+    throw err;
   }
 
   flushNotify();

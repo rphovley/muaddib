@@ -10,6 +10,20 @@ function eventsFile(worker) {
   return path.join(eventsDir(), `worker-${worker}.events`);
 }
 
+// Parse a block of newline-delimited JSON into event objects, skipping blank
+// and malformed lines. The single source of the JSONL line grammar, shared by
+// subscribe()'s poller and readEvents() so a reader can never drift from the
+// stream reader on how a line is interpreted.
+function parseEventLines(text) {
+  const events = [];
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try { events.push(JSON.parse(trimmed)); } catch (_) {}
+  }
+  return events;
+}
+
 // Append one JSONL event line to the worker's events file.
 function emit(worker, job, event, payload) {
   const line = JSON.stringify({
@@ -51,13 +65,11 @@ function subscribe(worker, handler, opts = {}) {
       const n = fs.readSync(fd, buf, 0, buf.length, offset);
       offset += n;
       remainder += buf.slice(0, n).toString();
-      const lines = remainder.split('\n');
-      remainder = lines.pop(); // last (possibly incomplete) line
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        try { handler(JSON.parse(trimmed)); } catch (_) {}
-      }
+      const cut = remainder.lastIndexOf('\n');
+      if (cut === -1) return; // no complete line yet
+      const complete = remainder.slice(0, cut);
+      remainder = remainder.slice(cut + 1); // last (possibly incomplete) line
+      for (const ev of parseEventLines(complete)) handler(ev);
     } catch (_) {
     } finally {
       if (fd !== undefined) try { fs.closeSync(fd); } catch (_) {}
@@ -70,4 +82,35 @@ function subscribe(worker, handler, opts = {}) {
   return { kill: () => { killed = true; clearInterval(timer); } };
 }
 
-module.exports = { emit, subscribe, eventsFile };
+// One-shot synchronous read of a worker's events file into an array of event
+// objects, using the same JSONL grammar as subscribe(). Returns [] when the
+// file is missing — a worker that has never emitted looks like an empty stream,
+// not an error. Read-only: opens nothing for writing, creates no file.
+function readEvents(worker) {
+  let text;
+  try {
+    text = fs.readFileSync(eventsFile(worker), 'utf8');
+  } catch (_) {
+    return [];
+  }
+  return parseEventLines(text);
+}
+
+// Enumerate the worker indices that have an events file in eventsDir(), sorted
+// numerically ascending. Returns [] when the directory doesn't exist yet.
+function listWorkers() {
+  let names;
+  try {
+    names = fs.readdirSync(eventsDir());
+  } catch (_) {
+    return [];
+  }
+  const workers = [];
+  for (const name of names) {
+    const m = /^worker-(\d+)\.events$/.exec(name);
+    if (m) workers.push(Number(m[1]));
+  }
+  return workers.sort((a, b) => a - b);
+}
+
+module.exports = { emit, subscribe, eventsFile, readEvents, listWorkers };
