@@ -14,6 +14,11 @@ conductor-secrets.env
 .worker-*.env
 .muaddib/.worker-*.env
 
+# Per-worker ephemeral plan handoff (analyze-ticket → implement), regenerated
+# fresh every dispatch — never meant to be committed. A stray tracked copy
+# would leak a stale, unrelated ticket's plan into every future checkout.
+.muaddib/plan.md
+
 # Live worker status files
 status/
 
