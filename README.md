@@ -30,9 +30,17 @@ The `.muaddib/` directory at the repo root is the single place for
 project-owned muaddib config and setup. muaddib itself owns nothing
 project-specific — all customisation lives here.
 
+**Onboarding a new project?** Run `./muaddib-onboard.sh [repo]` — an interactive
+wizard that inspects the target repo, asks only the decisions a human must make,
+generates the artifacts it needs (hooks, compose overlay, worker-safe check
+command, PR-template override), writes `.muaddib/manifest.json` +
+`.muaddib/secrets.env`, and validates the result. The full categorized checklist
+it implements lives in [`.muaddib/onboarding.md`](.muaddib/onboarding.md).
+
 | Path | Purpose |
 |------|---------|
-| `.muaddib/manifest.json` | The project registry — dev/check/lint/test scripts, ports, seed command, default model, `workerPorts`, etc. Every config-reading script/service in this repo reads this file; no fallback if it's missing. |
+| `.muaddib/manifest.json` | The project registry — dev/check/lint/test scripts, ports, seed command, default model, `workerPorts`, etc. Every config-reading script/service in this repo reads this file; no fallback if it's missing. Validated by `services/validate-manifest.js`. |
+| `.muaddib/onboarding.md` | The onboarding checklist + design doc — what a project needs and how the `onboard-project` wizard handles each item. Committed. |
 | `.muaddib/goals.md` | Goal Context — durable, cross-ticket fleet policy. Committed, not gitignored. Bootstrapped with a default template on first read if missing. See "Goal Context" below. |
 | `.muaddib/decisions.jsonl` | Decision Log — append-only, ticket-scoped audit trail of Conductor Handoff Records, one JSON object per line. Committed, not gitignored. See "Decision Log" below. |
 | `.muaddib/secrets.env.example` | Committed template for the secrets bundle (gitignored: `.muaddib/secrets.env`) |
