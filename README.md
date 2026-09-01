@@ -43,6 +43,42 @@ project-specific — all customisation lives here.
 | `~/.muaddib/<project>/dispatch.json`, `dispatch-queue.json` | Dispatch daemon's dedup ledger + pending-spawn queue, kept outside the repo tree. In the dispatch container these persist via a host bind-mount (`MUADDIB_DISPATCH_DIR`). |
 | `~/.muaddib/<project>/session/session.json` | Session Context — live, **ephemeral** working state for a single Conductor run, kept outside the repo tree so it can never be committed. Thrown away at run end, never accumulates. See "Session Context" below. |
 | `.muaddib/plan.md` | Current implementation plan written by the muaddib fleet agent. Not tracked by git. |
+| `.muaddib/pr-template.md` | Optional PR-body override. When present, `commit-and-pr` / `muaddib-task` use it verbatim (with `$VAR`/`${VAR}` interpolation) as the GitHub PR body instead of muaddib's generic source-neutral default. Not required. Copy `claude/skills/commit-and-pr/pr-template.example.md` as a starting point. See "PR body template" below. |
+
+### PR body template (`.muaddib/pr-template.md`)
+
+By default `commit-and-pr` and `muaddib-task` open PRs with a generic,
+source-neutral body (Summary / Ticket / Test plan / Review notes — plus Task /
+Decisions for free-form tasks). This default is deliberately project-agnostic:
+it carries no `## Preview` or `## Preview credentials` sections and no `## Linear`
+header, so muaddib's own self-hosting PRs stay clean.
+
+A project can override the entire body by committing `.muaddib/pr-template.md`.
+When that file exists it becomes the PR body verbatim, with these variables
+interpolated (`$VAR` or `${VAR}`). Interpolation is deliberately narrow: a
+reference to a **known** variable is substituted (the preview URLs/credentials
+fall back to `(unavailable)`), an **unknown** `$VAR` is left untouched (so prose
+like a `$5` price survives), `$$` renders a literal `$`, and a single leading
+HTML comment is stripped (so the example file's usage note never ships):
+
+| Variable | Meaning |
+|----------|---------|
+| `$STATE_TICKET_URL` | Ticket URL — source-neutral (Linear, GitHub, or `(none)` for a raw/free-form task). |
+| `$STATE_API_TUNNEL_URL` | Preview API tunnel URL. |
+| `$STATE_PORTAL_URL` | Preview Portal URL. |
+| `$STATE_PORTAL_PREVIEW_URL` | Preview Portal URL with `?is_preview=true` appended — or `(unavailable)` (never a bare `(unavailable)?is_preview=true`). |
+| `$STATE_HOMEOWNER_URL` | Preview Homeowner URL. |
+| `$PREVIEW_EMAIL` / `$PREVIEW_PASSWORD` | Preview login for the seeded contractor. |
+| `$HO_MAGIC_LINK` | Homeowner magic-link path (appended to the homeowner URL). |
+| `$HO_CREDENTIAL` | Pre-rendered homeowner login line (URL + magic-link), or `(unavailable)`. |
+| `$PR_SUMMARY` | Agent-authored Summary bullets. |
+| `$PR_TEST_PLAN` | Agent-authored Test plan. |
+| `$PR_REVIEW_NOTES` | Agent-authored deferred-findings notes, or `None`. |
+| `$PR_TASK` / `$PR_DECISIONS` | Free-form task description / interpretation choices (`muaddib-task` only). |
+
+`claude/skills/commit-and-pr/pr-template.example.md` reproduces quotethat's
+original Preview / Preview-credentials sections — copy it to your project's
+`.muaddib/pr-template.md` and edit. muaddib itself ships no override.
 
 ### Hook contract
 

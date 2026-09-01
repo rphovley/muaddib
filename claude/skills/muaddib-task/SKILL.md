@@ -156,8 +156,8 @@ SEED_SCRIPT="/home/worker/repo/projects/api/scripts/seed-preview-w${WORKER_INDEX
 SEED_JSON=$([ -f "$SEED_SCRIPT" ] && \
     cd /home/worker/repo && npx --prefix projects/api tsx "$SEED_SCRIPT" 2>/tmp/seed-preview.log | tail -1 \
     || echo '{"email":"(seed failed — see /tmp/seed-preview.log)","password":"","homeowner_magic_link":null}')
-PREVIEW_EMAIL=$(printf '%s' "$SEED_JSON"    | jq -r '.email // "(unknown)"')
-PREVIEW_PASSWORD=$(printf '%s' "$SEED_JSON" | jq -r '.password // "(unknown)"')
+PREVIEW_EMAIL=$(printf '%s' "$SEED_JSON"    | jq -r '.email // "(unavailable)"')
+PREVIEW_PASSWORD=$(printf '%s' "$SEED_JSON" | jq -r '.password // "(unavailable)"')
 HO_MAGIC_LINK=$(printf '%s' "$SEED_JSON"   | jq -r '.homeowner_magic_link // ""')
 
 # 3. Start API dev server
@@ -195,40 +195,83 @@ done
 
 ```bash
 git push -u origin <branch>
-gh pr create --base main --title "<short title>" --body "$(cat <<'EOF'
+```
+
+Normalize the preview vars and compute the homeowner credential (fleet only — empties become `(unavailable)`). These map the free-form task's local vars onto the same canonical names a `.muaddib/pr-template.md` override references, so one project template works from either skill:
+
+```bash
+STATE_TICKET_URL=""   # free-form task — no ticket
+STATE_API_TUNNEL_URL="${API_TUNNEL_URL:-(unavailable)}"
+STATE_PORTAL_URL="${PORTAL_URL:-(unavailable)}"
+STATE_HOMEOWNER_URL="${HO_URL:-(unavailable)}"
+PREVIEW_EMAIL="${PREVIEW_EMAIL:-(unavailable)}"
+PREVIEW_PASSWORD="${PREVIEW_PASSWORD:-(unavailable)}"
+# Portal preview URL — only append the query string when the URL is real,
+# so an unavailable portal never renders "(unavailable)?is_preview=true".
+if [ "$STATE_PORTAL_URL" != "(unavailable)" ]; then
+  STATE_PORTAL_PREVIEW_URL="${STATE_PORTAL_URL}?is_preview=true"
+else
+  STATE_PORTAL_PREVIEW_URL="(unavailable)"
+fi
+if [ "$STATE_HOMEOWNER_URL" != "(unavailable)" ] && [ -n "$HO_MAGIC_LINK" ]; then
+  HO_CREDENTIAL="${STATE_HOMEOWNER_URL}${HO_MAGIC_LINK} _(magic-link — open directly)_"
+else
+  HO_CREDENTIAL="(unavailable)"
+fi
+```
+
+**Project-overridable body.** If the project ships `$REPO/.muaddib/pr-template.md`, that file becomes the PR body verbatim (`$VAR` / `${VAR}` interpolated — see the README "PR body template" section for the variable list). Otherwise use the free-form default below, which keeps `## Task` (verbatim description) and `## Decisions` — both intrinsic to the free-form flow — and carries no Preview/credentials tables (those are quotethat-specific; a project that wants them ships them via its template).
+
+The narrative sections you author are carried in their own vars, so **replace the placeholders with the real content before building the body** — both the default and a project template interpolate them, so neither ever ships a bare `<...>` placeholder.
+
+```bash
+REPO="${REPO_DIR:-/home/worker/repo}"
+PR_TEMPLATE="$REPO/.muaddib/pr-template.md"
+
+# Agent-authored narrative — fill these with the real PR content.
+PR_SUMMARY="- <1–3 bullets>"
+PR_TASK="<verbatim task description from \$ARGUMENTS>"
+PR_DECISIONS='<any interpretation choices made in Step 2, or "None">'
+PR_TEST_PLAN="- [ ] ..."
+PR_REVIEW_NOTES='<any deferred /check findings, or "None">'
+
+export STATE_TICKET_URL STATE_API_TUNNEL_URL STATE_PORTAL_URL STATE_PORTAL_PREVIEW_URL \
+       STATE_HOMEOWNER_URL PREVIEW_EMAIL PREVIEW_PASSWORD HO_MAGIC_LINK HO_CREDENTIAL \
+       PR_SUMMARY PR_TASK PR_DECISIONS PR_TEST_PLAN PR_REVIEW_NOTES
+
+# Interpolate $VAR / ${VAR} from the environment — injection-safe, no shell eval.
+# A leading HTML comment is stripped; an unknown $VAR is left literal (prose like
+# a "$5" price survives); $$ escapes a literal $.
+interpolate() {
+  node -e 'const fs=require("fs");const src=process.argv[1]==="-"?fs.readFileSync(0,"utf8"):fs.readFileSync(process.argv[1],"utf8");process.stdout.write(src.replace(/^\s*<!--[\s\S]*?-->\s*/,"").replace(/\$\$|\$\{(\w+)\}|\$(\w+)/g,(m,a,b)=>m==="$$"?"$":(process.env[a||b]??m)))' "$1"
+}
+
+if [ -f "$PR_TEMPLATE" ]; then
+  PR_BODY=$(interpolate "$PR_TEMPLATE")
+else
+  # Quoted heredoc — no shell expansion; interpolate fills the vars safely.
+  PR_BODY=$(interpolate - <<'EOF'
 ## Summary
-- <1–3 bullets>
+$PR_SUMMARY
 
 ## Task
-<verbatim task description from $ARGUMENTS>
-
-## Preview
-| Service | URL |
-|---------|-----|
-| API | <$API_TUNNEL_URL or "unavailable"> |
-| Portal | <$PORTAL_URL or "unavailable"> |
-| Homeowner | <$HO_URL or "unavailable"> |
-
-## Preview credentials
-| Role | Login |
-|------|-------|
-| Contractor (Portal) | **$PREVIEW_EMAIL** / `$PREVIEW_PASSWORD` |
-| Homeowner | $HO_URL$HO_MAGIC_LINK _(magic-link — open directly)_ |
-
-_Preview runs in a sandboxed Docker worker. Tear down with `./muaddib/bin/teardown-worker.sh <N>`._
+$PR_TASK
 
 ## Decisions
-<any interpretation choices made in Step 2, or "None">
+$PR_DECISIONS
 
 ## Test plan
-- [ ] ...
+$PR_TEST_PLAN
 
 ## Review notes
-<any deferred /check findings, or "None">
+$PR_REVIEW_NOTES
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF
-)"
+)
+fi
+
+gh pr create --base main --title "<short title>" --body "$PR_BODY"
 ```
 
 PR title ≤ 70 characters. Capture the PR number:
