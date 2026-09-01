@@ -11,13 +11,22 @@
 // testConcurrentBootstrapDoesNotClobber — a racing writer that creates the real file between
 //                                   readGoals()'s ENOENT check and its bootstrap write must win;
 //                                   readGoals must read that content back, not overwrite it
+// testParseThresholdsSeparateHeadings — the DEFAULT-shaped separate ## Budget / ## Concurrency /
+//                                   ## Retry headings each yield their number
+// testParseThresholdsCombinedHeading — a combined "## Budget & retry thresholds" heading feeds both
+//                                   budget and retry from the one section
+// testParseThresholdsCommentHints  — the default template's <!-- --> placeholder hints yield no
+//                                   false numbers; every cap is null
+// testParseThresholdsMissingNumbers — a threshold heading with prose but no number → null (never throws)
+// testReadGoalThresholdsBootstraps — readGoalThresholds on a missing file bootstraps the default,
+//                                   then parses it to all-null
 
 const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { readGoals, DEFAULT_GOALS_MD } = require('../goals');
+const { readGoals, parseThresholds, readGoalThresholds, DEFAULT_GOALS_MD } = require('../goals');
 
 let pass = 0;
 let fail = 0;
@@ -156,6 +165,95 @@ async function testConcurrentBootstrapDoesNotClobber() {
   }
 }
 
+async function testParseThresholdsSeparateHeadings() {
+  const md = [
+    '# Goal Context',
+    '',
+    '## Budget',
+    '',
+    'Per-ticket cost ceiling: $25 before escalating to a human.',
+    '',
+    '## Concurrency',
+    '',
+    'Run at most 4 workers at once.',
+    '',
+    '## Retry',
+    '',
+    'Retry a failed step up to 3 times before escalating.',
+    '',
+    '## Priorities',
+    '',
+    'Prefer correctness over speed.',
+  ].join('\n');
+  const t = parseThresholds(md);
+  assert.deepStrictEqual(t, { budget: 25, concurrency: 4, retry: 3 }, `separate headings: ${JSON.stringify(t)}`);
+}
+
+async function testParseThresholdsCombinedHeading() {
+  // The self-hosted file's shape: a combined heading feeds both budget and
+  // retry, and the budget number here has a $ sign so it is a real cap.
+  const md = [
+    '# Goal Context',
+    '',
+    '## Concurrency',
+    '',
+    'Start conservative: 1 concurrent Worker.',
+    '',
+    '## Budget & retry thresholds',
+    '',
+    'Cap spend at $50 per ticket; retry 3 consecutive failed check passes before FAILED.',
+  ].join('\n');
+  const t = parseThresholds(md);
+  assert.deepStrictEqual(t, { budget: 50, concurrency: 1, retry: 3 }, `combined heading: ${JSON.stringify(t)}`);
+
+  // The real self-hosted body states no dollar figure — only a retry count in a
+  // combined "Budget & retry" section. Budget must stay null (the bare retry
+  // number must not be mistaken for a dollar cap), concurrency 1, retry 3.
+  const selfHosted = readGoals(path.join(__dirname, '..', '..')).content;
+  const st = parseThresholds(selfHosted);
+  assert.deepStrictEqual(
+    st,
+    { budget: null, concurrency: 1, retry: 3 },
+    `self-hosted goals.md: ${JSON.stringify(st)}`,
+  );
+}
+
+async function testParseThresholdsCommentHints() {
+  // The default template is entirely <!-- e.g. ... --> placeholder hints under
+  // each heading. Those comments must be stripped before parsing so their
+  // example words ("cost ceiling") never leak, and every cap comes back null.
+  const t = parseThresholds(DEFAULT_GOALS_MD);
+  assert.deepStrictEqual(t, { budget: null, concurrency: null, retry: null }, `default template: ${JSON.stringify(t)}`);
+}
+
+async function testParseThresholdsMissingNumbers() {
+  const md = [
+    '## Budget',
+    'No cap set yet.',
+    '## Concurrency',
+    'To be decided.',
+    '## Retry',
+    'Inherit the usual policy.',
+  ].join('\n');
+  const t = parseThresholds(md);
+  assert.deepStrictEqual(t, { budget: null, concurrency: null, retry: null }, `prose-only: ${JSON.stringify(t)}`);
+  // Never throws on garbage / empty input.
+  assert.deepStrictEqual(parseThresholds(''), { budget: null, concurrency: null, retry: null });
+  assert.deepStrictEqual(parseThresholds(null), { budget: null, concurrency: null, retry: null });
+}
+
+async function testReadGoalThresholdsBootstraps() {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'goals-'));
+  try {
+    assert.strictEqual(fs.existsSync(path.join(tmp, '.muaddib', 'goals.md')), false, 'precondition: no goals.md');
+    const t = readGoalThresholds(tmp);
+    assert.strictEqual(fs.existsSync(path.join(tmp, '.muaddib', 'goals.md')), true, 'should have bootstrapped the file');
+    assert.deepStrictEqual(t, { budget: null, concurrency: null, retry: null }, `default parses all-null: ${JSON.stringify(t)}`);
+  } finally {
+    fs.rmSync(tmp, { recursive: true });
+  }
+}
+
 (async () => {
   await run('missing .muaddib/goals.md is bootstrapped with the default template', testBootstrapsWhenMissing);
   await run('existing .muaddib/goals.md is returned verbatim, not overwritten', testReturnsExistingVerbatim);
@@ -163,6 +261,11 @@ async function testConcurrentBootstrapDoesNotClobber() {
   await run('bootstrap creates .muaddib/ dir if it does not exist yet', testCreatesMuaddibDirIfMissing);
   await run('bootstrapping is idempotent and never clobbers a later edit', testIdempotentAcrossCalls);
   await run('a concurrent bootstrap race never clobbers the winning writer', testConcurrentBootstrapDoesNotClobber);
+  await run('parseThresholds — separate ## Budget / ## Concurrency / ## Retry headings', testParseThresholdsSeparateHeadings);
+  await run('parseThresholds — combined "## Budget & retry thresholds" heading feeds both', testParseThresholdsCombinedHeading);
+  await run('parseThresholds — default template comment hints yield no false numbers', testParseThresholdsCommentHints);
+  await run('parseThresholds — headings without numbers are null, never throws', testParseThresholdsMissingNumbers);
+  await run('readGoalThresholds — bootstraps a missing file then parses to all-null', testReadGoalThresholdsBootstraps);
 
   process.stdout.write(`\n${pass}/${pass + fail} passed\n`);
   if (fail > 0) process.exit(1);

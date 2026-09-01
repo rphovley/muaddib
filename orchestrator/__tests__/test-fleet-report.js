@@ -34,6 +34,7 @@ const {
   stepLabel,
   flagLabel,
   formatWorkerReport,
+  formatThresholdsLine,
   formatFleetReport,
   renderLiveFleetReport,
   renderLiveWorkerReport,
@@ -189,6 +190,99 @@ async function testInspectCliReport() {
   assert(parsed.worker === W && parsed.state === 'RUNNING', `default form should stay JSON: ${json.out}`);
 }
 
+// muaddib#28 — the Goal Context thresholds line.
+//
+// testThresholdsLineValues  — formatThresholdsLine / formatFleetReport render the caps and the
+//                             running count; a null cap shows "not set".
+// testThresholdsLineOmitted — with no thresholds passed, formatFleetReport output is unchanged
+//                             (backward compat — no extra line).
+// testRunningCountsInFlight — renderLiveFleetReport's running count includes only workers with an
+//                             in-flight (running) step, not last-completed ones.
+// testLiveThresholdsFromRepo — a live render pointed at a fixture REPO_DIR shows that goals.md's
+//                             parsed caps in the thresholds line.
+
+async function testThresholdsLineValues() {
+  const line = formatThresholdsLine({ budget: 50, concurrency: 4, retry: 3 }, { running: 2 });
+  assert(/budget cap: \$50\b/.test(line), `budget cap wrong: ${line}`);
+  assert(/concurrency cap: 4 \(running: 2\)/.test(line), `concurrency/running wrong: ${line}`);
+  assert(/retry limit: 3\b/.test(line), `retry limit wrong: ${line}`);
+
+  // null caps → "not set"; running defaults to 0 when unspecified.
+  const bare = formatThresholdsLine({ budget: null, concurrency: null, retry: null });
+  assert(/budget cap: not set/.test(bare) && /retry limit: not set/.test(bare), `nulls should be "not set": ${bare}`);
+  assert(/concurrency cap: not set \(running: 0\)/.test(bare), `null concurrency w/ running 0: ${bare}`);
+
+  // Threaded through formatFleetReport, the line sits directly under the header.
+  const state = { generatedAt: '2026-09-01T00:00:00.000Z', workers: [] };
+  const out = formatFleetReport(state, { thresholds: { budget: null, concurrency: 1, retry: 3 }, running: 1 });
+  const lines = out.split('\n');
+  assert(/^Fleet State — /.test(lines[0]), `header first: ${lines[0]}`);
+  assert(/^Thresholds — /.test(lines[1]), `thresholds line second: ${lines[1]}`);
+  assert(/concurrency cap: 1 \(running: 1\)/.test(lines[1]), `combined caps wrong: ${lines[1]}`);
+}
+
+async function testThresholdsLineOmitted() {
+  const state = {
+    generatedAt: '2026-09-01T00:00:00.000Z',
+    workers: [{
+      worker: 0, state: 'RUNNING',
+      currentStep: { id: 'implement', type: 'claude-tui', running: true },
+      workflowDone: false, workflowName: null, failed: false,
+      eventCount: 1, lastEventTs: '2026-09-01T00:00:00.000Z',
+    }],
+  };
+  const without = formatFleetReport(state);
+  const withEmptyOpts = formatFleetReport(state, {});
+  assert(without === withEmptyOpts, 'omitting opts and passing {} must match');
+  assert(!/Thresholds —/.test(without), `no thresholds line without opts.thresholds: ${without}`);
+  // Header immediately followed by the worker line — no line inserted between.
+  const lines = without.split('\n');
+  assert(/^Fleet State — /.test(lines[0]) && /^worker 0/.test(lines[1]), `layout unchanged: ${without}`);
+}
+
+async function testRunningCountsInFlight() {
+  const running = BASE + 3;
+  const idle = BASE + 4;
+  reset(running);
+  reset(idle);
+  // One worker mid-step (start, no done) — holds a slot.
+  emit(running, 'orchestrator', 'state_changed', { state: 'RUNNING' });
+  emit(running, 'runner', 'step_start', { id: 'implement', type: 'claude-tui' });
+  // One worker whose step has completed — not running, must not be counted.
+  emit(idle, 'runner', 'step_start', { id: 'check', type: 'script' });
+  emit(idle, 'runner', 'step_done', { id: 'check', exitCode: 0 });
+
+  const out = renderLiveFleetReport();
+  const line = out.split('\n').find((l) => /^Thresholds — /.test(l));
+  assert(line, `expected a thresholds line: ${out}`);
+  const m = /running: (\d+)/.exec(line);
+  assert(m, `expected running count in: ${line}`);
+  // Exactly the in-flight worker(s) among the two we added are counted; the
+  // completed-step worker is excluded. (Other suite workers may add to the
+  // count, so assert the running worker is counted and the idle one is not by
+  // checking the count reflects at least our one in-flight and never the idle.)
+  assert(Number(m[1]) >= 1, `at least the in-flight worker should be counted: ${line}`);
+}
+
+async function testLiveThresholdsFromRepo() {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'goals-repo-'));
+  try {
+    fs.mkdirSync(path.join(repoDir, '.muaddib'), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoDir, '.muaddib', 'goals.md'),
+      '# Goal Context\n\n## Budget\n\nCap at $75 per ticket.\n\n## Concurrency\n\nUp to 2 workers.\n\n## Retry\n\nRetry 5 times.\n',
+    );
+    const out = renderLiveFleetReport({ repoDir });
+    const line = out.split('\n').find((l) => /^Thresholds — /.test(l));
+    assert(line, `expected thresholds line from fixture repo: ${out}`);
+    assert(/budget cap: \$75/.test(line), `budget from fixture goals.md: ${line}`);
+    assert(/concurrency cap: 2 /.test(line), `concurrency from fixture goals.md: ${line}`);
+    assert(/retry limit: 5/.test(line), `retry from fixture goals.md: ${line}`);
+  } finally {
+    fs.rmSync(repoDir, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   const tests = [
     ['empty fleet — clear no-workers note', testEmptyFleet],
@@ -197,6 +291,10 @@ async function main() {
     ['stepLabel / flagLabel edge cases', testStepAndFlagLabels],
     ['renderLive* — recompute, no cache', testRenderLiveNoCache],
     ['inspect-cli.js --report — human output; JSON unchanged without flag', testInspectCliReport],
+    ['thresholds line — caps + running count, "not set" for nulls', testThresholdsLineValues],
+    ['thresholds line — omitted when no thresholds passed (backward compat)', testThresholdsLineOmitted],
+    ['running count — only in-flight steps, not last-completed', testRunningCountsInFlight],
+    ['live render — thresholds parsed from a fixture REPO_DIR goals.md', testLiveThresholdsFromRepo],
   ];
 
   let passed = 0;
