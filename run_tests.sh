@@ -38,6 +38,9 @@ TEST_SCRIPT='
     echo "=== orchestrator/test-runner ==="
     node "$MUADDIB/orchestrator/__tests__/test-runner.js"
 
+    echo "=== orchestrator/test-conductor-session ==="
+    node "$MUADDIB/orchestrator/__tests__/test-conductor-session.js"
+
     echo "=== orchestrator/test-notify-format ==="
     node "$MUADDIB/orchestrator/__tests__/test-notify-format.js"
 
@@ -88,6 +91,9 @@ TEST_SCRIPT='
 
     echo "=== services/test-dispatch-daemon ==="
     node "$MUADDIB/services/__tests__/test-dispatch-daemon.js"
+
+    echo "=== services/test-conductor-daemon ==="
+    node "$MUADDIB/services/__tests__/test-conductor-daemon.js"
 
     echo "=== services/test-start-servers-config ==="
     node "$MUADDIB/services/__tests__/test-start-servers-config.js"
