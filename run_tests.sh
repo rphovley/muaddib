@@ -50,6 +50,9 @@ TEST_SCRIPT='
     echo "=== orchestrator/test-fleet-control ==="
     node "$MUADDIB/orchestrator/__tests__/test-fleet-control.js"
 
+    echo "=== orchestrator/test-sizing-signal ==="
+    node "$MUADDIB/orchestrator/__tests__/test-sizing-signal.js"
+
     echo "=== orchestrator/test-notify-format ==="
     node "$MUADDIB/orchestrator/__tests__/test-notify-format.js"
 
