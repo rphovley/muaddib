@@ -114,4 +114,69 @@ function stopJob(worker, name) {
   emit(worker, name, 'stopped', {});
 }
 
-module.exports = { startJob, stopJob };
+// A claude-tui window renders "esc to interrupt" (in various framings) while the
+// model is actively working. Its ABSENCE means the model has stopped at its
+// prompt — either genuinely finished (and about to touch the sentinel) or
+// stalled having narrated completion instead of running the touch.
+const WORKING_MARKER = /esc to interrupt/i;
+
+// The nudge typed into an idle-stalled session: exactly the manual recovery a
+// human would send — remind the model to touch the sentinel if it is genuinely
+// done, and otherwise to keep going with the next step.
+const NUDGE_MESSAGE =
+  'You appear to have finished but the step has not been signaled complete. ' +
+  'Run `touch "$STEP_DONE_FILE"` right now as your final tool call if you are ' +
+  'actually complete. Otherwise continue on the next step.';
+
+// Automatically nudge a claude-tui step that has gone idle without writing its
+// done/failed sentinel. Mirrors the documented manual recovery (a human typing
+// a "run the touch" message into the session) so a stalled step recovers on its
+// own instead of hanging forever.
+//
+// Gated on REAL idleness so a legitimately long-running step is never disturbed:
+//   - sentinel already present            → nothing to do (the touch just landed)
+//   - working marker on the pane          → model is still working, leave it
+//   - pane changed since prevSnapshot     → still active/settling, wait one tick
+//   - pane STABLE (== prevSnapshot) + no marker → genuinely stopped → nudge
+//
+// prevSnapshot is the pane capture from the previous call (undefined on the
+// first). Returns { nudged, snapshot } — the caller threads snapshot back in as
+// prevSnapshot on the next tick. snapshot is omitted only when a sentinel is
+// already present (there is nothing left to watch).
+function nudgeIdleStep(worker, name, prevSnapshot) {
+  const session = `w${worker}`;
+  const target = `${session}:${name}`;
+  const doneFile = `/tmp/step-done-${worker}-${name}`;
+  const failedFile = `/tmp/step-failed-${worker}-${name}`;
+
+  // The sentinel landed between ticks — the wrapper will emit done/failed; stop.
+  if (fs.existsSync(doneFile) || fs.existsSync(failedFile)) {
+    return { nudged: false };
+  }
+
+  const cap = spawnSync('tmux', ['capture-pane', '-t', target, '-p'], { stdio: 'pipe' });
+  // Window gone (already killed) or capture failed — nothing to nudge.
+  if (cap.status !== 0) return { nudged: false };
+  const snapshot = cap.stdout ? cap.stdout.toString() : '';
+
+  // Blank/new pane — nothing rendered yet. Treating '' as a stable snapshot would
+  // let two empty ticks look "stopped" and fire a spurious nudge; wait instead.
+  if (snapshot.trim() === '') return { nudged: false, snapshot };
+
+  // Model is actively working — do not interrupt.
+  if (WORKING_MARKER.test(snapshot)) return { nudged: false, snapshot };
+
+  // Idle AND stable across two ticks with no working marker: genuinely stopped.
+  // Send the message, then a separate Enter (Claude's TUI submits on Enter).
+  if (prevSnapshot !== undefined && snapshot === prevSnapshot) {
+    spawnSync('tmux', ['send-keys', '-t', target, '-l', NUDGE_MESSAGE], { stdio: 'ignore' });
+    spawnSync('tmux', ['send-keys', '-t', target, 'Enter'], { stdio: 'ignore' });
+    return { nudged: true, snapshot };
+  }
+
+  // Idle but not yet confirmed stable (first tick, or pane still changing) —
+  // wait one more tick before deciding.
+  return { nudged: false, snapshot };
+}
+
+module.exports = { startJob, stopJob, nudgeIdleStep, WORKING_MARKER, NUDGE_MESSAGE };

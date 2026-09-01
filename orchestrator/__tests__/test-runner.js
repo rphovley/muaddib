@@ -34,6 +34,10 @@
 //   testAwaitsReviewSetsStatus — claude-tui step with awaitsReview:true sets
 //                                the coarse status to AWAITING_REVIEW while it
 //                                runs, reverts to RUNNING once it settles
+//   testNudgeRecoversIdleStep  — GH #87: an idle claude-tui step that never
+//                                touches its sentinel gets the "run the touch"
+//                                recovery typed into its pane (and recovers);
+//                                a self-completing step is never nudged
 
 const fs = require('fs');
 const os = require('os');
@@ -58,7 +62,8 @@ process.env.MOCK_JOBS        = '1';
 const MUADDIB_DIR = path.join(__dirname, '../..');
 process.env.REPO_DIR = MUADDIB_DIR;
 
-const { run, evaluateCondition } = require('../runner');
+const { run, evaluateCondition, waitForJobCompletion } = require('../runner');
+const { startJob, nudgeIdleStep } = require('../job');
 const stateModule = require('../state');
 const STATE_CLI   = path.join(__dirname, '../state-cli.js');
 const EMIT_CLI    = path.join(__dirname, '../emit-cli.js');
@@ -531,6 +536,95 @@ async function testWarnFiresNotFails() {
   }
 }
 
+// ─── testNudgeRecoversIdleStep ─────────────────────────────────────────────────
+// GH #87: a claude-tui step that stalls at its prompt without touching the
+// sentinel used to hang forever. waitForJobCompletion now takes nudgeMs/onNudge:
+// after nudgeMs it repeatedly runs onNudge, which (via job.nudgeIdleStep) types
+// the "run the touch" recovery into an idle, stable, marker-free pane — exactly
+// the manual recovery, automated.
+//
+// This drives the real pieces directly (startJob + waitForJobCompletion + the
+// same onNudge closure runClaudeTuiStep builds), because MOCK_JOBS steps always
+// self-complete and so can't model an idle-without-sentinel stall.
+//
+// Idle case:   a job that prints a stable line then blocks (`echo; sleep`) and
+//              never touches its sentinel — a bare `sleep` leaves the pane blank,
+//              which nudgeIdleStep's blank-pane guard deliberately never nudges,
+//              so it must render a real idle prompt to model the stall. Once
+//              the threshold elapses, waitForJobCompletion runs onNudge, which
+//              (via job.nudgeIdleStep against the real tmux pane) detects a
+//              stable, idle, marker-free pane and reports it nudged. The test
+//              plays the model's role — writing the sentinel in response, which
+//              is exactly what the typed recovery is meant to induce — so the
+//              wrapper emits done and waitForJobCompletion resolves. Without the
+//              nudge the job would run to the hard-timeout instead.
+// Control:     a job that completes on its own well before its (large) nudgeMs
+//              must never be nudged.
+
+async function testNudgeRecoversIdleStep() {
+  if (!hasTmux()) { console.log('    (skipped — tmux not available)'); return; }
+
+  const W = BASE + 16;
+  ensureTmuxSession(W);
+  try {
+    // ── idle case: blocks forever, recovers only once nudged ──────────────────
+    {
+      const jobName = 'idle-step';
+      const doneFile = `/tmp/step-done-${W}-${jobName}`;
+      let nudgeCount = 0;
+      let prevSnapshot;
+      const onNudge = () => {
+        const res = nudgeIdleStep(W, jobName, prevSnapshot);
+        prevSnapshot = res.snapshot;
+        if (res.nudged) {
+          nudgeCount++;
+          // Simulate the model reacting to the typed recovery by finally
+          // touching the sentinel — the behavior the nudge exists to induce.
+          fs.writeFileSync(doneFile, '');
+        }
+      };
+
+      // Capture offset BEFORE startJob so the done event is never missed.
+      const waitP = waitForJobCompletion(W, jobName, {
+        nudgeMs: 500,
+        onNudge,
+        hardTimeoutMs: 20_000, // safety net so a failure rejects instead of hanging
+      });
+      // Render a stable non-blank line before blocking so the pane models a real
+      // idle claude-tui prompt (a bare `sleep` leaves the pane blank, which
+      // nudgeIdleStep deliberately never nudges — see its blank-pane guard).
+      startJob(W, jobName, 'echo "waiting at prompt"; sleep 30');
+      await waitP;
+
+      if (nudgeCount < 1) throw new Error('idle step completed but was never nudged');
+    }
+
+    // ── control: a self-completing job is never nudged ────────────────────────
+    {
+      const jobName = 'quick-step';
+      let nudgeCount = 0;
+      let prevSnapshot;
+      const onNudge = () => {
+        const res = nudgeIdleStep(W, jobName, prevSnapshot);
+        prevSnapshot = res.snapshot;
+        if (res.nudged) nudgeCount++;
+      };
+
+      const waitP = waitForJobCompletion(W, jobName, {
+        nudgeMs: 10_000, // far beyond how long this job takes to finish
+        onNudge,
+        hardTimeoutMs: 20_000,
+      });
+      startJob(W, jobName, 'touch "$STEP_DONE_FILE"');
+      await waitP;
+
+      if (nudgeCount !== 0) throw new Error(`self-completing step was nudged ${nudgeCount}x — should be 0`);
+    }
+  } finally {
+    killTmuxSession(W);
+  }
+}
+
 // ─── testAwaitsReviewSetsStatus ────────────────────────────────────────────────
 // A claude-tui step with awaitsReview:true must write AWAITING_REVIEW to the
 // coarse per-worker status file (read by bin/attend.sh, spawn-worker.sh's
@@ -769,6 +863,7 @@ async function main() {
     ['sketch loop with stale state still polls first',    testSketchLoopStaleStateStillPolls],
     ['notify fires without blocking workflow',           testNotifyNonBlock],
     ['warn fires notify without failing step (tmux)',                testWarnFiresNotFails],
+    ['idle claude-tui step is nudged; completing one is not (tmux)', testNudgeRecoversIdleStep],
     ['awaitsReview sets AWAITING_REVIEW then reverts (tmux)',        testAwaitsReviewSetsStatus],
     ['feature workflow — full gather→implement→loop→wrapup (tmux)', testFeatureWorkflow],
     ['bug workflow — gather-bug→implement-bug→loop→wrapup (tmux)',  testBugWorkflow],

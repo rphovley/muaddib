@@ -126,6 +126,8 @@ If `needs_questions=false` but `needs_sketch=true`, **do not post `## Plan` yet*
 touch "$STEP_DONE_FILE"
 ```
 
+> ⚠️ **This `touch` must be your literal last tool call — actually run it, don't just state that the step is done.** The orchestrator detects completion only when this file appears on disk; a closing summary sentence does not create it. Narrating completion without running the command leaves the step hanging until it is force-nudged.
+
 ## Step 5b — Questions needed: notify and stop
 
 If `needs_questions=true`:
@@ -166,3 +168,5 @@ Then signal done — the `ask-questions` step will handle the response:
 ```bash
 touch "$STEP_DONE_FILE"
 ```
+
+> ⚠️ **This `touch` must be your literal last tool call — actually run it, don't just state that the step is done.** The orchestrator detects completion only when this file appears on disk; a closing summary sentence does not create it. Narrating completion without running the command leaves the step hanging until it is force-nudged.
