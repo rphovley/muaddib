@@ -198,8 +198,10 @@ async function testInspectCliReport() {
 //                             (backward compat — no extra line).
 // testRunningCountsInFlight — renderLiveFleetReport's running count includes only workers with an
 //                             in-flight (running) step, not last-completed ones.
-// testLiveThresholdsFromRepo — a live render pointed at a fixture REPO_DIR shows that goals.md's
-//                             parsed caps in the thresholds line.
+// testLiveThresholdsFromRepo — a live render pointed at a fixture REPO_DIR shows budget/concurrency
+//                             from goals.md and retry from manifest.json in the thresholds line.
+// testLiveThresholdsRetryDefaultsWithoutManifest — no manifest.json at all -> retry still shows a
+//                             deterministic default (3), never "not set".
 
 async function testThresholdsLineValues() {
   const line = formatThresholdsLine({ budget: 50, concurrency: 4, retry: 3 }, { running: 2 });
@@ -265,19 +267,41 @@ async function testRunningCountsInFlight() {
 }
 
 async function testLiveThresholdsFromRepo() {
+  // Budget/concurrency still come from goals.md markdown; retry is manifest-
+  // sourced (muaddib#28 revision) — a deterministic value, since retry is the
+  // one cap meant to eventually gate real enforcement.
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'goals-repo-'));
   try {
     fs.mkdirSync(path.join(repoDir, '.muaddib'), { recursive: true });
     fs.writeFileSync(
       path.join(repoDir, '.muaddib', 'goals.md'),
-      '# Goal Context\n\n## Budget\n\nCap at $75 per ticket.\n\n## Concurrency\n\nUp to 2 workers.\n\n## Retry\n\nRetry 5 times.\n',
+      '# Goal Context\n\n## Budget\n\nCap at $75 per ticket.\n\n## Concurrency\n\nUp to 2 workers.\n',
+    );
+    fs.writeFileSync(
+      path.join(repoDir, '.muaddib', 'manifest.json'),
+      JSON.stringify({ retryThreshold: 5 }),
     );
     const out = renderLiveFleetReport({ repoDir });
     const line = out.split('\n').find((l) => /^Thresholds — /.test(l));
     assert(line, `expected thresholds line from fixture repo: ${out}`);
     assert(/budget cap: \$75/.test(line), `budget from fixture goals.md: ${line}`);
     assert(/concurrency cap: 2 /.test(line), `concurrency from fixture goals.md: ${line}`);
-    assert(/retry limit: 5/.test(line), `retry from fixture goals.md: ${line}`);
+    assert(/retry limit: 5/.test(line), `retry from fixture manifest.json: ${line}`);
+  } finally {
+    fs.rmSync(repoDir, { recursive: true, force: true });
+  }
+}
+
+async function testLiveThresholdsRetryDefaultsWithoutManifest() {
+  // No .muaddib/manifest.json at all -> retry falls back to
+  // DEFAULT_RETRY_THRESHOLD (3), not "not set" — retry always has a
+  // deterministic value, unlike budget/concurrency.
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'goals-repo-'));
+  try {
+    const out = renderLiveFleetReport({ repoDir });
+    const line = out.split('\n').find((l) => /^Thresholds — /.test(l));
+    assert(line, `expected thresholds line: ${out}`);
+    assert(/retry limit: 3\b/.test(line), `retry should default to 3 with no manifest.json: ${line}`);
   } finally {
     fs.rmSync(repoDir, { recursive: true, force: true });
   }
@@ -295,6 +319,7 @@ async function main() {
     ['thresholds line — omitted when no thresholds passed (backward compat)', testThresholdsLineOmitted],
     ['running count — only in-flight steps, not last-completed', testRunningCountsInFlight],
     ['live render — thresholds parsed from a fixture REPO_DIR goals.md', testLiveThresholdsFromRepo],
+    ['live render — retry defaults to 3 with no manifest.json present', testLiveThresholdsRetryDefaultsWithoutManifest],
   ];
 
   let passed = 0;

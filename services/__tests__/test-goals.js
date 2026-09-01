@@ -19,14 +19,26 @@
 //                                   false numbers; every cap is null
 // testParseThresholdsMissingNumbers — a threshold heading with prose but no number → null (never throws)
 // testReadGoalThresholdsBootstraps — readGoalThresholds on a missing file bootstraps the default,
-//                                   then parses it to all-null
+//                                   budget/concurrency parse to null, retry defaults (manifest-sourced)
+// testReadRetryThresholdFromManifest — reads retryThreshold verbatim from .muaddib/manifest.json
+// testReadRetryThresholdDefaultsWhenMissingFile — no manifest.json -> DEFAULT_RETRY_THRESHOLD
+// testReadRetryThresholdDefaultsWhenFieldMissingOrInvalid — missing field / negative / non-integer /
+//                                   unparseable JSON all default, never throw
+// testReadRetryThresholdAllowsZero — retryThreshold: 0 is a valid explicit value, not a falsy trigger
 
 const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { readGoals, parseThresholds, readGoalThresholds, DEFAULT_GOALS_MD } = require('../goals');
+const {
+  readGoals,
+  parseThresholds,
+  readGoalThresholds,
+  readRetryThreshold,
+  DEFAULT_GOALS_MD,
+  DEFAULT_RETRY_THRESHOLD,
+} = require('../goals');
 
 let pass = 0;
 let fail = 0;
@@ -248,7 +260,68 @@ async function testReadGoalThresholdsBootstraps() {
     assert.strictEqual(fs.existsSync(path.join(tmp, '.muaddib', 'goals.md')), false, 'precondition: no goals.md');
     const t = readGoalThresholds(tmp);
     assert.strictEqual(fs.existsSync(path.join(tmp, '.muaddib', 'goals.md')), true, 'should have bootstrapped the file');
-    assert.deepStrictEqual(t, { budget: null, concurrency: null, retry: null }, `default parses all-null: ${JSON.stringify(t)}`);
+    // budget/concurrency still come from the (freshly bootstrapped) markdown
+    // template, which states no numbers -> null. retry is manifest-sourced and
+    // always has a deterministic value (no manifest.json here -> the default).
+    assert.deepStrictEqual(
+      t,
+      { budget: null, concurrency: null, retry: DEFAULT_RETRY_THRESHOLD },
+      `default parses budget/concurrency null, retry defaults: ${JSON.stringify(t)}`,
+    );
+  } finally {
+    fs.rmSync(tmp, { recursive: true });
+  }
+}
+
+async function testReadRetryThresholdFromManifest() {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'goals-'));
+  try {
+    fs.mkdirSync(path.join(tmp, '.muaddib'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, '.muaddib', 'manifest.json'), JSON.stringify({ retryThreshold: 7 }));
+    assert.strictEqual(readRetryThreshold(tmp), 7, 'should read retryThreshold verbatim from manifest.json');
+  } finally {
+    fs.rmSync(tmp, { recursive: true });
+  }
+}
+
+async function testReadRetryThresholdDefaultsWhenMissingFile() {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'goals-'));
+  try {
+    assert.strictEqual(fs.existsSync(path.join(tmp, '.muaddib', 'manifest.json')), false, 'precondition: no manifest.json');
+    assert.strictEqual(readRetryThreshold(tmp), DEFAULT_RETRY_THRESHOLD, 'should default when manifest.json is absent');
+  } finally {
+    fs.rmSync(tmp, { recursive: true });
+  }
+}
+
+async function testReadRetryThresholdDefaultsWhenFieldMissingOrInvalid() {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'goals-'));
+  try {
+    fs.mkdirSync(path.join(tmp, '.muaddib'), { recursive: true });
+    const manifestPath = path.join(tmp, '.muaddib', 'manifest.json');
+
+    fs.writeFileSync(manifestPath, JSON.stringify({ projectName: 'x' }));
+    assert.strictEqual(readRetryThreshold(tmp), DEFAULT_RETRY_THRESHOLD, 'should default when retryThreshold is absent');
+
+    fs.writeFileSync(manifestPath, JSON.stringify({ retryThreshold: -1 }));
+    assert.strictEqual(readRetryThreshold(tmp), DEFAULT_RETRY_THRESHOLD, 'should default for a negative value');
+
+    fs.writeFileSync(manifestPath, JSON.stringify({ retryThreshold: 'three' }));
+    assert.strictEqual(readRetryThreshold(tmp), DEFAULT_RETRY_THRESHOLD, 'should default for a non-integer value');
+
+    fs.writeFileSync(manifestPath, 'not json at all');
+    assert.strictEqual(readRetryThreshold(tmp), DEFAULT_RETRY_THRESHOLD, 'should default for unparseable JSON, never throw');
+  } finally {
+    fs.rmSync(tmp, { recursive: true });
+  }
+}
+
+async function testReadRetryThresholdAllowsZero() {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'goals-'));
+  try {
+    fs.mkdirSync(path.join(tmp, '.muaddib'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, '.muaddib', 'manifest.json'), JSON.stringify({ retryThreshold: 0 }));
+    assert.strictEqual(readRetryThreshold(tmp), 0, '0 is a valid explicit threshold, not a falsy default trigger');
   } finally {
     fs.rmSync(tmp, { recursive: true });
   }
@@ -265,7 +338,11 @@ async function testReadGoalThresholdsBootstraps() {
   await run('parseThresholds — combined "## Budget & retry thresholds" heading feeds both', testParseThresholdsCombinedHeading);
   await run('parseThresholds — default template comment hints yield no false numbers', testParseThresholdsCommentHints);
   await run('parseThresholds — headings without numbers are null, never throws', testParseThresholdsMissingNumbers);
-  await run('readGoalThresholds — bootstraps a missing file then parses to all-null', testReadGoalThresholdsBootstraps);
+  await run('readGoalThresholds — bootstraps a missing file, retry from manifest default', testReadGoalThresholdsBootstraps);
+  await run('readRetryThreshold — reads retryThreshold verbatim from manifest.json', testReadRetryThresholdFromManifest);
+  await run('readRetryThreshold — defaults when manifest.json is missing', testReadRetryThresholdDefaultsWhenMissingFile);
+  await run('readRetryThreshold — defaults when the field is missing or invalid, never throws', testReadRetryThresholdDefaultsWhenFieldMissingOrInvalid);
+  await run('readRetryThreshold — 0 is a valid explicit value, not treated as falsy', testReadRetryThresholdAllowsZero);
 
   process.stdout.write(`\n${pass}/${pass + fail} passed\n`);
   if (fail > 0) process.exit(1);

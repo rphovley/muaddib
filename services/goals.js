@@ -7,10 +7,17 @@
 //
 // readGoals() is the file convention and bootstrapper, returning the content
 // as opaque markdown. parseThresholds()/readGoalThresholds() layer a lightweight
-// reader on top that pulls the budget / concurrency / retry caps out of that
-// markdown so the Fleet State report can *surface* them (muaddib#28). This is a
+// reader on top that pulls the budget / concurrency caps out of that markdown
+// so the Fleet State report can *surface* them (muaddib#28). This is a
 // surfacing read only — nothing here spawns, tears down, or enforces against
 // the parsed values.
+//
+// Retry is the one exception: it's read from `.muaddib/manifest.json`'s
+// `retryThreshold` (readRetryThreshold), not parsed from markdown — unlike
+// budget/concurrency, retry is meant to eventually gate real enforcement (the
+// workflow's check-loop iteration cap), where a deterministic structured value
+// matters more than markdown-parsing convenience. goals.md's "## Retry"
+// section stays for narrative reasoning about retry policy, not the number.
 
 const fs = require('fs');
 const path = require('path');
@@ -27,7 +34,9 @@ file directly; it's read fresh each time.
 
 ## Retry
 
-<!-- e.g. how many times to retry a failed step before escalating -->
+<!-- The enforced retry count lives in .muaddib/manifest.json's retryThreshold
+     (default 3), not here — use this section for narrative reasoning about
+     retry policy, not the number itself. -->
 
 ## Concurrency
 
@@ -167,15 +176,48 @@ function parseThresholds(content) {
   };
 }
 
-// Read the Goal Context for `repoDir` (bootstrapping the default template if the
-// file is missing, via readGoals) and return its parsed thresholds. Inherits
-// readGoals()'s read-only-or-one-time-bootstrap contract; a freshly bootstrapped
-// default parses to all-`null` (the template states no numbers). Pass
-// `{ bootstrap: false }` for a strictly side-effect-free read (a missing file
-// then parses to all-`null` without writing anything).
-function readGoalThresholds(repoDir, opts = {}) {
-  const { content } = readGoals(repoDir, opts);
-  return parseThresholds(content);
+// --- Retry threshold (manifest-sourced, muaddib#28 revision) -----------------
+//
+// Deterministic, structured value — `.muaddib/manifest.json`'s `retryThreshold`
+// — rather than markdown-parsed like budget/concurrency. Retry is the one cap
+// meant to eventually gate real enforcement (the workflow check-loop's
+// iteration count), so it needs a source that's never ambiguous about what it
+// says, unlike goals.md prose. Never throws: a missing file, a missing field,
+// or a non-negative-integer value all fall back to DEFAULT_RETRY_THRESHOLD —
+// this is a surfacing read, same contract as everything else in this module.
+
+const DEFAULT_RETRY_THRESHOLD = 3; // matches the implementation-fleet precedent
+
+function readRetryThreshold(repoDir) {
+  const manifestPath = path.join(repoDir, '.muaddib', 'manifest.json');
+  try {
+    const parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    const n = parsed.retryThreshold;
+    return Number.isInteger(n) && n >= 0 ? n : DEFAULT_RETRY_THRESHOLD;
+  } catch (_) {
+    return DEFAULT_RETRY_THRESHOLD;
+  }
 }
 
-module.exports = { readGoals, parseThresholds, readGoalThresholds, DEFAULT_GOALS_MD };
+// Read the Goal Context for `repoDir` (bootstrapping the default template if the
+// file is missing, via readGoals) and return its thresholds: budget/concurrency
+// parsed from goals.md markdown, retry read from manifest.json (see above).
+// Inherits readGoals()'s read-only-or-one-time-bootstrap contract for the
+// markdown half; a freshly bootstrapped default parses budget/concurrency to
+// `null` (the template states no numbers). Pass `{ bootstrap: false }` for a
+// strictly side-effect-free read of the markdown half (retry is always a plain
+// file read regardless, never a bootstrap).
+function readGoalThresholds(repoDir, opts = {}) {
+  const { content } = readGoals(repoDir, opts);
+  const thresholds = parseThresholds(content);
+  return { ...thresholds, retry: readRetryThreshold(repoDir) };
+}
+
+module.exports = {
+  readGoals,
+  parseThresholds,
+  readGoalThresholds,
+  readRetryThreshold,
+  DEFAULT_GOALS_MD,
+  DEFAULT_RETRY_THRESHOLD,
+};
