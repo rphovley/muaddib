@@ -11,7 +11,12 @@
 // testHealthCheckSessionDead         — sessionAlive false when the mock session is down
 // testHealthCheckTokenAbsent         — tokenPresent false when the token is unset
 // testHealthCheckNoSession           — sessionAlive false when no session is set at all
+// testReportFleetStateReadOnly       — reportFleetState() returns a human-readable
+//                                       string and takes no action (Autonomy L0):
+//                                       the session is never driven, no events written
 
+const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
 const daemon = require("../conductor-daemon");
@@ -131,6 +136,52 @@ async function testHealthCheckNoSession() {
     throw new Error(`expected sessionAlive=false when no session set, got ${h.sessionAlive}`);
 }
 
+async function testReportFleetStateReadOnly() {
+  // Autonomy L0: reportFleetState() reports and decides nothing. Point Fleet
+  // State at an isolated temp dir so we can prove nothing was written, and use a
+  // spy session to prove the daemon never drove it.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "conductor-report-"));
+  const prevDir = process.env.AGENT_STATUS_DIR;
+  process.env.AGENT_STATUS_DIR = dir;
+
+  const calls = [];
+  const spy = new Proxy(
+    { name: "conductor-test", isAlive: () => true },
+    {
+      get(target, prop) {
+        if (prop in target) return target[prop];
+        // Any other method call (start/stop/send/…) is recorded as an action.
+        return (...args) => { calls.push({ method: String(prop), args }); };
+      },
+    },
+  );
+  daemon._setSession(spy);
+
+  try {
+    const before = fs.readdirSync(dir);
+    const report = daemon.reportFleetState();
+
+    if (typeof report !== "string" || !report.length) {
+      throw new Error(`expected a non-empty string report, got: ${JSON.stringify(report)}`);
+    }
+    if (!/Fleet State/.test(report)) {
+      throw new Error(`report should read as a Fleet State report, got: ${report}`);
+    }
+    if (calls.length !== 0) {
+      throw new Error(`reportFleetState() must take no session action, drove: ${JSON.stringify(calls)}`);
+    }
+    const after = fs.readdirSync(dir);
+    if (after.length !== before.length) {
+      throw new Error(`reportFleetState() must not write events; dir changed ${before} -> ${after}`);
+    }
+  } finally {
+    daemon._setSession(null);
+    if (prevDir === undefined) delete process.env.AGENT_STATUS_DIR;
+    else process.env.AGENT_STATUS_DIR = prevDir;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 function restore(key, prev) {
   if (prev === undefined) delete process.env[key];
   else process.env[key] = prev;
@@ -145,6 +196,7 @@ async function main() {
     ["healthCheck: sessionAlive=false when session is down", testHealthCheckSessionDead],
     ["healthCheck: tokenPresent=false when token unset", testHealthCheckTokenAbsent],
     ["healthCheck: sessionAlive=false when no session set", testHealthCheckNoSession],
+    ["reportFleetState: human-readable string, takes no action", testReportFleetStateReadOnly],
   ];
 
   let passed = 0;
