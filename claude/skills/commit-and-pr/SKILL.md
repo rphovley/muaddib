@@ -93,55 +93,86 @@ git push -u origin "$STATE_BRANCH"
 
 ## Step 5 — Open PR
 
-Use STATE\_\* vars for preview URLs; fall back to `(unavailable)` for any empty value.
-
-Compute the homeowner credential before opening the PR — only combine the URL and magic-link when both are present:
+Normalize the preview URLs and credentials first, so neither a template nor the default ever prints a bare `$VAR` — empty values fall back to `(unavailable)`:
 
 ```bash
-if [ -n "$STATE_HOMEOWNER_URL" ] && [ -n "$HO_MAGIC_LINK" ]; then
+STATE_TICKET_URL="${STATE_TICKET_URL:-(none)}"
+STATE_API_TUNNEL_URL="${STATE_API_TUNNEL_URL:-(unavailable)}"
+STATE_PORTAL_URL="${STATE_PORTAL_URL:-(unavailable)}"
+STATE_HOMEOWNER_URL="${STATE_HOMEOWNER_URL:-(unavailable)}"
+PREVIEW_EMAIL="${PREVIEW_EMAIL:-(unavailable)}"
+PREVIEW_PASSWORD="${PREVIEW_PASSWORD:-(unavailable)}"
+# Portal preview URL — only append the query string when the URL is real,
+# so an unavailable portal never renders "(unavailable)?is_preview=true".
+if [ "$STATE_PORTAL_URL" != "(unavailable)" ]; then
+  STATE_PORTAL_PREVIEW_URL="${STATE_PORTAL_URL}?is_preview=true"
+else
+  STATE_PORTAL_PREVIEW_URL="(unavailable)"
+fi
+```
+
+Compute the homeowner credential — only combine the URL and magic-link when both are really present:
+
+```bash
+if [ "$STATE_HOMEOWNER_URL" != "(unavailable)" ] && [ -n "$HO_MAGIC_LINK" ]; then
   HO_CREDENTIAL="${STATE_HOMEOWNER_URL}${HO_MAGIC_LINK} _(magic-link — open directly)_"
 else
   HO_CREDENTIAL="(unavailable)"
 fi
 ```
 
+**Project-overridable body.** muaddib ships a generic, source-neutral default (Summary / Ticket / Test plan / Review notes — no Preview or credentials sections, since those are quotethat-specific). A project overrides the whole body by committing `$REPO/.muaddib/pr-template.md`; when that file exists it becomes the PR body verbatim, with `$VAR` / `${VAR}` interpolated from the vars above (see the README "PR body template" section for the full variable list, and `pr-template.example.md` in this skill for quotethat's original sections). muaddib self-hosts with **no** override, so its own PRs use the default — no `## Linear`, no empty Preview tables.
+
+The narrative sections you author — the Summary bullets, Test plan, and Review notes — are carried in their own vars (`PR_SUMMARY`, `PR_TEST_PLAN`, `PR_REVIEW_NOTES`), so **replace the placeholders below with the real content before building the body**. Both the default and a project template interpolate them, so neither ever ships a bare `<1–3 bullets>` placeholder.
+
 ```bash
 REPO="${REPO_DIR:-/home/worker/repo}"
-gh pr create --base main \
-  --title "<imperative title ≤70 chars>" \
-  --body "$(cat <<'PREOF'
-## Summary
-- <1–3 bullets>
+PR_TEMPLATE="$REPO/.muaddib/pr-template.md"
 
-## Linear
+# Agent-authored narrative — fill these with the real PR content.
+PR_SUMMARY="- <1–3 bullets>"
+PR_TEST_PLAN="- [ ] ..."
+PR_REVIEW_NOTES='<any deferred findings from the quality loop, or "None">'
+
+export STATE_TICKET_URL STATE_API_TUNNEL_URL STATE_PORTAL_URL STATE_PORTAL_PREVIEW_URL \
+       STATE_HOMEOWNER_URL PREVIEW_EMAIL PREVIEW_PASSWORD HO_MAGIC_LINK HO_CREDENTIAL \
+       PR_SUMMARY PR_TEST_PLAN PR_REVIEW_NOTES
+
+# Interpolate $VAR / ${VAR} from the environment — injection-safe, no shell eval.
+# A leading HTML comment is stripped; an unknown $VAR is left literal (prose like
+# a "$5" price survives); $$ escapes a literal $.
+interpolate() {
+  node -e 'const fs=require("fs");const src=process.argv[1]==="-"?fs.readFileSync(0,"utf8"):fs.readFileSync(process.argv[1],"utf8");process.stdout.write(src.replace(/^\s*<!--[\s\S]*?-->\s*/,"").replace(/\$\$|\$\{(\w+)\}|\$(\w+)/g,(m,a,b)=>m==="$$"?"$":(process.env[a||b]??m)))' "$1"
+}
+
+if [ -f "$PR_TEMPLATE" ]; then
+  PR_BODY=$(interpolate "$PR_TEMPLATE")
+else
+  # Quoted heredoc — no shell expansion; interpolate fills the vars safely.
+  PR_BODY=$(interpolate - <<'PREOF'
+## Summary
+$PR_SUMMARY
+
+## Ticket
 $STATE_TICKET_URL
 
-## Preview
-| Service | URL |
-|---------|-----|
-| API | ${STATE_API_TUNNEL_URL:-(unavailable)} |
-| Portal | ${STATE_PORTAL_URL:-(unavailable)}?is_preview=true |
-| Homeowner | ${STATE_HOMEOWNER_URL:-(unavailable)} |
-
-## Preview credentials
-| Role | Login |
-|------|-------|
-| Contractor (Portal) | **$PREVIEW_EMAIL** / $PREVIEW_PASSWORD |
-| Homeowner | $HO_CREDENTIAL |
-
-_Preview runs in a sandboxed Docker worker. Tear down with \`./muaddib/bin/teardown-worker.sh <N>\`._
-_Leave feedback on the PR — the agent is in feedback mode and will address it._
-
 ## Test plan
-- [ ] ...
+$PR_TEST_PLAN
 
 ## Review notes
-<any deferred findings from the quality loop, or "None">
+$PR_REVIEW_NOTES
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 PREOF
-)"
+)
+fi
+
+gh pr create --base main \
+  --title "<imperative title ≤70 chars>" \
+  --body "$PR_BODY"
 ```
+
+The Step 2 credential computation (`PREVIEW_EMAIL`, `PREVIEW_PASSWORD`, `HO_MAGIC_LINK`) is tolerant (`|| true`, `2>/dev/null`) and is consumed only by a project override that references those vars; the generic default never touches them.
 
 ## Step 6 — Write pr_number to state and signal webhook job
 
