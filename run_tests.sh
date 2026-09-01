@@ -119,6 +119,9 @@ TEST_SCRIPT='
     echo "=== services/test-muaddib-config ==="
     node "$MUADDIB/services/__tests__/test-muaddib-config.js"
 
+    echo "=== services/test-validate-manifest ==="
+    node "$MUADDIB/services/__tests__/test-validate-manifest.js"
+
     echo "=== services/test-goals ==="
     node "$MUADDIB/services/__tests__/test-goals.js"
 
