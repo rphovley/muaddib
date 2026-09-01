@@ -8,15 +8,11 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$DIR/bin/read-config.sh"
 TICKET="${1:?usage: npm run muaddib:plan <linear-url-or-id>}"
 
-N=1
-while [ "$N" -le 64 ] \
-    && [ -n "$(docker ps -q --filter "label=com.docker.compose.project=${MUADDIB_PROJECT_NAME}-w${N}" 2>/dev/null)" ]; do
-    N=$((N + 1))
-done
-
-echo "→ muaddib plan on worker ${N}: ${TICKET}"
+echo "→ muaddib plan: ${TICKET}"
+# Empty slot arg → spawn-worker.sh auto-selects the slot under its allocation
+# lock (see bin/worker-alloc.sh) and announces the real slot itself.
 # Host-side path — spawn-worker.sh already translates anything under
 # REPO_ROOT into the right container path, nested-submodule or not. (A
 # relative path here would instead resolve against the container's CWD,
 # which has the same nested-submodule assumption baked in.)
-WORKFLOW_FILE="$DIR/workflows/plan.json" exec "$DIR/bin/spawn-worker.sh" "$N" "/muaddib ${TICKET}"
+WORKFLOW_FILE="$DIR/workflows/plan.json" exec "$DIR/bin/spawn-worker.sh" "" "/muaddib ${TICKET}"

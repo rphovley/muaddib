@@ -92,14 +92,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
     exit 0
 fi
 
-# Pick the lowest worker number not currently running (by compose project label).
-N=1
-while [ "$N" -le 64 ] \
-    && [ -n "$(docker ps -q --filter "label=com.docker.compose.project=${MUADDIB_PROJECT_NAME}-w${N}" 2>/dev/null)" ]; do
-    N=$((N + 1))
-done
-
-echo "→ muaddib on worker ${N} (${SOURCE}): ${ARG}"
+echo "→ muaddib (${SOURCE}): ${ARG}"
 
 if [ "$SOURCE" = "raw" ]; then
     # Explicit, non-empty TICKET_IDENTIFIER short-circuits orchestrator.js's
@@ -115,4 +108,7 @@ if [ "$SOURCE" = "raw" ]; then
     export TICKET_IDENTIFIER=raw
 fi
 
-exec "$DIR/bin/spawn-worker.sh" "$N" "$TASK"
+# Empty slot arg → spawn-worker.sh auto-selects the slot under its allocation
+# lock (see bin/worker-alloc.sh). It announces the real slot via its "→ Spawning"
+# line, so we don't guess a worker number here.
+exec "$DIR/bin/spawn-worker.sh" "" "$TASK"
