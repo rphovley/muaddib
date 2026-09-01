@@ -163,16 +163,22 @@ not how the fleet running against that product should be managed.
 
 It's committed (not gitignored) like `.muaddib/manifest.json` — fleet policy
 is a team decision, not a local/secret value. `services/goals.js`'s
-`readGoals(repoDir)` reads it as opaque markdown text (no field parsing yet)
-and, if the file doesn't exist, bootstraps it: writes a default template to
-`.muaddib/goals.md` and returns that instead of erroring, so a project that
-hasn't customised it yet still gets a sane Goal Context to work with. An
-existing file — even a mostly-empty one — is always returned verbatim and
-never overwritten.
+`readGoals(repoDir)` reads it as opaque markdown text and, if the file doesn't
+exist, bootstraps it: writes a default template to `.muaddib/goals.md` and
+returns that instead of erroring, so a project that hasn't customised it yet
+still gets a sane Goal Context to work with. An existing file — even a
+mostly-empty one — is always returned verbatim and never overwritten.
 
-Nothing consumes Goal Context yet — reading and weighing it is the
-Conductor's job, in a later milestone. This is just the file convention and
-the reader/bootstrapper.
+`parseThresholds(content)` / `readGoalThresholds(repoDir)` layer a lightweight
+reader over that markdown: they pull the **budget**, **concurrency**, and
+**retry** caps out of it as `{ budget, concurrency, retry }` (each a number, or
+`null` for "not set"). Parsing is robust to both the default template's separate
+`## Budget` / `## Concurrency` / `## Retry` headings and a combined
+`## Budget & retry thresholds` heading (which feeds both), strips `<!-- … -->`
+placeholder hints so they can't leak a false number, and never throws. This is
+a **surfacing** read — it's what lets the Fleet State report show the caps (see
+below); nothing here spawns, tears down, or enforces against them. Deciding and
+enforcing against Goal Context is the Conductor's job, in a later milestone.
 
 ## Decision Log (`.muaddib/decisions.jsonl`)
 
@@ -340,9 +346,18 @@ Two properties are load-bearing and match the ticket's acceptance criteria:
 
 **`--report` (Autonomy L0).** The `--report` / `-r` flag renders that same fold
 as a human-readable Fleet State report — a header (`Fleet State — <time> · N
-worker(s)`) plus one aligned summary line per worker (state, current step
-`(running)`/`(last)`, terminal flags, and event count / last-event time), or a
-clear note when no worker has emitted yet. It's a pure rendering layer
+worker(s)`), then a Goal Context **thresholds line** (`Thresholds — budget cap:
+$Y · concurrency cap: N (running: M) · retry limit: R`, with `not set` for any
+cap the Goal Context doesn't state), plus one aligned summary line per worker
+(state, current step `(running)`/`(last)`, terminal flags, and event count /
+last-event time), or a clear note when no worker has emitted yet. The thresholds
+line is read live from `.muaddib/goals.md` (via `readGoalThresholds`, using
+`REPO_DIR`/cwd), and `running: M` is the count of workers currently holding a
+concurrency slot — i.e. with an in-flight step. It is **surfaced, not enforced**:
+the report shows the caps and the live usage against them, but takes no
+spawn/teardown/enforcement decision from them (that's a later Conductor
+milestone). Fleet-wide spend (`$X used`) is deliberately not aggregated here —
+that's spend accounting past this surfacing layer. It's a pure rendering layer
 (`orchestrator/fleet-report.js`, the same formatter/data split as
 `orchestrator/notify-format.js`) over `fleetState()`, so the report inherits the
 **no-cache** and **no-side-effects** guarantees above unchanged: JSON stays the

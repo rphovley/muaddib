@@ -14,6 +14,7 @@
 // report inherits Fleet State's liveness and read-only guarantees for free.
 
 const { fleetState, workerStatus } = require('./fleet-state');
+const { readGoalThresholds } = require('../services/goals');
 
 // The currentStep column: the step's human-meaningful name — its id (`implement`,
 // `check`, `plan`), falling back to the executor `type` (`claude-tui`, `script`)
@@ -63,18 +64,41 @@ function formatWorkerReport(status, opts = {}) {
   return cols.join('   ');
 }
 
+// The Goal Context thresholds line (muaddib#28) — a compact rendering of the
+// budget / concurrency / retry caps parsed from `.muaddib/goals.md`, sat under
+// the header. `running` is the live count of workers holding a concurrency slot,
+// shown beside the concurrency cap so a reader sees usage against the limit at a
+// glance. Any cap the Goal Context doesn't state renders as `not set`. This is a
+// surfacing line only — the report neither enforces nor decides against these
+// values (muaddib#28 scope boundary).
+function formatThresholdsLine(thresholds, opts = {}) {
+  const t = thresholds || {};
+  const running = Number.isFinite(opts.running) ? opts.running : 0;
+  const budget = t.budget == null ? 'not set' : `$${t.budget}`;
+  const concurrencyCap = t.concurrency == null ? 'not set' : String(t.concurrency);
+  const retry = t.retry == null ? 'not set' : String(t.retry);
+  return `Thresholds — budget cap: ${budget} · concurrency cap: ${concurrencyCap} (running: ${running}) · retry limit: ${retry}`;
+}
+
 // The whole-fleet report: a header line naming when it was generated and how
-// many workers it covers, then one aligned line per worker. An empty fleet — no
-// worker has emitted anything yet — gets a clear single-line note instead of a
-// bare header with nothing under it.
-function formatFleetReport(state) {
+// many workers it covers, an optional Goal Context thresholds line, then one
+// aligned line per worker. An empty fleet — no worker has emitted anything yet —
+// gets a clear single-line note instead of a bare header with nothing under it.
+// `opts.thresholds` (with `opts.running`) adds the thresholds line; omitting it
+// leaves the output byte-for-byte as before (the plain CLI/single-worker path).
+function formatFleetReport(state, opts = {}) {
   const s = state || {};
   const workers = Array.isArray(s.workers) ? s.workers : [];
   const generatedAt = s.generatedAt != null ? s.generatedAt : 'unknown time';
   const header = `Fleet State — ${generatedAt} · ${workers.length} worker${workers.length === 1 ? '' : 's'}`;
 
+  const headerLines = [header];
+  if (opts.thresholds) {
+    headerLines.push(formatThresholdsLine(opts.thresholds, { running: opts.running }));
+  }
+
   if (!workers.length) {
-    return `${header}\nNo workers have emitted events yet.`;
+    return `${headerLines.join('\n')}\nNo workers have emitted events yet.`;
   }
 
   // Pad the three leading columns to the widest cell in each so the report reads
@@ -85,14 +109,31 @@ function formatFleetReport(state) {
   const stepWidth = Math.max(...workers.map((w) => stepLabel(w.currentStep).length));
 
   const lines = workers.map((w) => formatWorkerReport(w, { labelWidth, stateWidth, stepWidth }));
-  return [header, ...lines].join('\n');
+  return [...headerLines, ...lines].join('\n');
 }
 
 // Live entry points — the uncached, read-only surface. Each recomputes Fleet
 // State from the files on disk on every call (no cache to go stale) and formats
 // it, so a report always reflects the events written right now.
-function renderLiveFleetReport() {
-  return formatFleetReport(fleetState());
+// Compute the live fleet state once, read the Goal Context thresholds for the
+// active repo, and count workers holding a concurrency slot (an in-flight step),
+// then format all three together. The threshold read is strictly read-only
+// (`bootstrap: false`) — a missing goals.md yields no thresholds rather than
+// writing the default template into the repo — so the report keeps its no-cache
+// / no-side-effects contract. A threshold-read failure never breaks the report —
+// the line is simply omitted.
+function renderLiveFleetReport(opts = {}) {
+  const state = fleetState();
+  const repoDir = opts.repoDir || process.env.REPO_DIR || process.cwd();
+  let thresholds = null;
+  try {
+    thresholds = readGoalThresholds(repoDir, { bootstrap: false });
+  } catch (_) {
+    thresholds = null;
+  }
+  const workers = Array.isArray(state.workers) ? state.workers : [];
+  const running = workers.filter((w) => w.currentStep && w.currentStep.running).length;
+  return formatFleetReport(state, { thresholds, running });
 }
 
 function renderLiveWorkerReport(worker) {
@@ -103,6 +144,7 @@ module.exports = {
   stepLabel,
   flagLabel,
   formatWorkerReport,
+  formatThresholdsLine,
   formatFleetReport,
   renderLiveFleetReport,
   renderLiveWorkerReport,
