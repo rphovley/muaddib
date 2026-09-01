@@ -21,6 +21,7 @@
       "id": "ask-questions",
       "type": "claude-tui",
       "skill": "ask-questions",
+      "awaitsReview": "question",
       "runIf": "state.needs_questions === 'true'",
       "stateReads": ["ticket_identifier", "ticket_url"],
       "stateWrites": []

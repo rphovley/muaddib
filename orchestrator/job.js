@@ -121,12 +121,12 @@ function stopJob(worker, name) {
 const WORKING_MARKER = /esc to interrupt/i;
 
 // The nudge typed into an idle-stalled session: exactly the manual recovery a
-// human would send — remind the model that touching the sentinel must be its
-// literal final action, not something a summary sentence implies.
+// human would send — remind the model to touch the sentinel if it is genuinely
+// done, and otherwise to keep going with the next step.
 const NUDGE_MESSAGE =
   'You appear to have finished but the step has not been signaled complete. ' +
-  'Run `touch "$STEP_DONE_FILE"` right now as your final tool call — a summary ' +
-  'sentence does not signal completion; only the actual touch does.';
+  'Run `touch "$STEP_DONE_FILE"` right now as your final tool call if you are ' +
+  'actually complete. Otherwise continue on the next step.';
 
 // Automatically nudge a claude-tui step that has gone idle without writing its
 // done/failed sentinel. Mirrors the documented manual recovery (a human typing
