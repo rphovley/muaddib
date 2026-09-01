@@ -29,6 +29,9 @@ TEST_SCRIPT='
     echo "=== orchestrator/test-event-bus ==="
     node "$MUADDIB/orchestrator/__tests__/test-event-bus.js"
 
+    echo "=== orchestrator/test-fleet-state ==="
+    node "$MUADDIB/orchestrator/__tests__/test-fleet-state.js"
+
     echo "=== orchestrator/test-job ==="
     node "$MUADDIB/orchestrator/__tests__/test-job.js"
 

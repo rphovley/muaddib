@@ -307,6 +307,39 @@ node orchestrator/session-context-cli.js get-all            # the whole bag as J
 node orchestrator/session-context-cli.js clear              # discard at run end
 ```
 
+## Fleet Control Surface — `inspect` (`orchestrator/inspect-cli.js`)
+
+The first Fleet Control Surface read tool: it reports live per-worker status the
+same way a human reading the per-worker `.events` streams would derive it. The
+Conductor's long-running `claude` session inspects fleet health by shelling into
+it — the same way it runs every other orchestrator CLI (`state-cli.js`,
+`decision-log-cli.js`, …).
+
+```bash
+node orchestrator/inspect-cli.js          # whole-fleet snapshot as JSON
+node orchestrator/inspect-cli.js 2        # a single worker's status as JSON
+```
+
+Each worker folds down to a coarse `state` (latest `state_changed`), a
+`currentStep` (the in-flight `step_start` with no matching `step_done`, else the
+last completed step, with `running` telling the two apart), terminal
+`workflowDone` / `failed` flags, and `eventCount` / `lastEventTs`.
+
+Two properties are load-bearing and match the ticket's acceptance criteria:
+
+- **No caching.** `orchestrator/fleet-state.js` is a pure fold over
+  `events.readEvents()` with no module-level state — every call recomputes from
+  the files on disk, so the output always reflects the events written *right
+  now*.
+- **No side effects.** The tool only reads the `.events` files; it never
+  `emit()`s and never writes. `readEvents()` / `listWorkers()` (in `events.js`)
+  are the read side of the same event bus, sharing the JSONL line grammar with
+  `subscribe()` so a reader can't drift from the stream reader.
+
+Deeper auto-invocation from the daemon's runtime loop (the Conductor deciding
+*when* to inspect) remains a later milestone; the tool is callable by the
+session as-is today.
+
 ## Prerequisites (one-time)
 
 1. **Subscription token:** `claude setup-token` → `export CLAUDE_CODE_OAUTH_TOKEN=…`
