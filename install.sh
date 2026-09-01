@@ -109,6 +109,10 @@ check_tool node        "brew install node  (or use nvm)"
 check_tool gh          "brew install gh"
 check_tool claude      "npm install -g @anthropic-ai/claude-code"
 check_tool cloudflared "brew install cloudflared" optional
+# Preferred worker-allocation lock primitive (bin/worker-alloc.sh). Optional: the
+# allocator falls back to a portable mkdir mutex when flock is absent (stock macOS
+# ships no flock binary), so this only surfaces the better option.
+check_tool flock       "brew install flock" optional
 # Required, not optional: spawn-worker.sh/teardown-worker.sh read the worker
 # port scheme (and everything else project-specific) out of .muaddib/manifest.json via
 # jq — without it there's no way to resolve those values.

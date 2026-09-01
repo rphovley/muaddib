@@ -273,6 +273,10 @@ async function countActiveWorkers() {
   return (await getActiveWorkerProjects()).size;
 }
 
+// Best-effort slot hint only. The authoritative slot is re-selected inside
+// bin/spawn-worker.sh under a cross-process allocation lock (bin/worker-alloc.sh),
+// which always advances past any slot that is actually up — so a stale hint from
+// here (or a race with a manual muaddib*.sh dispatch) can never cause a collision.
 async function findNextFreeWorker() {
   const projects = await getActiveWorkerProjects();
   const used = new Set();
@@ -423,8 +427,24 @@ async function trySpawn(entry) {
   // Run it detached so the daemon stays responsive to incoming events.
   const proc = spawn(SPAWN_WORKER, [String(n), `/muaddib ${entry.ticketId}`], {
     env,
-    stdio: ["ignore", "ignore", "pipe"],
+    stdio: ["ignore", "pipe", "pipe"],
     detached: true,
+  });
+
+  // The leading slot number is only a HINT — spawn-worker.sh re-selects the real
+  // slot under its allocation lock (advancing past any busy slot) and echoes
+  // `WORKER_SLOT=<n>` once it's chosen. Watch for it so the dispatched/attach logs
+  // name the slot actually claimed, not a stale hint that would point a later
+  // attach or teardown at the wrong worker.
+  let sawSlot = false;
+  proc.stdout.on("data", (d) => {
+    if (sawSlot) return;
+    const m = d.toString().match(/WORKER_SLOT=(\d+)/);
+    if (m) {
+      sawSlot = true;
+      log(`dispatched ${entry.ticketId} → worker ${m[1]} (${entry.entryPoint})`);
+      log(`attach: npm run muaddib:attach ${m[1]}`);
+    }
   });
 
   // Collect stderr so failures are visible in the daemon log.
@@ -447,8 +467,10 @@ async function trySpawn(entry) {
 
   proc.unref();
 
-  log(`dispatched ${entry.ticketId} → worker ${n} (${entry.entryPoint})`);
-  log(`attach: npm run muaddib:attach ${n}`);
+  // The real slot (and its attach hint) is logged from the WORKER_SLOT handler
+  // above once the allocator picks it. Log the reservation now with the hint so a
+  // spawn that dies before selecting a slot still leaves a trace in the daemon log.
+  log(`dispatching ${entry.ticketId} (hint slot ${n}; real slot assigned under the allocation lock)`);
   return true;
 }
 
