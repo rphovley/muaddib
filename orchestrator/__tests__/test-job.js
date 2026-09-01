@@ -5,6 +5,14 @@
 // testJobExitSuccess — job exits 0 → started then done events emitted
 // testJobExitFailure — job exits 1 → started then failed with exitCode in payload
 // testStopJobMidRun  — stopJob kills window → stopped event, window no longer listed
+//
+// nudgeIdleStep (GH #87 — auto-recover claude-tui steps that stall without
+// touching their sentinel):
+//   testNudgeSkipsWhenSentinelPresent — sentinel already on disk → never nudges
+//   testNudgeSkipsWhenWorking         — pane shows the working marker → never nudges
+//   testNudgeFiresWhenStableIdle      — stable idle pane (2 ticks, no marker) → nudge
+//                                       is typed into the pane (observed via a `cat`
+//                                       that echoes the sent line to a file)
 
 const os = require('os');
 const fs = require('fs');
@@ -15,7 +23,7 @@ const TMP_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'job-test-'));
 process.env.AGENT_STATUS_DIR = TMP_DIR;
 
 const { subscribe, eventsFile } = require('../events');
-const { startJob, stopJob } = require('../job');
+const { startJob, stopJob, nudgeIdleStep } = require('../job');
 
 const WORKER = 98;
 
@@ -90,12 +98,86 @@ async function testStopJobMidRun() {
     throw new Error(`${jobName} window still exists after stopJob`);
 }
 
+// ─── nudgeIdleStep ─────────────────────────────────────────────────────────────
+
+// Create a tmux window in the shared test session running `cmd`.
+function mkWindow(name, cmd) {
+  spawnSync('tmux', ['kill-window', '-t', `w${WORKER}:${name}`], { stdio: 'ignore' });
+  const r = spawnSync('tmux', ['new-window', '-d', '-t', `w${WORKER}`, '-n', name, cmd], { stdio: 'ignore' });
+  if (r.status !== 0) throw new Error(`could not create window ${name}`);
+}
+function killWindow(name) {
+  spawnSync('tmux', ['kill-window', '-t', `w${WORKER}:${name}`], { stdio: 'ignore' });
+}
+
+// A sentinel already on disk means the touch just landed — nudgeIdleStep must
+// do nothing (the wrapper is about to emit done), even with a stable prevSnapshot.
+async function testNudgeSkipsWhenSentinelPresent() {
+  const name = 'nudge-sentinel';
+  const doneFile = `/tmp/step-done-${WORKER}-${name}`;
+  mkWindow(name, 'sleep 30');
+  fs.writeFileSync(doneFile, '');
+  try {
+    const res = nudgeIdleStep(WORKER, name, 'a stable prior snapshot');
+    if (res.nudged) throw new Error('nudged despite sentinel already present');
+  } finally {
+    try { fs.unlinkSync(doneFile); } catch (_) {}
+    killWindow(name);
+  }
+}
+
+// A pane showing the "esc to interrupt" working marker means the model is busy —
+// never nudge, even when the pane is otherwise stable across ticks.
+async function testNudgeSkipsWhenWorking() {
+  const name = 'nudge-working';
+  mkWindow(name, 'printf "... esc to interrupt ...\\n"; sleep 30');
+  await wait(500);
+  try {
+    const first = nudgeIdleStep(WORKER, name);
+    if (first.nudged) throw new Error('nudged on first tick with working marker');
+    const res = nudgeIdleStep(WORKER, name, first.snapshot);
+    if (res.nudged) throw new Error('nudged while the working marker was present');
+  } finally {
+    killWindow(name);
+  }
+}
+
+// A stable idle pane (unchanged across two ticks, no working marker, no sentinel)
+// is a genuinely stopped session — nudgeIdleStep types the recovery message into
+// it. Observed via `cat`, which echoes the sent line to a file.
+async function testNudgeFiresWhenStableIdle() {
+  const name = 'nudge-idle';
+  const outFile = path.join(TMP_DIR, `${name}.out`);
+  // Render some non-blank, marker-free content so the pane looks like a genuinely
+  // stopped session (a real claude-tui pane is never blank); then `cat` echoes the
+  // nudged line to disk so we can observe delivery.
+  mkWindow(name, `printf 'idle at prompt\\n'; cat > '${outFile}'`);
+  await wait(500);
+  try {
+    const first = nudgeIdleStep(WORKER, name);
+    if (first.nudged) throw new Error('nudged on the first tick (no prevSnapshot to confirm stability)');
+    const second = nudgeIdleStep(WORKER, name, first.snapshot);
+    if (!second.nudged) throw new Error('did not nudge a stable, idle, marker-free pane');
+
+    await wait(500); // let cat flush the echoed line to disk
+    const got = fs.existsSync(outFile) ? fs.readFileSync(outFile, 'utf8') : '';
+    if (!got.includes('touch "$STEP_DONE_FILE"')) {
+      throw new Error(`nudge message not delivered to the pane; got ${JSON.stringify(got)}`);
+    }
+  } finally {
+    killWindow(name);
+  }
+}
+
 async function main() {
   const tests = [
     ['job exits 0 → started + done',                      testJobExitSuccess],
     ['job exits 1 → started + failed with exitCode',      testJobExitFailure],
     ['done sentinel file → process killed + done emitted', testJobDoneByFile],
     ['stopJob mid-run → stopped event + window removed',  testStopJobMidRun],
+    ['nudgeIdleStep skips when sentinel present',         testNudgeSkipsWhenSentinelPresent],
+    ['nudgeIdleStep skips when working marker present',   testNudgeSkipsWhenWorking],
+    ['nudgeIdleStep fires on a stable idle pane',         testNudgeFiresWhenStableIdle],
   ];
 
   let passed = 0;

@@ -117,6 +117,8 @@ node "$MUADDIB_ROOT/orchestrator/emit-cli.js" \
 touch "$STEP_DONE_FILE"
 ```
 
+> ⚠️ **This `touch` must be your literal last tool call — actually run it, don't just state that the step is done.** The orchestrator detects completion only when this file appears on disk; a closing summary sentence does not create it. Narrating completion without running the command leaves the step hanging until it is force-nudged.
+
 ## Notes
 
 - Playbooks (`npx -y lavish-axi playbook <id>` — `diagram`, `table`,

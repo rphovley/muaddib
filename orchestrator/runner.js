@@ -23,7 +23,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync, spawn } = require('child_process');
 const { eventsFile, emit } = require('./events');
-const { startJob } = require('./job');
+const { startJob, nudgeIdleStep } = require('./job');
 const state = require('./state');
 const { noteStatus, AGENT_STATUS_DIR } = require('./status');
 const { recordStep } = require('./token-tracker');
@@ -76,10 +76,17 @@ function buildExtraEnv(worker, stateReads) {
 // opts.warnMs   — ms before firing onWarn (default 300 000 = 5 min); keeps waiting after.
 // opts.onWarn   — callback fired once at warnMs if the step hasn't finished yet.
 // opts.hardTimeoutMs — ms before giving up entirely (default: none).
+// opts.nudgeMs  — ms before the first automatic nudge; after it, onNudge fires on
+//                 a repeating interval (~30 s) until the job settles. Unset (the
+//                 default) means no nudging — behavior identical to before.
+// opts.onNudge  — callback fired on each nudge tick (e.g. type a "run the touch"
+//                 message into an idle-stalled session). Keeps waiting either way.
 function waitForJobCompletion(worker, jobName, opts = {}) {
   const warnMs = opts.warnMs ?? 300_000;
   const hardTimeoutMs = opts.hardTimeoutMs ?? null;
   const onWarn = opts.onWarn ?? null;
+  const nudgeMs = opts.nudgeMs ?? null;
+  const onNudge = opts.onNudge ?? null;
 
   const file = eventsFile(worker);
   let offset = 0;
@@ -88,6 +95,16 @@ function waitForJobCompletion(worker, jobName, opts = {}) {
 
   return new Promise((resolve, reject) => {
     let fd;
+
+    // Single teardown for every exit path (done / failed / hard timeout) so no
+    // timer or interval — including the nudge machinery below — is ever leaked.
+    function cleanup() {
+      clearInterval(poll);
+      clearTimeout(warnTimer);
+      if (hardTimer) clearTimeout(hardTimer);
+      if (nudgeStart) clearTimeout(nudgeStart);
+      if (nudgeInterval) clearInterval(nudgeInterval);
+    }
 
     const poll = setInterval(() => {
       try {
@@ -109,16 +126,12 @@ function waitForJobCompletion(worker, jobName, opts = {}) {
           try { ev = JSON.parse(trimmed); } catch (_) { continue; }
           if (ev.job !== jobName) continue;
           if (ev.event === 'done') {
-            clearInterval(poll);
-            clearTimeout(warnTimer);
-            if (hardTimer) clearTimeout(hardTimer);
+            cleanup();
             resolve();
             return;
           }
           if (ev.event === 'failed') {
-            clearInterval(poll);
-            clearTimeout(warnTimer);
-            if (hardTimer) clearTimeout(hardTimer);
+            cleanup();
             reject(new Error(`job ${jobName} failed (exit ${ev.payload && ev.payload.exitCode})`));
             return;
           }
@@ -134,11 +147,26 @@ function waitForJobCompletion(worker, jobName, opts = {}) {
     }, warnMs);
     warnTimer.unref();
 
+    // Optional automatic nudge — once nudgeMs elapses, invoke onNudge right away
+    // and then repeatedly (~30 s cadence, but never slower than the threshold so
+    // low test values stay snappy) until the job settles. cleanup() clears both
+    // the initial delay and the repeat interval. Never fails the step; it only
+    // prods a stalled session back into signaling done.
+    let nudgeInterval = null;
+    const nudgeStart = nudgeMs != null && nudgeMs > 0 && onNudge
+      ? setTimeout(() => {
+          const tick = () => { try { onNudge(); } catch (_) {} };
+          tick();
+          nudgeInterval = setInterval(tick, Math.min(30_000, nudgeMs));
+          nudgeInterval.unref();
+        }, nudgeMs)
+      : null;
+    if (nudgeStart) nudgeStart.unref();
+
     // Optional hard ceiling — fail only if explicitly configured.
     const hardTimer = hardTimeoutMs
       ? setTimeout(() => {
-          clearInterval(poll);
-          clearTimeout(warnTimer);
+          cleanup();
           reject(new Error(`hard timeout (${hardTimeoutMs}ms) waiting for ${jobName}`));
         }, hardTimeoutMs)
       : null;
@@ -300,6 +328,25 @@ async function runClaudeTuiStep(worker, step, ticketId) {
   // the warn callback quickly without waiting 5 minutes.
   const warnMs = process.env.STEP_WARN_MS ? Number(process.env.STEP_WARN_MS) : 300_000;
 
+  // Automatic idle-nudge: after nudgeMs with no sentinel, type the "run the
+  // touch" recovery into the session (see job.nudgeIdleStep). Default ~10 min,
+  // comfortably past warnMs; STEP_NUDGE_MS overrides for tests. Skipped entirely
+  // for awaitsReview steps — those are correctly blocked on a human, not stalled.
+  const nudgeMs = step.awaitsReview
+    ? null
+    : (process.env.STEP_NUDGE_MS ? Number(process.env.STEP_NUDGE_MS) : 600_000);
+
+  // Thread the previous pane snapshot between ticks so nudgeIdleStep can tell a
+  // genuinely stable (stopped) pane from one that's still changing.
+  let prevSnapshot;
+  const onNudge = () => {
+    const res = nudgeIdleStep(worker, step.id, prevSnapshot);
+    prevSnapshot = res.snapshot;
+    if (res.nudged) {
+      console.log(`[runner w${worker}] NUDGE: ${step.id} idle without sentinel — sent recovery message`);
+    }
+  };
+
   const stepStartMs = Date.now();
 
   // A step can declare awaitsReview so the coarse status board (attend.sh,
@@ -323,7 +370,7 @@ async function runClaudeTuiStep(worker, step, ticketId) {
 
   try {
     // Capture offset BEFORE startJob so the done event is never missed.
-    const waitP = waitForJobCompletion(worker, step.id, { onWarn, warnMs });
+    const waitP = waitForJobCompletion(worker, step.id, { onWarn, warnMs, nudgeMs, onNudge });
     startJob(worker, step.id, cmd, extraEnv);
     await waitP;
   } finally {
