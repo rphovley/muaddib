@@ -358,6 +358,177 @@ async function testGithubCreateSubIssueThrowsWhenChildNotCreated() {
   await assert.rejects(() => src.createSubIssue('34', 't', 'd'), /createSubIssue failed/);
 }
 
+// ─── GitHub backend (getBlockingStatus) ─────────────────────────────────────────
+
+async function testGithubGetBlockingStatusMapsBothEndpoints() {
+  // blocked_by → a still-open blocker plus a closed (historical) one; blocking →
+  // one issue this ticket blocks. Both dependency endpoints are hit, fields are
+  // mapped onto the backend-neutral entry shape, and `blocked` is true because a
+  // blocker is still active (open).
+  const api = fakeApi({
+    '/dependencies/blocked_by': [
+      { number: 10, title: 'Open blocker', state: 'open' },
+      { number: 11, title: 'Done blocker', state: 'closed' },
+    ],
+    '/dependencies/blocking': [{ number: 20, title: 'Downstream', state: 'open' }],
+  });
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  const status = await src.getBlockingStatus('34');
+  assert.deepStrictEqual(status, {
+    supported: true,
+    blocked: true,
+    blockedBy: [
+      { identifier: 'muaddib#10', title: 'Open blocker', state: { name: 'open' }, active: true },
+      { identifier: 'muaddib#11', title: 'Done blocker', state: { name: 'closed' }, active: false },
+    ],
+    blocking: [{ identifier: 'muaddib#20', title: 'Downstream', state: { name: 'open' }, active: true }],
+  });
+  assert.deepStrictEqual(
+    api.calls.map((c) => c.path).sort(),
+    [
+      '/repos/rphovley/muaddib/issues/34/dependencies/blocked_by?per_page=100&page=1',
+      '/repos/rphovley/muaddib/issues/34/dependencies/blocking?per_page=100&page=1',
+    ]
+  );
+}
+
+async function testGithubGetBlockingStatusBlockedFalseWhenAllBlockersClosed() {
+  // A ticket blocked only by an already-closed issue is NOT currently blocked,
+  // but the blocker stays visible in blockedBy (history), and blocking [] when
+  // the endpoint returns an empty array.
+  const api = fakeApi({
+    '/dependencies/blocked_by': [{ number: 11, title: 'Done blocker', state: 'closed' }],
+    '/dependencies/blocking': [],
+  });
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  const status = await src.getBlockingStatus('34');
+  assert.strictEqual(status.blocked, false);
+  assert.strictEqual(status.blockedBy.length, 1);
+  assert.strictEqual(status.blockedBy[0].active, false);
+  assert.deepStrictEqual(status.blocking, []);
+}
+
+async function testGithubGetBlockingStatusToleratesRepoHashPrefix() {
+  const api = fakeApi({ '/dependencies/blocked_by': [], '/dependencies/blocking': [] });
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  await src.getBlockingStatus('muaddib#34');
+  for (const call of api.calls) {
+    assert.ok(call.path.startsWith('/repos/rphovley/muaddib/issues/34/dependencies/'), call.path);
+  }
+}
+
+async function testGithubGetBlockingStatusEmptyIdShortCircuits() {
+  // An empty id can't address an issue — return the supported-but-empty shape
+  // without issuing a request (matching fetchTicket's missing-id handling).
+  const api = fakeApi({});
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  assert.deepStrictEqual(await src.getBlockingStatus(''), {
+    supported: true,
+    blocked: false,
+    blockedBy: [],
+    blocking: [],
+  });
+  assert.strictEqual(api.calls.length, 0);
+}
+
+async function testGithubGetBlockingStatusRequiresOwnerRepo() {
+  const prevOwner = process.env.GITHUB_OWNER;
+  const prevRepo = process.env.GITHUB_REPO;
+  delete process.env.GITHUB_OWNER;
+  delete process.env.GITHUB_REPO;
+  try {
+    const src = createGithubSource({ api: fakeApi({}) });
+    await assert.rejects(() => src.getBlockingStatus('1'), /GITHUB_OWNER and GITHUB_REPO/);
+  } finally {
+    if (prevOwner === undefined) delete process.env.GITHUB_OWNER;
+    else process.env.GITHUB_OWNER = prevOwner;
+    if (prevRepo === undefined) delete process.env.GITHUB_REPO;
+    else process.env.GITHUB_REPO = prevRepo;
+  }
+}
+
+// ─── Linear backend (getBlockingStatus) ─────────────────────────────────────────
+
+async function testLinearGetBlockingStatusMapsRelations() {
+  // inverseRelations(blocks) → blockedBy; relations(blocks) → blocking. A
+  // non-`blocks` relation (e.g. `related`) is ignored. `blocked` is true because
+  // an active blocker exists.
+  const gql = fakeGraphql({
+    BlockingStatus: {
+      issue: {
+        relations: {
+          nodes: [
+            { type: 'blocks', relatedIssue: { identifier: 'QUO-20', title: 'Downstream', state: { name: 'Todo', type: 'unstarted' } } },
+            { type: 'related', relatedIssue: { identifier: 'QUO-99', title: 'Related', state: { name: 'Todo', type: 'unstarted' } } },
+          ],
+        },
+        inverseRelations: {
+          nodes: [
+            { type: 'blocks', issue: { identifier: 'QUO-10', title: 'Blocker', state: { name: 'In Progress', type: 'started' } } },
+            { type: 'related', issue: { identifier: 'QUO-98', title: 'Related back', state: { name: 'Todo', type: 'unstarted' } } },
+          ],
+        },
+      },
+    },
+  });
+  const src = createLinearSource({ graphql: gql });
+  const status = await src.getBlockingStatus('QUO-1');
+  assert.deepStrictEqual(gql.calls[0].variables, { id: 'QUO-1' });
+  assert.deepStrictEqual(status, {
+    supported: true,
+    blocked: true,
+    blockedBy: [{ identifier: 'QUO-10', title: 'Blocker', state: { name: 'In Progress' }, active: true }],
+    blocking: [{ identifier: 'QUO-20', title: 'Downstream', state: { name: 'Todo' }, active: true }],
+  });
+}
+
+async function testLinearGetBlockingStatusBlockedFalseWhenBlockerTerminal() {
+  // The only blocker is completed/canceled → not currently blocked, but it stays
+  // visible in blockedBy with active:false.
+  const gql = fakeGraphql({
+    BlockingStatus: {
+      issue: {
+        relations: { nodes: [] },
+        inverseRelations: {
+          nodes: [
+            { type: 'blocks', issue: { identifier: 'QUO-10', title: 'Done blocker', state: { name: 'Done', type: 'completed' } } },
+            { type: 'blocks', issue: { identifier: 'QUO-11', title: 'Dropped blocker', state: { name: 'Canceled', type: 'canceled' } } },
+          ],
+        },
+      },
+    },
+  });
+  const src = createLinearSource({ graphql: gql });
+  const status = await src.getBlockingStatus('QUO-1');
+  assert.strictEqual(status.blocked, false);
+  assert.strictEqual(status.blockedBy.length, 2);
+  assert.ok(status.blockedBy.every((b) => b.active === false));
+  assert.deepStrictEqual(status.blocking, []);
+}
+
+async function testLinearGetBlockingStatusMissingIssue() {
+  const gql = fakeGraphql({ BlockingStatus: { issue: null } });
+  const src = createLinearSource({ graphql: gql });
+  assert.deepStrictEqual(await src.getBlockingStatus('QUO-404'), {
+    supported: true,
+    blocked: false,
+    blockedBy: [],
+    blocking: [],
+  });
+}
+
+// ─── raw backend (getBlockingStatus) ────────────────────────────────────────────
+
+async function testRawGetBlockingStatusUnsupported() {
+  const src = getTicketSource('raw');
+  assert.deepStrictEqual(await src.getBlockingStatus('anything'), {
+    supported: false,
+    blocked: false,
+    blockedBy: [],
+    blocking: [],
+  });
+}
+
 // ─── fetchTicket ────────────────────────────────────────────────────────────────
 
 async function testFetchTicketReturnsIssue() {
@@ -511,6 +682,15 @@ async function main() {
     ['github: createSubIssue omits blank description', testGithubCreateSubIssueOmitsDescriptionWhenBlank],
     ['github: createSubIssue tolerates native-link failure', testGithubCreateSubIssueSucceedsWhenNativeLinkFails],
     ['github: createSubIssue throws when child not created', testGithubCreateSubIssueThrowsWhenChildNotCreated],
+    ['github: getBlockingStatus maps both dependency endpoints', testGithubGetBlockingStatusMapsBothEndpoints],
+    ['github: getBlockingStatus blocked=false when all blockers closed', testGithubGetBlockingStatusBlockedFalseWhenAllBlockersClosed],
+    ['github: getBlockingStatus tolerates a repo# prefix', testGithubGetBlockingStatusToleratesRepoHashPrefix],
+    ['github: getBlockingStatus short-circuits an empty id', testGithubGetBlockingStatusEmptyIdShortCircuits],
+    ['github: getBlockingStatus requires GITHUB_OWNER/GITHUB_REPO', testGithubGetBlockingStatusRequiresOwnerRepo],
+    ['linear: getBlockingStatus maps blocks relations (ignores others)', testLinearGetBlockingStatusMapsRelations],
+    ['linear: getBlockingStatus blocked=false when blocker terminal', testLinearGetBlockingStatusBlockedFalseWhenBlockerTerminal],
+    ['linear: getBlockingStatus empty-supported on missing issue', testLinearGetBlockingStatusMissingIssue],
+    ['raw: getBlockingStatus is unsupported', testRawGetBlockingStatusUnsupported],
     ['fetchTicket: returns the issue with id var', testFetchTicketReturnsIssue],
     ['fetchTicket: null when issue missing', testFetchTicketNullWhenMissing],
     ['postComment: builds commentCreate mutation', testPostCommentBuildsMutation],

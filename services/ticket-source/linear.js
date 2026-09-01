@@ -103,6 +103,54 @@ const ISSUE_TEAM_QUERY = `
   }
 `;
 
+// getBlockingStatus reads the issue's native `blocks` relations. Linear models a
+// relation as a directed edge: `relations` are edges where this issue is the
+// SOURCE (relatedIssue is the target), `inverseRelations` where it is the TARGET
+// (issue is the source). So a `blocks` relation in `inverseRelations` means some
+// other issue blocks this one (a blocker); a `blocks` relation in `relations`
+// means this issue blocks that other one. `state.type` (completed/canceled →
+// terminal) lets us tell an active blocker from a historical/closed one.
+const BLOCKING_STATUS_QUERY = `
+  query BlockingStatus($id: String!) {
+    issue(id: $id) {
+      relations(first: 100) {
+        nodes { type relatedIssue { identifier title state { name type } } }
+        pageInfo { hasNextPage endCursor }
+      }
+      inverseRelations(first: 100) {
+        nodes { type issue { identifier title state { name type } } }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+`;
+
+// Continuation queries: relations/inverseRelations are GraphQL connections, so a
+// ticket with more than one page of blocks-relations would otherwise be
+// truncated — dropping an active blocker makes `blocked` wrong. Each pages a
+// single connection forward from a cursor.
+const RELATIONS_PAGE_QUERY = `
+  query RelationsPage($id: String!, $after: String) {
+    issue(id: $id) {
+      relations(first: 100, after: $after) {
+        nodes { type relatedIssue { identifier title state { name type } } }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+`;
+
+const INVERSE_RELATIONS_PAGE_QUERY = `
+  query InverseRelationsPage($id: String!, $after: String) {
+    issue(id: $id) {
+      inverseRelations(first: 100, after: $after) {
+        nodes { type issue { identifier title state { name type } } }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+`;
+
 const COMMENT_CREATE = `
   mutation CommentCreate($issueId: String!, $body: String!) {
     commentCreate(input: { issueId: $issueId, body: $body }) {
@@ -200,6 +248,66 @@ function createLinearSource(opts = {}) {
         throw new Error(`issueCreate failed — response: ${JSON.stringify(data)}`);
       }
       return created.issue;
+    },
+
+    // getBlockingStatus(id) → the ticket's Coordination status: whether it is
+    // currently blocked and by which tickets, plus what it blocks. Built from
+    // Linear's native `blocks` relations (see BLOCKING_STATUS_QUERY). A missing
+    // issue resolves to the empty-but-supported shape rather than throwing, so a
+    // caller distinguishes "no blockers" from "backend can't answer" (raw).
+    async getBlockingStatus(id) {
+      const data = await graphql(BLOCKING_STATUS_QUERY, { id });
+      const issue = data && data.issue;
+      if (!issue) {
+        return { supported: true, blocked: false, blockedBy: [], blocking: [] };
+      }
+      // Reshape a related Linear issue to the backend-neutral entry, deriving
+      // `active` from the state type (completed/canceled are terminal).
+      const toEntry = (related) => {
+        const type = related && related.state && related.state.type;
+        return {
+          identifier: related && related.identifier,
+          title: related && related.title,
+          state: { name: related && related.state && related.state.name },
+          active: type !== 'completed' && type !== 'canceled',
+        };
+      };
+      const relationNodes = (issue.relations && issue.relations.nodes) || [];
+      const inverseNodes = (issue.inverseRelations && issue.inverseRelations.nodes) || [];
+      // Follow the connection cursors so a ticket with more than 100 relations
+      // isn't truncated (an omitted active blocker would make `blocked` wrong).
+      let relPage = issue.relations && issue.relations.pageInfo;
+      while (relPage && relPage.hasNextPage) {
+        // eslint-disable-next-line no-await-in-loop
+        const page = await graphql(RELATIONS_PAGE_QUERY, { id, after: relPage.endCursor });
+        const conn = page && page.issue && page.issue.relations;
+        if (!conn) break;
+        relationNodes.push(...(conn.nodes || []));
+        relPage = conn.pageInfo;
+      }
+      let invPage = issue.inverseRelations && issue.inverseRelations.pageInfo;
+      while (invPage && invPage.hasNextPage) {
+        // eslint-disable-next-line no-await-in-loop
+        const page = await graphql(INVERSE_RELATIONS_PAGE_QUERY, { id, after: invPage.endCursor });
+        const conn = page && page.issue && page.issue.inverseRelations;
+        if (!conn) break;
+        inverseNodes.push(...(conn.nodes || []));
+        invPage = conn.pageInfo;
+      }
+      // inverseRelations of type `blocks` → issues that block this one.
+      const blockedBy = inverseNodes
+        .filter((r) => r && r.type === 'blocks' && r.issue)
+        .map((r) => toEntry(r.issue));
+      // relations of type `blocks` → issues this one blocks.
+      const blocking = relationNodes
+        .filter((r) => r && r.type === 'blocks' && r.relatedIssue)
+        .map((r) => toEntry(r.relatedIssue));
+      return {
+        supported: true,
+        blocked: blockedBy.some((b) => b.active),
+        blockedBy,
+        blocking,
+      };
     },
 
     // registerWatch({ teamId, url, secret }) → { watchId }. Subscribes to issue

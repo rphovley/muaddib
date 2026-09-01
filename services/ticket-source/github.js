@@ -274,6 +274,74 @@ function createGithubSource(opts = {}) {
       return normalizeIssue(child, { repo });
     },
 
+    // getBlockingStatus(id) → the ticket's Coordination status, built from
+    // GitHub's native issue-dependencies API (GA 2025-08-21):
+    //   GET .../issues/{n}/dependencies/blocked_by → issues that block this one
+    //   GET .../issues/{n}/dependencies/blocking   → issues this one blocks
+    // Each returns an array of full Issue objects, which we map onto the same
+    // backend-neutral entry shape Linear returns (identifier `repo#number`,
+    // state reshaped to { name }, `active` = not closed). These GET the standard
+    // application/vnd.github+json surface githubRequest already sends — the
+    // dependencies endpoints need no special media type.
+    async getBlockingStatus(id) {
+      const number = issueNumber(id);
+      // An empty id can't address a specific issue; answer with the
+      // supported-but-empty shape (matching fetchTicket's missing-id handling)
+      // rather than building a bogus request path.
+      if (!number) return { supported: true, blocked: false, blockedBy: [], blocking: [] };
+      const { owner, repo } = resolveRepo();
+      // A dependency can live in another repo, so derive each entry's repo from
+      // the issue itself (nested `repository`, or its `repository_url`) rather
+      // than hardcoding the current repo — otherwise a cross-repo dep is
+      // mislabeled as `${repo}#…`. Fall back to the current repo when neither is
+      // present (the same-repo case).
+      const entryRepo = (issue) => {
+        if (issue.repository && issue.repository.name) return issue.repository.name;
+        if (typeof issue.repository_url === 'string') {
+          const m = issue.repository_url.match(/\/repos\/[^/]+\/([^/]+)\/?$/);
+          if (m) return m[1];
+        }
+        return repo;
+      };
+      const toEntry = (issue) => ({
+        identifier: `${entryRepo(issue)}#${issue.number}`,
+        title: issue.title,
+        // Contract is state: { name } — keep the object even when GitHub omits
+        // state so consumers can always read entry.state.name without crashing.
+        state: { name: issue.state == null ? null : issue.state },
+        active: issue.state !== 'closed',
+      });
+      // Paginate each dependency endpoint (GitHub caps a page at per_page=100):
+      // a ticket with more than 100 blockers/blocked would otherwise be silently
+      // truncated, and a dropped active blocker would make `blocked` wrong.
+      const fetchAllDeps = async (rel) => {
+        const perPage = 100;
+        const out = [];
+        for (let page = 1; ; page++) {
+          // eslint-disable-next-line no-await-in-loop
+          const pageItems = await api(
+            `/repos/${owner}/${repo}/issues/${number}/dependencies/${rel}?per_page=${perPage}&page=${page}`
+          );
+          if (!Array.isArray(pageItems) || pageItems.length === 0) break;
+          out.push(...pageItems.filter(Boolean));
+          if (pageItems.length < perPage) break;
+        }
+        return out;
+      };
+      const [blockedByRaw, blockingRaw] = await Promise.all([
+        fetchAllDeps('blocked_by'),
+        fetchAllDeps('blocking'),
+      ]);
+      const blockedBy = blockedByRaw.map(toEntry);
+      const blocking = blockingRaw.map(toEntry);
+      return {
+        supported: true,
+        blocked: blockedBy.some((b) => b.active),
+        blockedBy,
+        blocking,
+      };
+    },
+
     async registerWatch() {
       notImplemented('registerWatch');
     },

@@ -67,6 +67,15 @@ const rawSource = {
     throw new Error('raw ticket source has no backend — createSubIssue() is not supported');
   },
 
+  // A raw ticket has no external backend and therefore no ticket relationships,
+  // so there's no "Coordination status" to report. Answer with a clear "not
+  // supported" (supported: false) rather than a throw or a misleading
+  // empty-but-supported result — a caller can see the backend can't speak to
+  // blocking, instead of concluding the ticket simply isn't blocked.
+  async getBlockingStatus() {
+    return { supported: false, blocked: false, blockedBy: [], blocking: [] };
+  },
+
   async registerWatch() {
     throw new Error('raw ticket source has no backend — registerWatch() is not supported');
   },
