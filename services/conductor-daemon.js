@@ -25,6 +25,7 @@
 //   in orchestrator/conductor-session.js.
 
 const { createConductorSession } = require("../orchestrator/conductor-session");
+const { renderLiveFleetReport } = require("../orchestrator/fleet-report");
 
 const HEARTBEAT_MS = parseInt(
   process.env.CONDUCTOR_HEARTBEAT_MS || "30000",
@@ -76,6 +77,19 @@ async function healthCheck() {
     tokenPresent: Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN),
     sessionAlive: Boolean(session && session.isAlive()),
   };
+}
+
+// ─── fleet report (Autonomy L0) ────────────────────────────────────────────────
+
+// Produce the live, human-readable Fleet State report on request — the daemon's
+// on-request read surface alongside healthCheck(). Autonomy L0 "reports, decides
+// nothing": this is pure computation over the on-disk `.events` streams
+// (orchestrator/fleet-report.js → fleet-state.js). It does NOT drive the tmux
+// session, emit(), spawn, or tear anything down — deciding *when* the Conductor
+// invokes it (a runtime-loop trigger) is a later milestone. Recomputed on every
+// call, so it has no cache to go stale.
+function reportFleetState() {
+  return renderLiveFleetReport();
 }
 
 // ─── graceful shutdown ────────────────────────────────────────────────────────
@@ -140,6 +154,7 @@ async function main() {
 module.exports = {
   validateEnv,
   healthCheck,
+  reportFleetState,
   shutdown,
   main,
   // Test seam: lets a test inject a mock session (or read the current one)

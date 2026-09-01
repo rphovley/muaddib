@@ -318,6 +318,8 @@ it — the same way it runs every other orchestrator CLI (`state-cli.js`,
 ```bash
 node orchestrator/inspect-cli.js          # whole-fleet snapshot as JSON
 node orchestrator/inspect-cli.js 2        # a single worker's status as JSON
+node orchestrator/inspect-cli.js --report # whole-fleet human-readable report
+node orchestrator/inspect-cli.js -r 2     # a single worker's human-readable report
 ```
 
 Each worker folds down to a coarse `state` (latest `state_changed`), a
@@ -336,9 +338,22 @@ Two properties are load-bearing and match the ticket's acceptance criteria:
   are the read side of the same event bus, sharing the JSONL line grammar with
   `subscribe()` so a reader can't drift from the stream reader.
 
+**`--report` (Autonomy L0).** The `--report` / `-r` flag renders that same fold
+as a human-readable Fleet State report — a header (`Fleet State — <time> · N
+worker(s)`) plus one aligned summary line per worker (state, current step
+`(running)`/`(last)`, terminal flags, and event count / last-event time), or a
+clear note when no worker has emitted yet. It's a pure rendering layer
+(`orchestrator/fleet-report.js`, the same formatter/data split as
+`orchestrator/notify-format.js`) over `fleetState()`, so the report inherits the
+**no-cache** and **no-side-effects** guarantees above unchanged: JSON stays the
+default, and the flag only changes how the live fold is printed. The Conductor
+daemon exposes the same report on request via `reportFleetState()`
+(`services/conductor-daemon.js`) — L0 *reports and decides nothing*: it drives no
+session, spawns nothing, and emits nothing.
+
 Deeper auto-invocation from the daemon's runtime loop (the Conductor deciding
-*when* to inspect) remains a later milestone; the tool is callable by the
-session as-is today.
+*when* to inspect or report) remains a later milestone; the report is callable by
+the session — and the daemon method — as-is today.
 
 ## Prerequisites (one-time)
 
