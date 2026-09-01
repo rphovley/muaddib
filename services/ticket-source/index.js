@@ -20,6 +20,18 @@
 //   postComment(id, body)                    -> { commentId }
 //   mentionUser(handle)                      -> comment-body markup that notifies handle
 //   createSubIssue(parentId, title, desc)    -> the created child ticket
+//   getBlockingStatus(id)                    -> { supported, blocked, blockedBy, blocking }
+//                                               the ticket's "Coordination status" (the Conductor's
+//                                               framing): whether `id` is currently blocked and by
+//                                               which other tickets, plus what it blocks. Reporting
+//                                               only — deciding NOT to spawn a blocked ticket is L1+
+//                                               (Raise Autonomy) behavior and out of scope here.
+//                                               `supported` is false for backends with no ticket
+//                                               relationships (raw); `blocked` is true iff some
+//                                               blockedBy entry is still active (a blocker in a
+//                                               terminal/closed state stays visible but no longer
+//                                               blocks). Each blockedBy/blocking entry is
+//                                               { identifier, title, state: { name }, active }.
 //   registerWatch({ teamId, url, secret })   -> { watchId }
 //   deregisterWatch(watchId)                 -> tears the watch down
 //
