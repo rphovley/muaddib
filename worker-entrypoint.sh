@@ -10,6 +10,15 @@ set -euo pipefail
 : "${GITHUB_TOKEN:?GITHUB_TOKEN not set}"
 : "${WORKER_INDEX:?WORKER_INDEX not set}"
 
+# Pin the worker index to a fixed, container-local path. Each container is
+# dedicated to exactly one worker for its whole life (spawn-worker.sh names
+# the docker-compose project itself `-w${WORKER_INDEX}`), so this value never
+# changes after boot. Skills read it as a fallback when $WORKER_INDEX isn't
+# present in a given shell — e.g. a re-exec/background path that doesn't
+# inherit the per-job wrapper's `export WORKER_INDEX=...` (see job.js) —
+# instead of silently defaulting to the wrong worker.
+echo -n "$WORKER_INDEX" > /tmp/worker-index
+
 STATUS_FILE="/var/run/agent-status/worker-${WORKER_INDEX}.state"
 note() { printf '%s %s\n' "$1" "$(date -u +%FT%TZ)" >"$STATUS_FILE" 2>/dev/null || true; }
 

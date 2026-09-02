@@ -65,7 +65,9 @@ worker — `docker-compose.worker.yml` injects it as `WORKER_SKETCH_PORT`.
 Concretely:
 
 ```bash
-WORKER="${WORKER_INDEX:-0}"
+WORKER_INDEX="${WORKER_INDEX:-$(cat /tmp/worker-index 2>/dev/null)}"
+: "${WORKER_INDEX:?WORKER_INDEX not set (env and /tmp/worker-index both empty)}"
+WORKER="$WORKER_INDEX"
 SESSION_PATH="$(echo "$OPEN_OUTPUT" | grep -oE '/session/[A-Za-z0-9]+' | head -1)"
 SKETCH_URL="http://localhost:${WORKER_SKETCH_PORT:?set WORKER_SKETCH_PORT}${SESSION_PATH}"
 echo "Operator URL: $SKETCH_URL"
@@ -81,8 +83,10 @@ recently opened session for this file.
 MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
 if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
 STATE_CLI="$MUADDIB_ROOT/orchestrator/state-cli.js"
-node "$STATE_CLI" "$WORKER" set sketch_file "<absolute path to html-file>"
-node "$STATE_CLI" "$WORKER" set sketch_url "$SKETCH_URL"
+WORKER_INDEX="${WORKER_INDEX:-$(cat /tmp/worker-index 2>/dev/null)}"
+: "${WORKER_INDEX:?WORKER_INDEX not set (env and /tmp/worker-index both empty)}"
+node "$STATE_CLI" "$WORKER_INDEX" set sketch_file "<absolute path to html-file>"
+node "$STATE_CLI" "$WORKER_INDEX" set sketch_url "$SKETCH_URL"
 ```
 
 ## Step 5 — Notify the operator with the actual URL
@@ -106,8 +110,10 @@ the plan finalizes once you do.
 ```bash
 MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
 if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
+WORKER_INDEX="${WORKER_INDEX:-$(cat /tmp/worker-index 2>/dev/null)}"
+: "${WORKER_INDEX:?WORKER_INDEX not set (env and /tmp/worker-index both empty)}"
 node "$MUADDIB_ROOT/orchestrator/emit-cli.js" \
-    "${WORKER_INDEX:-0}" claude notify \
+    "$WORKER_INDEX" claude notify \
     "{\"msg\":\"${STATE_TICKET_IDENTIFIER:-$ARGUMENTS} prototype ready: ${SKETCH_URL}\"}"
 ```
 

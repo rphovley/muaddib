@@ -17,7 +17,9 @@ Called by `plan.json`'s `sketch-review-loop` step (see
 MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
 if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
 STATE_CLI="$MUADDIB_ROOT/orchestrator/state-cli.js"
-WORKER="${WORKER_INDEX:-0}"
+WORKER_INDEX="${WORKER_INDEX:-$(cat /tmp/worker-index 2>/dev/null)}"
+: "${WORKER_INDEX:?WORKER_INDEX not set (env and /tmp/worker-index both empty)}"
+WORKER="$WORKER_INDEX"
 SKETCH_FILE="$(node "$STATE_CLI" "$WORKER" get sketch_file)"
 NOTES="${REPO_DIR:-/home/worker/repo}/.muaddib/sketch/notes.md"
 cat "/tmp/sketch-feedback-${WORKER}.txt"
@@ -61,7 +63,9 @@ Write a short (1–2 sentence) summary of what changed, for `sketch-poll` to
 pass as `--agent-reply` on its next call:
 
 ```bash
-echo "<summary of what changed>" > "/tmp/sketch-reply-${WORKER}.txt"
+WORKER_INDEX="${WORKER_INDEX:-$(cat /tmp/worker-index 2>/dev/null)}"
+: "${WORKER_INDEX:?WORKER_INDEX not set (env and /tmp/worker-index both empty)}"
+echo "<summary of what changed>" > "/tmp/sketch-reply-${WORKER_INDEX}.txt"
 ```
 
 ## Step 5 — Signal done

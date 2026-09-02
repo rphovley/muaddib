@@ -19,7 +19,9 @@ posts it now, reflecting whatever the review loop changed.
 MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
 if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
 STATE_CLI="$MUADDIB_ROOT/orchestrator/state-cli.js"
-WORKER="${WORKER_INDEX:-0}"
+WORKER_INDEX="${WORKER_INDEX:-$(cat /tmp/worker-index 2>/dev/null)}"
+: "${WORKER_INDEX:?WORKER_INDEX not set (env and /tmp/worker-index both empty)}"
+WORKER="$WORKER_INDEX"
 SKETCH_FILE="$(node "$STATE_CLI" "$WORKER" get sketch_file)"
 NOTES="${REPO_DIR:-/home/worker/repo}/.muaddib/sketch/notes.md"
 npx -y lavish-axi export "$SKETCH_FILE"
@@ -77,7 +79,9 @@ the `## Sketch` body above to a temp file, then pipe it in on stdin:
 MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
 if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
 TICKET_CLI="$MUADDIB_ROOT/orchestrator/ticket-cli.js"
-node "$TICKET_CLI" post-comment "$ARGUMENTS" < "/tmp/sketch-comment-${WORKER_INDEX:-0}.md"
+WORKER_INDEX="${WORKER_INDEX:-$(cat /tmp/worker-index 2>/dev/null)}"
+: "${WORKER_INDEX:?WORKER_INDEX not set (env and /tmp/worker-index both empty)}"
+node "$TICKET_CLI" post-comment "$ARGUMENTS" < "/tmp/sketch-comment-${WORKER_INDEX}.md"
 ```
 
 Keep the exported artifact lean (avoid large embedded base64 images) — it

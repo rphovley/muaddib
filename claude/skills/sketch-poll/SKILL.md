@@ -26,7 +26,9 @@ attaches. This reprints every round since the orchestrator loops this skill.
 MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
 if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
 STATE_CLI="$MUADDIB_ROOT/orchestrator/state-cli.js"
-WORKER="${WORKER_INDEX:-0}"
+WORKER_INDEX="${WORKER_INDEX:-$(cat /tmp/worker-index 2>/dev/null)}"
+: "${WORKER_INDEX:?WORKER_INDEX not set (env and /tmp/worker-index both empty)}"
+WORKER="$WORKER_INDEX"
 SKETCH_URL="$(node "$STATE_CLI" "$WORKER" get sketch_url)"
 echo "──────────────────────────────────────────────────────────"
 echo " Prototype ready for review — open in your browser:"
@@ -44,6 +46,13 @@ re-apply the same feedback a second time on the next loop iteration.
 Clearing it means an incomplete round just polls again instead.
 
 ```bash
+MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"
+if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
+STATE_CLI="$MUADDIB_ROOT/orchestrator/state-cli.js"
+WORKER_INDEX="${WORKER_INDEX:-$(cat /tmp/worker-index 2>/dev/null)}"
+: "${WORKER_INDEX:?WORKER_INDEX not set (env and /tmp/worker-index both empty)}"
+WORKER="$WORKER_INDEX"
+
 node "$STATE_CLI" "$WORKER" unset sketch_status
 
 SKETCH_FILE="$(node "$STATE_CLI" "$WORKER" get sketch_file)"
