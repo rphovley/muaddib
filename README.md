@@ -519,6 +519,25 @@ Lower-level controls (run from `muaddib/`):
 ./bin/teardown-worker.sh 1
 ```
 
+### The Conductor
+
+The **Conductor** is a long-running reasoning agent (the persistent `claude`
+session managed by `services/conductor-daemon.js`) — distinct from the fixed
+Worker lifecycle above. Hand it a ticket or a free-form task and it starts (or,
+if already running, **reuses**) its session and feeds the argument in as the
+initial prompt; a leading `/` runs a skill, exactly like `spawn-worker.sh`:
+
+```bash
+npm run muaddib:conductor QUO-507                       # start + feed QUO-507 as the initial prompt
+npm run muaddib:conductor "look into the flaky preview" # free-form task text
+npm run muaddib:conductor -- --bg QUO-507               # same, backgrounded (PID in .muaddib-conductor.pid)
+```
+
+Run with no argument for a bare idle daemon (`npm run muaddib:conductor`, or
+`--bg` to detach); `./muaddib/conductor.sh --stop` tears it down. When a daemon
+is already up, a ticket/task is sent to the existing session rather than spawning
+a second one.
+
 ## MuaddibApp — menu bar status board
 
 A native macOS menu bar app (`muaddib/MuaddibApp/`) that replaces the

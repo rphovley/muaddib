@@ -15,13 +15,18 @@
 // are wired up (later milestone issues). The main loop is an indefinite idle
 // heartbeat, not a fixed workflow.
 //
-// Start:  ./conductor.sh          (foreground)
-//         ./conductor.sh --bg     (background)
+// Start:  ./conductor.sh                 (foreground, bare idle daemon)
+//         ./conductor.sh --bg            (background, bare idle daemon)
+//         ./conductor.sh QUO-507         (start + feed QUO-507 as the initial prompt)
+//         ./conductor.sh --bg QUO-507    (same, backgrounded)
+// Send to a daemon that's already up (reuse the session, don't spawn a second):
+//         node conductor-daemon.js --send QUO-507
 // Stop:   ./conductor.sh --stop
 //
 // Required env: CLAUDE_CODE_OAUTH_TOKEN (subscription auth — hard requirement).
 // Optional env: CONDUCTOR_SESSION_NAME (default 'conductor'),
-//   CONDUCTOR_HEARTBEAT_MS (default 30000), plus the CONDUCTOR_* session tunables
+//   CONDUCTOR_HEARTBEAT_MS (default 30000), CONDUCTOR_INITIAL_PROMPT (fallback
+//   initial prompt when no argv is given), plus the CONDUCTOR_* session tunables
 //   in orchestrator/conductor-session.js.
 
 const { createConductorSession } = require("../orchestrator/conductor-session");
@@ -39,6 +44,21 @@ let heartbeat = null;
 
 function log(msg) {
   process.stdout.write(`[conductor-daemon] ${msg}\n`);
+}
+
+// ─── initial prompt resolution ──────────────────────────────────────────────────
+
+// Resolve the daemon's initial prompt: the joined argv words if any, else the
+// CONDUCTOR_INITIAL_PROMPT env fallback, else "" (bare idle daemon — no prompt).
+// argv wins over the env fallback. A leading "/" is deliberately NOT special-cased
+// here: sendPrompt() types the text verbatim into claude's TUI, which interprets a
+// leading slash as a skill/slash command and plain text as a prompt — exactly the
+// spawn-worker "the task arg becomes the initial prompt; a leading `/` runs a skill"
+// convention. Exported as a test seam.
+function resolveInitialPrompt(argv) {
+  const joined = Array.isArray(argv) ? argv.join(" ").trim() : "";
+  if (joined) return joined;
+  return (process.env.CONDUCTOR_INITIAL_PROMPT || "").trim();
 }
 
 // ─── env validation ───────────────────────────────────────────────────────────
@@ -120,6 +140,17 @@ async function main() {
   session.start();
   log("conductor session ready");
 
+  // Feed the initial prompt (a ticket ref, a task, or a `/skill` invocation)
+  // into the freshly-ready session, if one was given. Fire-and-forget: we
+  // sendPrompt() but deliberately do NOT ask()/readResponse() — the flow runs
+  // autonomously inside the session, and the daemon must not block its heartbeat
+  // reading a whole response back.
+  const initialPrompt = resolveInitialPrompt(process.argv.slice(2));
+  if (initialPrompt) {
+    log(`sending initial prompt (${initialPrompt.length} chars)`);
+    session.sendPrompt(initialPrompt);
+  }
+
   // Install graceful signal handlers only now that startup is done. session.start()
   // blocks the event loop on synchronous tmux polls (Atomics.wait), so a JS
   // SIGTERM/SIGINT listener registered earlier could not run until start()
@@ -155,6 +186,7 @@ module.exports = {
   validateEnv,
   healthCheck,
   reportFleetState,
+  resolveInitialPrompt,
   shutdown,
   main,
   // Test seam: lets a test inject a mock session (or read the current one)
@@ -166,6 +198,34 @@ module.exports = {
 };
 
 if (require.main === module) {
+  const argv = process.argv.slice(2);
+  if (argv[0] === "--send") {
+    // Reuse path: a daemon is already up, so instead of spawning a second one we
+    // attach to the existing session (keyed on the same CONDUCTOR_SESSION_NAME,
+    // per ConductorSession's idempotency) and type the prompt into it, then exit.
+    // No heartbeat, no session ownership — this is a one-shot send.
+    const prompt = resolveInitialPrompt(argv.slice(1));
+    const existing = createConductorSession();
+    try {
+      // conductor.sh routes here on PID-file liveness (the daemon *process* is
+      // up), but the prompt actually needs a live tmux *session*. A daemon whose
+      // session crashed (auto-restart is still a TODO) has a live PID yet a dead
+      // session — bailing here would silently drop the ticket. start() is
+      // idempotent: a no-op when the session is already up, else a fresh launch
+      // under the same session name (which the running daemon's heartbeat then
+      // re-sees as alive), so the ticket lands either way.
+      existing.start();
+      // Wait out any in-flight turn before typing — a prompt injected mid-turn
+      // is dropped or garbled by the TUI.
+      existing.waitUntilIdle();
+      existing.sendPrompt(prompt);
+    } catch (err) {
+      log(`FATAL: --send could not deliver to '${existing.name}': ${err.message}`);
+      process.exit(1);
+    }
+    log(`sent prompt to '${existing.name}' (${prompt.length} chars)`);
+    process.exit(0);
+  }
   main().catch((err) => {
     log(`FATAL: ${err.message}`);
     process.exit(1);
