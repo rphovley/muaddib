@@ -54,6 +54,13 @@
       "mockStateWrites": []
     },
     {
+      "id": "size-and-schedule",
+      "type": "script",
+      "script": "scripts/size-and-schedule.js",
+      "stateReads": ["ticket_identifier", "ticket_title"],
+      "stateWrites": ["recommend_split", "sub_issues"]
+    },
+    {
       "id": "implement-bug",
       "type": "claude-tui",
       "skill": "implement-bug",

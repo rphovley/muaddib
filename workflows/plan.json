@@ -72,6 +72,13 @@
       "skill": "sketch-finalize",
       "runIf": "state.needs_sketch === 'true' && state.sketch_status === 'ended'",
       "stateReads": ["sketch_file"]
+    },
+    {
+      "id": "size-and-schedule",
+      "type": "script",
+      "script": "scripts/size-and-schedule.js",
+      "stateReads": ["ticket_identifier", "ticket_title"],
+      "stateWrites": ["recommend_split", "sub_issues"]
     }
   ]
 }
