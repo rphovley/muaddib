@@ -101,6 +101,9 @@ TEST_SCRIPT='
     echo "=== services/test-ticket-source ==="
     node "$MUADDIB/services/__tests__/test-ticket-source.js"
 
+    echo "=== services/test-context-source ==="
+    node "$MUADDIB/services/__tests__/test-context-source.js"
+
     echo "=== services/test-notify ==="
     node "$MUADDIB/services/__tests__/test-notify.js"
 

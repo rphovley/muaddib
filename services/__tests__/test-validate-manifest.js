@@ -171,6 +171,62 @@ async function testCollisionIgnoresSelf() {
   assert(warnings.length === 0, 'a manifest must not collide with its own account entry');
 }
 
+async function testContextSourcesValid() {
+  const m = validManifest();
+  m.contextSources = [
+    { type: 'taskManager', source: 'linear' },
+    { type: 'decisionLog', source: 'builtin' },
+    { type: 'processDocs', source: 'builtin' },
+  ];
+  const res = validateManifest(m);
+  assert(res.ok, `valid contextSources should pass, got: ${res.errors.join('; ')}`);
+}
+
+async function testContextSourcesAbsentOk() {
+  const m = validManifest(); // no contextSources at all
+  const res = validateManifest(m);
+  assert(res.ok, 'absent contextSources is fine (optional)');
+}
+
+async function testContextSourcesSourceDefaultsBuiltin() {
+  const m = validManifest();
+  m.contextSources = [{ type: 'decisionLog' }]; // omitted source → builtin
+  const res = validateManifest(m);
+  assert(res.ok, `omitted source should default to builtin, got: ${res.errors.join('; ')}`);
+}
+
+async function testContextSourcesNotArray() {
+  const m = validManifest();
+  m.contextSources = { type: 'taskManager' };
+  const res = validateManifest(m);
+  assert(!res.ok, 'non-array contextSources should fail');
+  assert(hasErr(res, 'contextSources'), 'should flag contextSources');
+}
+
+async function testContextSourcesBadType() {
+  const m = validManifest();
+  m.contextSources = [{ type: 'slack', source: 'builtin' }];
+  const res = validateManifest(m);
+  assert(!res.ok, 'unknown context source type should fail');
+  assert(hasErr(res, 'invalid "type"'), `should flag the bad type, got: ${res.errors.join('; ')}`);
+}
+
+async function testContextSourcesBadSourceForType() {
+  const m = validManifest();
+  m.contextSources = [{ type: 'decisionLog', source: 'linear' }];
+  const res = validateManifest(m);
+  assert(!res.ok, 'source not resolvable for the type should fail');
+  assert(hasErr(res, 'invalid "source"'), `should flag the bad source, got: ${res.errors.join('; ')}`);
+}
+
+async function testContextSourcesEntryNotObject() {
+  const m = validManifest();
+  m.contextSources = ['taskManager'];
+  const res = validateManifest(m);
+  assert(!res.ok, 'a non-object entry should fail');
+  assert(hasErr(res, 'is not an object'), `should flag the non-object entry, got: ${res.errors.join('; ')}`);
+}
+
 async function testNonObject() {
   const res = validateManifest(null);
   assert(!res.ok, 'null manifest should fail');
@@ -214,6 +270,13 @@ async function testFileMissing() {
   await run('bad retryThreshold warns', testRetryThresholdWarns);
   await run('cross-project port collision warns', testPortCollisionAcrossProjects);
   await run('collision check ignores self', testCollisionIgnoresSelf);
+  await run('valid contextSources passes', testContextSourcesValid);
+  await run('absent contextSources is fine', testContextSourcesAbsentOk);
+  await run('contextSources source defaults to builtin', testContextSourcesSourceDefaultsBuiltin);
+  await run('non-array contextSources fails', testContextSourcesNotArray);
+  await run('bad contextSources type fails', testContextSourcesBadType);
+  await run('bad contextSources source-for-type fails', testContextSourcesBadSourceForType);
+  await run('non-object contextSources entry fails', testContextSourcesEntryNotObject);
   await run('non-object manifest fails', testNonObject);
   await run('valid manifest file round-trips', testFileRoundTrip);
   await run('missing manifest file fails', testFileMissing);
