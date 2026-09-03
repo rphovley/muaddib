@@ -268,11 +268,16 @@ async function runScriptStep(worker, step) {
   const env = { ...process.env, ...extraEnv, WORKER_INDEX: String(worker) };
   const runtime = scriptPath.endsWith('.js') ? 'node' : 'bash';
 
+  // Optional fixed CLI args from the workflow definition (e.g. size-and-schedule's
+  // --propose / --commit phase flag). Args are passed as an array (no shell), so
+  // they can never be reinterpreted as shell syntax.
+  const args = Array.isArray(step.args) ? step.args.map(String) : [];
+
   // Capture output to the host-mounted status dir (/var/run/agent-status).
   const logPath = path.join(AGENT_STATUS_DIR, `worker-${worker}-${step.id}.log`);
   const logFd = fs.openSync(logPath, 'w');
 
-  const r = spawnSync(runtime, [scriptPath], { stdio: ['ignore', logFd, logFd], env });
+  const r = spawnSync(runtime, [scriptPath, ...args], { stdio: ['ignore', logFd, logFd], env });
   fs.closeSync(logFd);
 
   // Echo to orchestrator stdout so it also appears in docker logs.

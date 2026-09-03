@@ -74,10 +74,45 @@
       "stateReads": ["sketch_file"]
     },
     {
-      "id": "size-and-schedule",
+      "id": "size-and-schedule-propose",
       "type": "script",
       "script": "scripts/size-and-schedule.js",
+      "args": ["--propose"],
       "stateReads": ["ticket_identifier", "ticket_title"],
+      "stateWrites": ["recommend_split", "sub_issues_plan"]
+    },
+    {
+      "id": "sizing-review-loop",
+      "type": "loop",
+      "runIf": "state.recommend_split === 'true'",
+      "minIterations": 1,
+      "maxIterations": 200,
+      "exitCondition": "state.sizing_confirm === 'dispatch' || state.sizing_confirm === 'tickets_only'",
+      "steps": [
+        {
+          "id": "confirm-sizing",
+          "type": "claude-tui",
+          "skill": "confirm-sizing",
+          "awaitsReview": "review",
+          "stateReads": ["ticket_identifier", "ticket_url"],
+          "stateWrites": ["sizing_confirm"]
+        },
+        {
+          "id": "adjust-sizing",
+          "type": "claude-tui",
+          "skill": "adjust-sizing",
+          "runIf": "state.sizing_confirm === 'adjust'",
+          "stateReads": ["ticket_identifier", "ticket_url"]
+        }
+      ]
+    },
+    {
+      "id": "size-and-schedule-commit",
+      "type": "script",
+      "script": "scripts/size-and-schedule.js",
+      "args": ["--commit"],
+      "runIf": "state.sizing_confirm === 'dispatch' || state.sizing_confirm === 'tickets_only'",
+      "stateReads": ["ticket_identifier", "ticket_title", "sizing_confirm"],
       "stateWrites": ["recommend_split", "sub_issues"]
     }
   ]

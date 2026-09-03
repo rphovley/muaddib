@@ -19,6 +19,8 @@ process.env.STATE_DIR = TMP;
 
 const {
   run,
+  runPropose,
+  runCommit,
   extractWorkStreamsSection,
   parseWorkStreams,
   computeEdges,
@@ -62,19 +64,33 @@ function readState(worker) {
   }
 }
 
+// Seed a worker-state key (the commit phase reads sizing_confirm from here).
+// Goes through the real state module so STATE_DIR=TMP is honored.
+const stateModule = require('../orchestrator/state');
+function stateModuleSet(worker, key, value) {
+  stateModule.set(worker, key, value);
+}
+
 // A fake ticket source recording sub-issue creates, blocking relations, and
 // comment posts. createSubIssue mints a deterministic child identifier per call.
 // `existingComments` seeds fetchComments so the idempotency path is testable.
-function fakeTicketSource({ name = 'github', prefix = 'muaddib', existingComments = { own: [], parent: [] } } = {}) {
+function fakeTicketSource({
+  name = 'github',
+  prefix = 'muaddib',
+  existingComments = { own: [], parent: [] },
+  markThrows = false,
+} = {}) {
   const created = [];
   const relations = [];
   const posts = [];
+  const dispatched = [];
   let n = 100;
   return {
     name,
     created,
     relations,
     posts,
+    dispatched,
     async fetchComments() {
       return existingComments;
     },
@@ -90,6 +106,10 @@ function fakeTicketSource({ name = 'github', prefix = 'muaddib', existingComment
     async postComment(id, body) {
       posts.push({ id, body });
       return { commentId: `c${posts.length}` };
+    },
+    async markReadyForDispatch(id) {
+      if (markThrows) throw new Error('label add failed');
+      dispatched.push(id);
     },
   };
 }
@@ -391,7 +411,7 @@ async function main() {
     const parentPosts = source.posts.filter((p) => p.id === 'muaddib#50');
     assert('one review comment on the parent', parentPosts.length === 1, `${parentPosts.length}`);
     const review = parentPosts[0].body;
-    assert('review is a ## Sizing & Scheduling comment', review.startsWith('## Sizing & Scheduling'));
+    assert('review is a ## Sub-issues created comment', review.startsWith('## Sub-issues created'));
     assert('review shows the size + confidence', /\*\*Size:\*\* L \(confidence: high\)/.test(review));
     assert('review lists sub-issues in order', new RegExp(`1\\. ${ids[0]} — Big feature — Schema migration`).test(review));
     assert('review lists the blocking relations', new RegExp(`- ${ids[0]} blocks ${ids[1]}`).test(review));
@@ -459,10 +479,10 @@ async function main() {
     assert('still one review on the parent', source.posts.filter((p) => p.id === 'muaddib#70').length === 1);
   });
 
-  await test('idempotency: an existing "## Sizing & Scheduling" comment → skip, no duplicates', async () => {
+  await test('idempotency: an existing "## Sub-issues created" comment → skip, no duplicates', async () => {
     const worker = 68;
     const source = fakeTicketSource({
-      existingComments: { own: [{ id: 'c1', body: '## Sizing & Scheduling\n\n**Size:** L (confidence: high)' }], parent: [] },
+      existingComments: { own: [{ id: 'c1', body: '## Sub-issues created\n\n**Size:** L (confidence: high)' }], parent: [] },
     });
     const res = await run({
       worker, repo: TMP, ticketId: 'muaddib#90', ticketTitle: 'Feature',
@@ -474,6 +494,36 @@ async function main() {
     assert('no relations re-wired', source.relations.length === 0);
     assert('no comments re-posted', source.posts.length === 0);
     assert('recommend_split stays true', readState(worker).recommend_split === 'true');
+  });
+
+  await test('idempotency: eager and commit dedup against each other (shared marker)', async () => {
+    // A ticket already decomposed by --commit ("## Sub-issues created") must not
+    // be re-decomposed by a later eager run (and vice versa).
+    const worker = 681;
+    const source = fakeTicketSource({
+      existingComments: { own: [{ id: 'c1', body: '## Sub-issues created\n\n**Size:** L' }], parent: [] },
+    });
+    const res = await run({
+      worker, repo: TMP, ticketId: 'muaddib#91', ticketTitle: 'Feature',
+      source, computeSizingSignal: fakeSizing(SPLIT), plan: PLAN,
+    });
+    assert('eager skips on the commit marker', res.status === 'skipped', res.status);
+    assert('no children re-created', source.created.length === 0);
+  });
+
+  await test('idempotency: a bare "## Sizing & Scheduling" preview does NOT block the eager path', async () => {
+    // The propose preview shares that header but creates no children, so eager
+    // must still decompose (mirrors the commit-side preview test).
+    const worker = 682;
+    const source = fakeTicketSource({
+      existingComments: { own: [{ id: 'c1', body: '## Sizing & Scheduling\n\n**Proposed sub-issues**' }], parent: [] },
+    });
+    const res = await run({
+      worker, repo: TMP, ticketId: 'muaddib#92', ticketTitle: 'Feature',
+      source, computeSizingSignal: fakeSizing(SPLIT), plan: PLAN,
+    });
+    assert('status scheduled (preview did not block)', res.status === 'scheduled', res.status);
+    assert('three children created', source.created.length === 3, `${source.created.length}`);
   });
 
   await test('split with an explicit dep → the override edge is wired (not the linear one)', async () => {
@@ -489,6 +539,158 @@ async function main() {
     assert('two relations', source.relations.length === 2, `${source.relations.length}`);
     assert('c1→c2 default', source.relations[0].blockerId === ids[0] && source.relations[0].blockedId === ids[1]);
     assert('c1→c3 override (not c2→c3)', source.relations[1].blockerId === ids[0] && source.relations[1].blockedId === ids[2]);
+  });
+
+  // ── propose phase (preview only, no children) ────────────────────────────────
+
+  await test('propose: posts the preview, creates NO children, writes recommend_split + plan', async () => {
+    const worker = 71;
+    const source = fakeTicketSource();
+    const res = await runPropose({
+      worker, repo: TMP, ticketId: 'muaddib#100', ticketTitle: 'Big feature',
+      source, computeSizingSignal: fakeSizing(SPLIT), plan: PLAN, context: CONTEXT_WITH_ITEMS,
+    });
+    assert('status proposed', res.status === 'proposed', res.status);
+    assert('no children created', source.created.length === 0);
+    assert('no relations wired', source.relations.length === 0);
+
+    const previews = source.posts.filter((p) => p.id === 'muaddib#100');
+    assert('one preview posted on the parent', previews.length === 1, `${previews.length}`);
+    const preview = previews[0].body;
+    assert('preview is a ## Sizing & Scheduling comment', preview.startsWith('## Sizing & Scheduling'));
+    assert('preview lists streams by name (no identifiers)', /Stream 1 — Schema migration/.test(preview));
+    assert('preview lists the planned edges by stream number', /Stream 1 blocks Stream 2/.test(preview));
+    assert('preview spells out the three choices', /needs adjustment/.test(preview));
+    assert('preview carries no child identifier', !/muaddib#10\d/.test(preview));
+
+    const st = readState(worker);
+    assert('recommend_split=true', st.recommend_split === 'true');
+    assert('sub_issues_plan persisted', /Schema migration/.test(st.sub_issues_plan || ''));
+    assert('sub_issues NOT written (nothing created)', st.sub_issues === undefined);
+  });
+
+  await test('propose: re-runs post a fresh preview (not idempotent — the adjust loop)', async () => {
+    const worker = 72;
+    const source = fakeTicketSource();
+    const args = {
+      worker, repo: TMP, ticketId: 'muaddib#101', ticketTitle: 'Big feature',
+      source, computeSizingSignal: fakeSizing(SPLIT), plan: PLAN,
+    };
+    await runPropose(args);
+    await runPropose(args);
+    assert('two previews posted across two rounds', source.posts.filter((p) => p.id === 'muaddib#101').length === 2);
+  });
+
+  await test('propose: recommendSplit=false → no-op, no preview', async () => {
+    const worker = 73;
+    const source = fakeTicketSource();
+    const res = await runPropose({
+      worker, repo: TMP, ticketId: 'muaddib#1', ticketTitle: 'T', source,
+      computeSizingSignal: fakeSizing({ configured: true, signal: { size: 'S', confidence: 'high', recommendSplit: false } }),
+      plan: PLAN,
+    });
+    assert('status skipped', res.status === 'skipped', res.status);
+    assert('no preview posted', source.posts.length === 0);
+    assert('recommend_split=false', readState(worker).recommend_split === 'false');
+  });
+
+  // ── commit phase (create children; dispatch only on the dispatch option) ─────
+
+  await test('commit (tickets_only): creates children + relations + created comment, no dispatch', async () => {
+    const worker = 74;
+    const source = fakeTicketSource();
+    stateModuleSet(worker, 'sizing_confirm', 'tickets_only');
+    const res = await runCommit({
+      worker, repo: TMP, ticketId: 'muaddib#110', ticketTitle: 'Big feature',
+      source, computeSizingSignal: fakeSizing(SPLIT), plan: PLAN, context: CONTEXT_WITH_ITEMS,
+    });
+    assert('status committed', res.status === 'committed', res.status);
+    assert('dispatched=false', res.dispatched === false);
+    assert('three children created', source.created.length === 3, `${source.created.length}`);
+    assert('two relations wired', source.relations.length === 2, `${source.relations.length}`);
+    assert('nothing marked ready-for-dispatch', source.dispatched.length === 0);
+
+    const parentPosts = source.posts.filter((p) => p.id === 'muaddib#110');
+    assert('one created comment on the parent', parentPosts.length === 1, `${parentPosts.length}`);
+    assert('created comment uses the ## Sub-issues created header', parentPosts[0].body.startsWith('## Sub-issues created'));
+    const ids = source.created.map((c) => c.identifier);
+    assert('created comment lists the child identifiers', new RegExp(`1\\. ${ids[0]} —`).test(parentPosts[0].body));
+
+    const st = readState(worker);
+    assert('recommend_split=true', st.recommend_split === 'true');
+    assert('sub_issues persisted as JSON array', st.sub_issues === JSON.stringify(ids));
+  });
+
+  await test('commit (dispatch): marks each created child ready-for-dispatch', async () => {
+    const worker = 75;
+    const source = fakeTicketSource();
+    stateModuleSet(worker, 'sizing_confirm', 'dispatch');
+    const res = await runCommit({
+      worker, repo: TMP, ticketId: 'muaddib#120', ticketTitle: 'Big feature',
+      source, computeSizingSignal: fakeSizing(SPLIT), plan: PLAN,
+    });
+    assert('status committed', res.status === 'committed', res.status);
+    assert('dispatched=true', res.dispatched === true);
+    const ids = source.created.map((c) => c.identifier);
+    assert('all three children marked ready-for-dispatch', source.dispatched.length === 3, `${source.dispatched.length}`);
+    assert('marked the created identifiers', JSON.stringify(source.dispatched) === JSON.stringify(ids));
+  });
+
+  await test('commit: opts.dispatch overrides state (explicit dispatch)', async () => {
+    const worker = 76;
+    const source = fakeTicketSource();
+    stateModuleSet(worker, 'sizing_confirm', 'tickets_only'); // state says no, opt says yes
+    const res = await runCommit({
+      worker, repo: TMP, ticketId: 'muaddib#125', ticketTitle: 'Big feature',
+      source, computeSizingSignal: fakeSizing(SPLIT), plan: PLAN, dispatch: true,
+    });
+    assert('dispatched=true from opts', res.dispatched === true);
+    assert('children were marked', source.dispatched.length === 3);
+  });
+
+  await test('commit (dispatch): a markReadyForDispatch failure is best-effort (children still created)', async () => {
+    const worker = 77;
+    const source = fakeTicketSource({ markThrows: true });
+    const res = await runCommit({
+      worker, repo: TMP, ticketId: 'muaddib#130', ticketTitle: 'Big feature',
+      source, computeSizingSignal: fakeSizing(SPLIT), plan: PLAN, dispatch: true,
+    });
+    assert('status committed (not thrown)', res.status === 'committed', res.status);
+    assert('three children still created', source.created.length === 3);
+    assert('none recorded dispatched (all throws)', source.dispatched.length === 0);
+    const ids = source.created.map((c) => c.identifier);
+    assert('sub_issues still persisted', readState(worker).sub_issues === JSON.stringify(ids));
+  });
+
+  await test('commit: idempotent on an existing "## Sub-issues created" comment', async () => {
+    const worker = 78;
+    const source = fakeTicketSource({
+      existingComments: { own: [{ id: 'c1', body: '## Sub-issues created\n\n**Size:** L' }], parent: [] },
+    });
+    const res = await runCommit({
+      worker, repo: TMP, ticketId: 'muaddib#140', ticketTitle: 'Feature',
+      source, computeSizingSignal: fakeSizing(SPLIT), plan: PLAN, dispatch: true,
+    });
+    assert('status skipped', res.status === 'skipped', res.status);
+    assert('reason already committed', /already committed/.test(res.reason));
+    assert('no children re-created', source.created.length === 0);
+    assert('nothing re-dispatched', source.dispatched.length === 0);
+    assert('recommend_split stays true', readState(worker).recommend_split === 'true');
+  });
+
+  await test('commit: a preview-only "## Sizing & Scheduling" comment does NOT block commit', async () => {
+    // The propose preview shares the "## Sizing & Scheduling" header; commit keys
+    // off "## Sub-issues created", so a preview alone must not read as committed.
+    const worker = 79;
+    const source = fakeTicketSource({
+      existingComments: { own: [{ id: 'c1', body: '## Sizing & Scheduling\n\n**Proposed sub-issues**' }], parent: [] },
+    });
+    const res = await runCommit({
+      worker, repo: TMP, ticketId: 'muaddib#150', ticketTitle: 'Feature',
+      source, computeSizingSignal: fakeSizing(SPLIT), plan: PLAN,
+    });
+    assert('status committed (preview did not block)', res.status === 'committed', res.status);
+    assert('three children created', source.created.length === 3);
   });
 
   // ─── results ────────────────────────────────────────────────────────────────
