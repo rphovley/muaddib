@@ -51,6 +51,20 @@ source_config() {
   )
 }
 
+# Source read-config.sh with REPO_ROOT forced to the fixture repo and echo the
+# exported autonomy level. Same subshell isolation as source_config; a `return 1`
+# from read-config.sh (invalid level) surfaces as a non-zero exit.
+source_autonomy() {
+  (
+    export MUADDIB_REPO="$1"
+    if source "$READ_CONFIG" >/dev/null 2>&1; then
+      printf '%s\n' "$MUADDIB_AUTONOMY_LEVEL"
+    else
+      exit 3
+    fi
+  )
+}
+
 # ─── tests ────────────────────────────────────────────────────────────────────
 
 test_default_linear() {
@@ -102,6 +116,31 @@ test_github_requires_both() {
   fi
 }
 
+test_autonomy_default_l0() {
+  # No autonomyLevel key → defaults to L0.
+  local tmp="$1"
+  write_manifest "$tmp" '{"projectName":"t"}'
+  local got; got=$(source_autonomy "$tmp")
+  [ "$got" = "L0" ] || { echo "expected 'L0', got '$got'"; return 1; }
+}
+
+test_autonomy_explicit() {
+  # An explicit valid level is exported verbatim.
+  local tmp="$1"
+  write_manifest "$tmp" '{"projectName":"t","autonomyLevel":"L2"}'
+  local got; got=$(source_autonomy "$tmp")
+  [ "$got" = "L2" ] || { echo "expected 'L2', got '$got'"; return 1; }
+}
+
+test_autonomy_invalid_fails() {
+  # A typo'd level must fail loud, not silently fall back to L0.
+  local tmp="$1"
+  write_manifest "$tmp" '{"projectName":"t","autonomyLevel":"L9"}'
+  if source_autonomy "$tmp" >/dev/null 2>&1; then
+    echo "expected sourcing to fail for invalid autonomyLevel"; return 1
+  fi
+}
+
 # ─── run ─────────────────────────────────────────────────────────────────────
 
 cd "$REPO_ROOT"
@@ -112,6 +151,9 @@ run_test "ticketSource=github + owner/repo → exported"     test_explicit_githu
 run_test "invalid ticketSource → sourcing fails"           test_invalid_source_fails
 run_test "github without owner/repo → sourcing fails"      test_github_requires_identifiers
 run_test "github with only owner → sourcing fails"         test_github_requires_both
+run_test "no autonomyLevel → L0"                           test_autonomy_default_l0
+run_test "autonomyLevel=L2 → exported"                     test_autonomy_explicit
+run_test "invalid autonomyLevel → sourcing fails"          test_autonomy_invalid_fails
 
 echo ""
 echo "$PASS/$((PASS + FAIL)) passed"

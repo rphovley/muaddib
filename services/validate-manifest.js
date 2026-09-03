@@ -33,6 +33,20 @@ const { readMuaddibConfig } = require('./muaddib-config');
 const { CONTEXT_SOURCE_SOURCES, VALID_CONTEXT_SOURCE_TYPES } = require('./context-source/sources');
 
 const VALID_TICKET_SOURCES = ['linear', 'github'];
+
+// Autonomy level — how much the Conductor may act on its own before escalating
+// to a human (see ticket muaddib#121 / the #120 reasoning loop). Declared in the
+// manifest so a project *sets* its own risk appetite rather than it being baked
+// into code. This module is the documented source of truth for the enum;
+// muaddib-config.js's readAutonomyLevel keeps a matching inline copy so it can
+// stay dependency-free (validate-manifest already requires muaddib-config, so a
+// back-require would cycle). Absent key defaults to "L0" (report-only), leaving
+// existing manifests unchanged.
+//   L0 — report-only (default): the Conductor never acts, only reports.
+//   L1 — answer low-risk/informational directly; escalate anything consequential.
+//   L2 — act on already-confirmed outcomes without re-asking.
+//   L3 — fully autonomous within .muaddib/goals.md budget/concurrency caps.
+const VALID_AUTONOMY_LEVELS = ['L0', 'L1', 'L2', 'L3'];
 const PORT_ROLES = ['api', 'db', 'sketch'];
 
 // Worker N binds `base + N` for N in 1..MUADDIB_MAX_WORKERS (bin/worker-alloc.sh
@@ -123,6 +137,17 @@ function validateManifest(config, opts = {}) {
     if (!isNonEmptyString(config.githubRepo)) {
       errors.push('"ticketSource":"github" requires "githubRepo"');
     }
+  }
+
+  // autonomyLevel — defaults to "L0" (report-only) when absent, matching
+  // read-config.sh's `// "L0"` and readAutonomyLevel(). Otherwise must be one of
+  // the declared levels; a typo should fail loud, not silently downgrade the
+  // Conductor's authority.
+  const autonomyLevel = config.autonomyLevel == null ? 'L0' : config.autonomyLevel;
+  if (!VALID_AUTONOMY_LEVELS.includes(autonomyLevel)) {
+    errors.push(
+      `invalid "autonomyLevel": ${JSON.stringify(config.autonomyLevel)} (must be one of: ${VALID_AUTONOMY_LEVELS.join(', ')})`
+    );
   }
 
   // workerPorts — no baked default anywhere (spawn-worker.sh errors at spawn
@@ -283,6 +308,7 @@ module.exports = {
   validateManifestFile,
   detectPortCollisions,
   VALID_TICKET_SOURCES,
+  VALID_AUTONOMY_LEVELS,
   VALID_CONTEXT_SOURCE_TYPES,
 };
 
