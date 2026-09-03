@@ -47,6 +47,9 @@ TEST_SCRIPT='
     echo "=== orchestrator/test-conductor-session ==="
     node "$MUADDIB/orchestrator/__tests__/test-conductor-session.js"
 
+    echo "=== orchestrator/test-conductor-loop ==="
+    node "$MUADDIB/orchestrator/__tests__/test-conductor-loop.js"
+
     echo "=== orchestrator/test-fleet-control ==="
     node "$MUADDIB/orchestrator/__tests__/test-fleet-control.js"
 
