@@ -169,6 +169,19 @@ const ISSUE_CREATE = `
   }
 `;
 
+// addBlockingRelation creates a native `blocks` relation. The relation is
+// directed: `issueId` is the SOURCE and `relatedIssueId` the TARGET, so a
+// `blocks` edge from blocker→blocked is exactly the edge getBlockingStatus reads
+// (blocker's `relations`→blocking includes blocked; blocked's
+// `inverseRelations`→blockedBy includes blocker).
+const ISSUE_RELATION_CREATE = `
+  mutation IssueRelationCreate($issueId: String!, $relatedIssueId: String!, $type: IssueRelationType!) {
+    issueRelationCreate(input: { issueId: $issueId, relatedIssueId: $relatedIssueId, type: $type }) {
+      success
+    }
+  }
+`;
+
 const WEBHOOK_CREATE = `
   mutation WebhookCreate($input: WebhookCreateInput!) {
     webhookCreate(input: $input) {
@@ -308,6 +321,33 @@ function createLinearSource(opts = {}) {
         blockedBy,
         blocking,
       };
+    },
+
+    // addBlockingRelation(blockerId, blockedId) — create a native `blocks`
+    // relation meaning "blockerId blocks blockedId". blockerId is the relation
+    // source and blockedId the target, so this is the exact edge getBlockingStatus
+    // reads back (blockedId's blockedBy gains blockerId; blockerId's blocking
+    // gains blockedId). Returns void; throws on !success, mirroring postComment /
+    // createSubIssue. Idempotent: a duplicate `blocks` relation (the edge already
+    // exists) is the state we wanted, so it's swallowed as a no-op rather than
+    // thrown — Linear rejects the duplicate with an "already exists" GraphQL
+    // error.
+    async addBlockingRelation(blockerId, blockedId) {
+      let data;
+      try {
+        data = await graphql(ISSUE_RELATION_CREATE, {
+          issueId: blockerId,
+          relatedIssueId: blockedId,
+          type: 'blocks',
+        });
+      } catch (err) {
+        if (/already/i.test(err && err.message)) return;
+        throw err;
+      }
+      const created = data && data.issueRelationCreate;
+      if (!created || !created.success) {
+        throw new Error(`issueRelationCreate failed — response: ${JSON.stringify(data)}`);
+      }
     },
 
     // registerWatch({ teamId, url, secret }) → { watchId }. Subscribes to issue

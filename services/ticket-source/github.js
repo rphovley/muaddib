@@ -113,6 +113,16 @@ function issueNumber(id) {
   return String(id == null ? '' : id).trim().replace(/^[^#]*#/, '');
 }
 
+// Companion to issueNumber: extract the repo portion of a `repo#number`
+// reference (`muaddib#34` → `muaddib`), or null when the id carries no repo
+// prefix (a bare `34` or `#34`). Lets the write path honor a cross-repo
+// reference the same way the read path (getBlockingStatus) surfaces one, instead
+// of silently resolving every id against the current repo.
+function issueRepo(id) {
+  const m = String(id == null ? '' : id).trim().match(/^([^#]+)#/);
+  return m ? m[1] : null;
+}
+
 // ─── source factory ────────────────────────────────────────────────────────────
 // `api` is the injectable REST client (so the interface can be unit-tested with a
 // fake, no network); defaults to the real githubRequest above. `owner`/`repo`
@@ -340,6 +350,55 @@ function createGithubSource(opts = {}) {
         blockedBy,
         blocking,
       };
+    },
+
+    // addBlockingRelation(blockerId, blockedId) — create a "blockerId blocks
+    // blockedId" dependency, the write side of the same issue-dependencies API
+    // getBlockingStatus reads. The relation is declared on the BLOCKED issue's
+    // `blocked_by` collection, and the write API keys on the blocker's numeric
+    // database `id` (not its issue number), so we first GET the blocker to read
+    // that raw integer id. Note normalizeIssue maps `id: node_id`, so we read the
+    // raw GET payload's `.id` here, not the normalized shape. Tolerates a
+    // '#'/'repo#' prefix on either id like the sibling methods, and — mirroring
+    // getBlockingStatus's cross-repo read — resolves each id against the repo its
+    // own prefix names (falling back to the current repo when unprefixed) rather
+    // than assuming both live in the current repo. Idempotent: re-adding an
+    // existing dependency is a no-op (see the tolerant catch below), like
+    // createSubIssue treats an already-established link. Returns void.
+    async addBlockingRelation(blockerId, blockedId) {
+      const blockerNumber = issueNumber(blockerId);
+      const blockedNumber = issueNumber(blockedId);
+      // An empty id can't address a specific issue — guard before building a
+      // bogus `/issues/` (list) path, which would GET an array and surface as a
+      // misleading "could not resolve blocker" (matching getBlockingStatus /
+      // fetchTicket's empty-id handling, but as a write it's a caller error).
+      if (!blockerNumber || !blockedNumber) {
+        throw new Error(
+          `addBlockingRelation requires both a blocker and a blocked issue id (got blocker=${JSON.stringify(blockerId)}, blocked=${JSON.stringify(blockedId)})`
+        );
+      }
+      const { owner, repo } = resolveRepo();
+      const blockerRepo = issueRepo(blockerId) || repo;
+      const blockedRepo = issueRepo(blockedId) || repo;
+      // Resolve the blocker's numeric database id — the dependencies write API
+      // keys on it, not the issue number.
+      const blocker = await api(`/repos/${owner}/${blockerRepo}/issues/${blockerNumber}`);
+      if (!blocker || blocker.id == null) {
+        throw new Error(`addBlockingRelation: could not resolve blocker ${blockerRepo}#${blockerNumber}`);
+      }
+      try {
+        await api(`/repos/${owner}/${blockedRepo}/issues/${blockedNumber}/dependencies/blocked_by`, {
+          method: 'POST',
+          body: { issue_id: blocker.id },
+        });
+      } catch (err) {
+        // Re-adding a dependency that already exists is the state we wanted, not
+        // a failure — GitHub rejects the duplicate (422) with an "already"
+        // message. Swallow that one case so the call is idempotent; re-throw
+        // anything else (bad repo, missing issue, auth).
+        if (/already/i.test(err && err.message)) return;
+        throw err;
+      }
     },
 
     async registerWatch() {

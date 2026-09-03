@@ -447,6 +447,141 @@ async function testGithubGetBlockingStatusRequiresOwnerRepo() {
   }
 }
 
+// ─── GitHub backend (addBlockingRelation) ───────────────────────────────────────
+
+async function testGithubAddBlockingRelationResolvesAndPosts() {
+  // "10 blocks 20": first GET resolves the blocker's numeric database id, then a
+  // POST declares it on the BLOCKED issue's blocked_by dependencies collection,
+  // keyed on that raw id (not the issue number). Returns void.
+  const api = fakeApi({
+    '/issues/20/dependencies/blocked_by': {}, // POST response (ignored)
+    '/repos/rphovley/muaddib/issues/10': { id: 12345, number: 10 }, // raw blocker payload
+  });
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  const res = await src.addBlockingRelation('10', '20');
+  assert.strictEqual(res, undefined);
+  assert.deepStrictEqual(api.calls[0], {
+    path: '/repos/rphovley/muaddib/issues/10',
+    method: 'GET',
+    body: undefined,
+  });
+  assert.deepStrictEqual(api.calls[1], {
+    path: '/repos/rphovley/muaddib/issues/20/dependencies/blocked_by',
+    method: 'POST',
+    body: { issue_id: 12345 },
+  });
+}
+
+async function testGithubAddBlockingRelationToleratesRepoHashPrefix() {
+  const api = fakeApi({
+    '/issues/20/dependencies/blocked_by': {},
+    '/repos/rphovley/muaddib/issues/10': { id: 12345 },
+  });
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  await src.addBlockingRelation('muaddib#10', 'muaddib#20');
+  assert.strictEqual(api.calls[0].path, '/repos/rphovley/muaddib/issues/10');
+  assert.strictEqual(api.calls[1].path, '/repos/rphovley/muaddib/issues/20/dependencies/blocked_by');
+}
+
+async function testGithubAddBlockingRelationThrowsWhenBlockerMissing() {
+  // The blocker GET resolves null (404) — there's no numeric id to key the
+  // dependency on, so throw before issuing the POST.
+  const api = fakeApi({ '/repos/rphovley/muaddib/issues/404': null });
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  await assert.rejects(() => src.addBlockingRelation('404', '20'), /could not resolve blocker/);
+  assert.strictEqual(api.calls.length, 1); // only the failed resolution GET, no POST
+}
+
+async function testGithubAddBlockingRelationRoundTrip() {
+  // A stateful double: addBlockingRelation records the edge on the blocked
+  // issue's blocked_by collection; getBlockingStatus reads it back through the
+  // same dependency endpoints — proving the relation is reflected end-to-end for
+  // both the blocked issue (gains a blocker) and the blocker (gains what it
+  // blocks). Blocker raw db ids are synthesized as 100000 + <number>.
+  const edges = []; // { blocker, blocked } issue numbers
+  const api = async (path, opts = {}) => {
+    const method = opts.method || 'GET';
+    let m = path.match(/\/issues\/(\d+)\/dependencies\/blocked_by/);
+    if (m && method === 'POST') {
+      edges.push({ blocker: Number(opts.body.issue_id) - 100000, blocked: Number(m[1]) });
+      return {};
+    }
+    if (m && method === 'GET') {
+      const n = Number(m[1]);
+      return edges
+        .filter((e) => e.blocked === n)
+        .map((e) => ({ number: e.blocker, title: `#${e.blocker}`, state: 'open' }));
+    }
+    m = path.match(/\/issues\/(\d+)\/dependencies\/blocking/);
+    if (m && method === 'GET') {
+      const n = Number(m[1]);
+      return edges
+        .filter((e) => e.blocker === n)
+        .map((e) => ({ number: e.blocked, title: `#${e.blocked}`, state: 'open' }));
+    }
+    m = path.match(/\/issues\/(\d+)$/); // blocker id resolution
+    if (m && method === 'GET') {
+      const n = Number(m[1]);
+      return { id: 100000 + n, number: n };
+    }
+    throw new Error(`unexpected ${method} ${path}`);
+  };
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  await src.addBlockingRelation('10', '20');
+  const blockedStatus = await src.getBlockingStatus('20');
+  assert.strictEqual(blockedStatus.blocked, true);
+  assert.deepStrictEqual(blockedStatus.blockedBy.map((b) => b.identifier), ['muaddib#10']);
+  const blockerStatus = await src.getBlockingStatus('10');
+  assert.deepStrictEqual(blockerStatus.blocking.map((b) => b.identifier), ['muaddib#20']);
+}
+
+async function testGithubAddBlockingRelationRejectsEmptyId() {
+  // An empty id on either side can't address an issue — throw before any request
+  // rather than building a bogus `/issues/` (list) path.
+  const api = fakeApi({});
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  await assert.rejects(() => src.addBlockingRelation('', '20'), /requires both a blocker and a blocked/);
+  await assert.rejects(() => src.addBlockingRelation('10', ''), /requires both a blocker and a blocked/);
+  assert.strictEqual(api.calls.length, 0); // nothing issued
+}
+
+async function testGithubAddBlockingRelationResolvesEachIdsRepo() {
+  // A cross-repo reference: the blocker lives in `other`, the blocked in the
+  // current repo. Each id is resolved against the repo its own prefix names —
+  // symmetric with getBlockingStatus's cross-repo read — not both against the
+  // current repo.
+  const api = fakeApi({
+    '/repos/rphovley/other/issues/10': { id: 999 },
+    '/issues/20/dependencies/blocked_by': {},
+  });
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  await src.addBlockingRelation('other#10', '20');
+  assert.strictEqual(api.calls[0].path, '/repos/rphovley/other/issues/10');
+  assert.strictEqual(api.calls[1].path, '/repos/rphovley/muaddib/issues/20/dependencies/blocked_by');
+  assert.deepStrictEqual(api.calls[1].body, { issue_id: 999 });
+}
+
+async function testGithubAddBlockingRelationIdempotentOnDuplicate() {
+  // Re-adding an existing dependency: GitHub rejects the duplicate POST with an
+  // "already exists" 422. That's the state we wanted, so it's swallowed as a
+  // no-op (void) rather than surfaced as a failure.
+  const api = fakeApi({
+    '/repos/rphovley/muaddib/issues/10': { id: 12345 },
+    '/issues/20/dependencies/blocked_by': new Error(
+      'GitHub REST 422 /…: dependency already exists'
+    ),
+  });
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  assert.strictEqual(await src.addBlockingRelation('10', '20'), undefined);
+  // A non-duplicate write error still surfaces.
+  const api2 = fakeApi({
+    '/repos/rphovley/muaddib/issues/10': { id: 12345 },
+    '/issues/20/dependencies/blocked_by': new Error('GitHub REST 404 /…: Not Found'),
+  });
+  const src2 = createGithubSource({ api: api2, owner: 'rphovley', repo: 'muaddib' });
+  await assert.rejects(() => src2.addBlockingRelation('10', '20'), /404/);
+}
+
 // ─── Linear backend (getBlockingStatus) ─────────────────────────────────────────
 
 async function testLinearGetBlockingStatusMapsRelations() {
@@ -517,11 +652,108 @@ async function testLinearGetBlockingStatusMissingIssue() {
   });
 }
 
+// ─── Linear backend (addBlockingRelation) ───────────────────────────────────────
+
+async function testLinearAddBlockingRelationBuildsMutation() {
+  // "QUO-1 blocks QUO-2": blockerId is the relation source (issueId), blockedId
+  // the target (relatedIssueId), type 'blocks'. Returns void.
+  const gql = fakeGraphql({ IssueRelationCreate: { issueRelationCreate: { success: true } } });
+  const src = createLinearSource({ graphql: gql });
+  const res = await src.addBlockingRelation('QUO-1', 'QUO-2');
+  assert.strictEqual(res, undefined);
+  assert.deepStrictEqual(gql.calls[0].variables, {
+    issueId: 'QUO-1',
+    relatedIssueId: 'QUO-2',
+    type: 'blocks',
+  });
+}
+
+async function testLinearAddBlockingRelationThrowsOnFailure() {
+  const gql = fakeGraphql({ IssueRelationCreate: { issueRelationCreate: { success: false } } });
+  const src = createLinearSource({ graphql: gql });
+  await assert.rejects(() => src.addBlockingRelation('QUO-1', 'QUO-2'), /issueRelationCreate failed/);
+}
+
+async function testLinearAddBlockingRelationIdempotentOnDuplicate() {
+  // A duplicate `blocks` relation: Linear rejects it with an "already exists"
+  // GraphQL error. The edge we wanted already exists, so the call is a no-op
+  // (void) rather than a throw.
+  const gql = fakeGraphql({
+    IssueRelationCreate: () => {
+      throw new Error('Linear GraphQL error: {"message":"Relation already exists"}');
+    },
+  });
+  const src = createLinearSource({ graphql: gql });
+  assert.strictEqual(await src.addBlockingRelation('QUO-1', 'QUO-2'), undefined);
+  // An unrelated GraphQL error still surfaces.
+  const gql2 = fakeGraphql({
+    IssueRelationCreate: () => {
+      throw new Error('Linear GraphQL 500: internal error');
+    },
+  });
+  const src2 = createLinearSource({ graphql: gql2 });
+  await assert.rejects(() => src2.addBlockingRelation('QUO-1', 'QUO-2'), /internal error/);
+}
+
+async function testLinearAddBlockingRelationRoundTrip() {
+  // A stateful double: addBlockingRelation records the directed edge;
+  // getBlockingStatus reads it back through relations/inverseRelations — proving
+  // the created relation is reflected end-to-end for both the blocked issue
+  // (gains a blocker) and the blocker (gains what it blocks).
+  const edges = []; // { blocker, blocked }
+  const meta = {
+    'QUO-1': { title: 'Blocker', state: { name: 'Todo', type: 'unstarted' } },
+    'QUO-2': { title: 'Blocked', state: { name: 'Todo', type: 'unstarted' } },
+  };
+  const gql = async (query, variables) => {
+    if (query.includes('IssueRelationCreate')) {
+      edges.push({ blocker: variables.issueId, blocked: variables.relatedIssueId, type: variables.type });
+      return { issueRelationCreate: { success: true } };
+    }
+    if (query.includes('BlockingStatus')) {
+      const id = variables.id;
+      // relations = edges where id is the source (blocker) → what id blocks.
+      const relations = edges
+        .filter((e) => e.blocker === id)
+        .map((e) => ({ type: e.type, relatedIssue: { identifier: e.blocked, ...meta[e.blocked] } }));
+      // inverseRelations = edges where id is the target (blocked) → id's blockers.
+      const inverse = edges
+        .filter((e) => e.blocked === id)
+        .map((e) => ({ type: e.type, issue: { identifier: e.blocker, ...meta[e.blocker] } }));
+      return { issue: { relations: { nodes: relations }, inverseRelations: { nodes: inverse } } };
+    }
+    throw new Error(`unexpected query:\n${query}`);
+  };
+  const src = createLinearSource({ graphql: gql });
+  await src.addBlockingRelation('QUO-1', 'QUO-2');
+  const blockedStatus = await src.getBlockingStatus('QUO-2');
+  assert.strictEqual(blockedStatus.blocked, true);
+  assert.deepStrictEqual(blockedStatus.blockedBy.map((b) => b.identifier), ['QUO-1']);
+  const blockerStatus = await src.getBlockingStatus('QUO-1');
+  assert.deepStrictEqual(blockerStatus.blocking.map((b) => b.identifier), ['QUO-2']);
+}
+
 // ─── raw backend (getBlockingStatus) ────────────────────────────────────────────
 
 async function testRawGetBlockingStatusUnsupported() {
   const src = getTicketSource('raw');
   assert.deepStrictEqual(await src.getBlockingStatus('anything'), {
+    supported: false,
+    blocked: false,
+    blockedBy: [],
+    blocking: [],
+  });
+}
+
+// ─── raw backend (addBlockingRelation) ──────────────────────────────────────────
+
+async function testRawAddBlockingRelationNoop() {
+  // No external backend, so nothing to create — resolves to void, and the
+  // backend still can't speak to blocking afterward (getBlockingStatus stays
+  // unsupported/empty). A stateful double would be meaningless; assert the no-op.
+  const src = getTicketSource('raw');
+  assert.strictEqual(await src.addBlockingRelation('a', 'b'), undefined);
+  assert.deepStrictEqual(await src.getBlockingStatus('a'), {
     supported: false,
     blocked: false,
     blockedBy: [],
@@ -687,10 +919,22 @@ async function main() {
     ['github: getBlockingStatus tolerates a repo# prefix', testGithubGetBlockingStatusToleratesRepoHashPrefix],
     ['github: getBlockingStatus short-circuits an empty id', testGithubGetBlockingStatusEmptyIdShortCircuits],
     ['github: getBlockingStatus requires GITHUB_OWNER/GITHUB_REPO', testGithubGetBlockingStatusRequiresOwnerRepo],
+    ['github: addBlockingRelation resolves blocker id then POSTs blocked_by', testGithubAddBlockingRelationResolvesAndPosts],
+    ['github: addBlockingRelation tolerates a repo# prefix', testGithubAddBlockingRelationToleratesRepoHashPrefix],
+    ['github: addBlockingRelation throws when blocker unresolved', testGithubAddBlockingRelationThrowsWhenBlockerMissing],
+    ['github: addBlockingRelation rejects an empty id', testGithubAddBlockingRelationRejectsEmptyId],
+    ['github: addBlockingRelation resolves each id against its own repo', testGithubAddBlockingRelationResolvesEachIdsRepo],
+    ['github: addBlockingRelation is idempotent on a duplicate', testGithubAddBlockingRelationIdempotentOnDuplicate],
+    ['github: addBlockingRelation round-trips through getBlockingStatus', testGithubAddBlockingRelationRoundTrip],
     ['linear: getBlockingStatus maps blocks relations (ignores others)', testLinearGetBlockingStatusMapsRelations],
     ['linear: getBlockingStatus blocked=false when blocker terminal', testLinearGetBlockingStatusBlockedFalseWhenBlockerTerminal],
     ['linear: getBlockingStatus empty-supported on missing issue', testLinearGetBlockingStatusMissingIssue],
+    ['linear: addBlockingRelation builds issueRelationCreate mutation', testLinearAddBlockingRelationBuildsMutation],
+    ['linear: addBlockingRelation throws on !success', testLinearAddBlockingRelationThrowsOnFailure],
+    ['linear: addBlockingRelation is idempotent on a duplicate', testLinearAddBlockingRelationIdempotentOnDuplicate],
+    ['linear: addBlockingRelation round-trips through getBlockingStatus', testLinearAddBlockingRelationRoundTrip],
     ['raw: getBlockingStatus is unsupported', testRawGetBlockingStatusUnsupported],
+    ['raw: addBlockingRelation is a void no-op', testRawAddBlockingRelationNoop],
     ['fetchTicket: returns the issue with id var', testFetchTicketReturnsIssue],
     ['fetchTicket: null when issue missing', testFetchTicketNullWhenMissing],
     ['postComment: builds commentCreate mutation', testPostCommentBuildsMutation],
