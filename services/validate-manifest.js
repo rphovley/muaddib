@@ -27,6 +27,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { readMuaddibConfig } = require('./muaddib-config');
+// Import the constants from the dependency-free ./context-source/sources module
+// rather than ./context-source itself, so validation doesn't load the whole
+// registry (ticket-source clients, goals, decision-log) just for two constants.
+const { CONTEXT_SOURCE_SOURCES, VALID_CONTEXT_SOURCE_TYPES } = require('./context-source/sources');
 
 const VALID_TICKET_SOURCES = ['linear', 'github'];
 const PORT_ROLES = ['api', 'db', 'sketch'];
@@ -218,6 +222,43 @@ function validateManifest(config, opts = {}) {
     warnings.push(`"retryThreshold" should be a non-negative integer, got ${JSON.stringify(config.retryThreshold)} (falling back to 3)`);
   }
 
+  // contextSources — optional. When present, an array of { type, source } pairs
+  // the fleet pulls context from before planning/implementing (see
+  // services/context-source). Each entry's `type` must be a known context-source
+  // type and its `source` must be one the registry can resolve for that type —
+  // the same "must be a known backend" contract ticketSource enforces above.
+  // Mirrors the registry's own errors so a bad manifest fails the same way a
+  // bad getContextSource() call would.
+  if (config.contextSources != null) {
+    if (!Array.isArray(config.contextSources)) {
+      errors.push(
+        `"contextSources" must be an array of { type, source }, got ${JSON.stringify(config.contextSources)}`
+      );
+    } else {
+      config.contextSources.forEach((entry, i) => {
+        const at = `contextSources[${i}]`;
+        if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+          errors.push(`${at} is not an object ({ type, source })`);
+          return;
+        }
+        const validSources = CONTEXT_SOURCE_SOURCES[entry.type];
+        if (!validSources) {
+          errors.push(
+            `${at} invalid "type": ${JSON.stringify(entry.type)} (must be one of: ${VALID_CONTEXT_SOURCE_TYPES.join(', ')})`
+          );
+          return;
+        }
+        // `source` defaults to "builtin" when omitted, matching getContextSource.
+        const source = entry.source == null ? 'builtin' : entry.source;
+        if (!validSources.includes(source)) {
+          errors.push(
+            `${at} invalid "source": ${JSON.stringify(entry.source)} for type "${entry.type}" (must be one of: ${validSources.join(', ')})`
+          );
+        }
+      });
+    }
+  }
+
   for (const w of detectPortCollisions(config, opts.otherProjects)) warnings.push(w);
 
   return { ok: errors.length === 0, errors, warnings };
@@ -242,6 +283,7 @@ module.exports = {
   validateManifestFile,
   detectPortCollisions,
   VALID_TICKET_SOURCES,
+  VALID_CONTEXT_SOURCE_TYPES,
 };
 
 // Gather the { projectName, dispatchPort, workerPorts } of every OTHER onboarded

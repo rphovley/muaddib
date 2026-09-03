@@ -180,6 +180,56 @@ as an issue number. `muaddib.sh --raw` (and its thin alias `muaddib-task.sh`)
 skips detection and forces `raw`, for task text that could itself look like a
 ticket reference (e.g. free-form text containing `QUO-123`).
 
+## Context source config
+
+Beyond the ticket backend, a project can declare the *other* sources of truth
+the fleet should pull context from before planning/implementing — the task
+manager, a decision log, process docs. These are declared in
+`.muaddib/manifest.json`'s optional `contextSources` array, each entry a
+`{ type, source }` pair, and resolved through the same manifest-driven registry
+pattern as `ticketSource` (`services/context-source`, `getContextSource(type,
+source)`):
+
+```json
+"contextSources": [
+  { "type": "taskManager", "source": "linear" },
+  { "type": "decisionLog", "source": "builtin" },
+  { "type": "processDocs", "source": "builtin" }
+]
+```
+
+The three builtins, and the `source` values each `type` accepts:
+
+- **`taskManager`** (`linear` | `github` | `builtin`) — a thin wrapper reusing
+  the `ticket-source` backends. `builtin` (the default when `source` is omitted)
+  uses whatever `ticketSource` already resolves to; `linear`/`github` bind that
+  specific backend.
+- **`decisionLog`** (`builtin`) — wraps muaddib's own Decision Log
+  (`orchestrator/decision-log.js#search`, scoped to the ticket). A single
+  builtin — muaddib's internal store, not a swappable external system.
+- **`processDocs`** (`builtin`) — wraps the Goal Context (`.muaddib/goals.md`
+  via `services/goals.js#readGoals`, strictly read-only). **"Not configured" is
+  a first-class non-error state**, mirroring the sizing hook's `{ configured:
+  false }` — smaller teams often keep nothing formal here, so an absent/empty
+  `goals.md` yields `{ configured: false }` rather than an error (and never
+  bootstraps the default template).
+
+Every source satisfies one deliberately narrow interface so callers treat them
+uniformly:
+
+```
+name                              string identifier
+gatherContext(ticketId, ticket)   -> { summary, items: [{ title, url?, body }] }
+```
+
+`contextSources` is optional and validated by `services/validate-manifest.js`:
+each entry's `type` must be a known context-source type and its `source` must be
+one the registry can resolve for that type, or the manifest fails validation
+with a clear per-entry error — the same "must be a known backend" contract
+`ticketSource` enforces. (`requirementsAndIntent`/`linkFollow` is a separate
+concern; "Existing Behavior" — CLAUDE.md + `Explore` — deliberately stays out of
+this registry, since it's not an external system with swappable implementations.)
+
 ## Preview server config (`services/start-servers.js`, `dispatch-daemon.js`)
 
 Both read `.muaddib/manifest.json` directly (not through `read-config.sh`, since they
