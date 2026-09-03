@@ -3,13 +3,17 @@
 # write, rings the terminal bell, and fires a macOS notification when any worker
 # transitions to DONE, BLOCKED, WAITING_FOR_INPUT, or FAILED.
 set -euo pipefail
-STATUS_DIR="$(cd "$(dirname "$0")/.." && pwd)/status"
+FLEET_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+STATUS_DIR="$FLEET_DIR/status"
 
-declare -A prev_states
+# Plain indexed array, not `declare -A` — labels are always "worker-N", and
+# indexed arrays work on bash 3.2 (macOS's default /usr/bin/env bash), unlike
+# associative arrays which need bash 4+.
+prev_states=()
 
 notify() {
-    local title="$1" body="$2"
-    osascript -e "display notification \"$body\" with title \"$title\" sound name \"Glass\"" 2>/dev/null || true
+    local worker_idx="$1" title="$2" body="$3"
+    "$FLEET_DIR/services/notify.sh" "$worker_idx" "$title" "$body" 2>/dev/null || true
 }
 
 while true; do
@@ -24,20 +28,21 @@ while true; do
             state_line="$(cat "$f" 2>/dev/null || echo "")"
             state_word="$(cut -d' ' -f1 <<<"$state_line")"
             label="$(basename "${f%.state}")"
-            prev="${prev_states[$label]:-}"
+            idx="${label#worker-}"
+            prev="${prev_states[$idx]:-}"
 
             if [ "$state_word" != "$prev" ]; then
                 case "$state_word" in
-                    DONE)              notify "muaddib: $label" "Task complete ✓" ;;
-                    DONE_FINAL)        notify "muaddib: $label" "PR merged — tearing down ✓" ;;
-                    BLOCKED)           notify "muaddib: $label" "Waiting for your input" ;;
-                    WAITING_FOR_INPUT) notify "muaddib: $label" "Questions posted to Linear — needs answers" ;;
-                    FEEDBACK)         notify "muaddib: $label" "Preview live — waiting for feedback" ;;
-                    FEEDBACK_WORKING) notify "muaddib: $label" "Addressing PR feedback" ;;
-                    AWAITING_REVIEW)   notify "muaddib: $label" "A workflow step needs your input" ;;
-                    FAILED)            notify "muaddib: $label" "Worker failed — check logs" ;;
+                    DONE)              notify "$idx" "muaddib: $label" "Task complete ✓" ;;
+                    DONE_FINAL)        notify "$idx" "muaddib: $label" "PR merged — tearing down ✓" ;;
+                    BLOCKED)           notify "$idx" "muaddib: $label" "Waiting for your input" ;;
+                    WAITING_FOR_INPUT) notify "$idx" "muaddib: $label" "Questions posted to Linear — needs answers" ;;
+                    FEEDBACK)         notify "$idx" "muaddib: $label" "Preview live — waiting for feedback" ;;
+                    FEEDBACK_WORKING) notify "$idx" "muaddib: $label" "Addressing PR feedback" ;;
+                    AWAITING_REVIEW)   notify "$idx" "muaddib: $label" "A workflow step needs your input" ;;
+                    FAILED)            notify "$idx" "muaddib: $label" "Worker failed — check logs" ;;
                 esac
-                prev_states[$label]="$state_word"
+                prev_states[$idx]="$state_word"
             fi
 
             case "$state_word" in
