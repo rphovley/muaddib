@@ -6,6 +6,11 @@
 #   ./conductor.sh "look into the flaky preview"  — same, with free-form task text
 #   ./conductor.sh /some-skill ...      — a leading `/` runs a skill (typed verbatim into the TUI)
 #   ./conductor.sh --bg [ticket-or-task]— start detached (PID in .muaddib-conductor.pid)
+#   ./conductor.sh --bg --attach [t-o-t]— start detached, then exec into the real tmux session
+#   ./conductor.sh --watch              — read-only mirror of an already-running session
+#                                          (second terminal, watch every command live; no
+#                                          keys sent, doesn't steal the controlling attach —
+#                                          the point of staying in manual/report-only autonomy)
 #   ./conductor.sh --stop               — SIGTERM the daemon (kills its claude session)
 # When a daemon is already running, a ticket/task is sent to the existing session
 # (reuse) instead of spawning a second competing daemon.
@@ -25,7 +30,7 @@ DAEMON="$FLEET_DIR/services/conductor-daemon.js"
 PID_FILE="${CONDUCTOR_PID_FILE:-$FLEET_DIR/.muaddib-conductor.pid}"
 
 usage() {
-  echo "usage: conductor.sh [--bg|--stop] [--attach] [--dry-run] [ticket-or-task]" >&2
+  echo "usage: conductor.sh [--bg|--stop] [--attach|--watch] [--dry-run] [ticket-or-task]" >&2
 }
 
 # True iff a daemon we started is still running (matches --stop's liveness check).
@@ -62,12 +67,31 @@ attach_when_ready() {
   echo "conductor.sh: session '$session' did not come up within 60s — not attaching (watch: tmux attach -t $session once it is)" >&2
 }
 
+# Same wait-then-exec shape as attach_when_ready(), but a *read-only* mirror
+# (`tmux attach -r`) instead of a controlling client: for an operator who wants
+# to watch every command the Conductor runs, live, from a second terminal —
+# without stealing keys/focus from whoever (or whatever script) is actually
+# driving the session. This is what makes staying in manual/report-only
+# autonomy workable: you see each Bash/tool call as it happens and can decide
+# on the fly, instead of only getting the post-hoc Decision Log entry.
+watch_when_ready() {
+  [ "${MUADIB_NO_ATTACH:-0}" = "1" ] && return 0
+  local session="${CONDUCTOR_SESSION_NAME:-conductor}"
+  local i
+  for i in $(seq 1 60); do
+    tmux has-session -t "$session" 2>/dev/null && exec tmux attach -r -t "$session"
+    sleep 1
+  done
+  echo "conductor.sh: session '$session' did not come up within 60s — not watching (watch: tmux attach -r -t $session once it is)" >&2
+}
+
 # ─── argument parsing ───────────────────────────────────────────────────────────
 # Extract leading flags; everything after them is the ticket/task. Mirrors
 # muaddib.sh's leading-flag-then-argument shape.
 BG=0
 STOP=0
 ATTACH=0
+WATCH=0
 DRY_RUN=0
 [ "${CONDUCTOR_DRY_RUN:-0}" = "1" ] && DRY_RUN=1
 
@@ -76,12 +100,20 @@ while [ "$#" -gt 0 ]; do
     --bg)      BG=1; shift ;;
     --stop)    STOP=1; shift ;;
     --attach)  ATTACH=1; shift ;;
+    --watch)   WATCH=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --)        shift; break ;;
     -*)        usage; exit 1 ;;
     *)         break ;;
   esac
 done
+
+# --attach (controlling) and --watch (read-only) both end the process by
+# exec-ing into the same tmux session — mutually exclusive on one invocation.
+if [ "$ATTACH" -eq 1 ] && [ "$WATCH" -eq 1 ]; then
+  echo "conductor.sh: --attach and --watch are mutually exclusive" >&2
+  exit 1
+fi
 
 # The ticket/task is everything left, joined (`$*`) so multi-word task text passed
 # as separate words still works; a single ticket token joins to itself.
@@ -90,11 +122,12 @@ TICKET="$*"
 # ─── routing decision ───────────────────────────────────────────────────────────
 # Resolve mode + prompt purely from the flags, the ticket, and whether a daemon is
 # already up — no side effects yet, so --dry-run can print it and exit.
-#   stop  — tear the daemon down
-#   reuse — daemon already up + a ticket/task → send it to the existing session
-#   fg    — no daemon, foreground, with a ticket/task
-#   bg    — no daemon, backgrounded, with a ticket/task
-#   start — no ticket/task → bare idle daemon (foreground or, with --bg, detached)
+#   stop      — tear the daemon down
+#   reuse     — daemon already up + a ticket/task → send it to the existing session
+#   fg        — no daemon, foreground, with a ticket/task
+#   bg        — no daemon, backgrounded, with a ticket/task
+#   watchonly — no ticket/task, --watch, a daemon already up → just mirror it
+#   start     — no ticket/task → bare idle daemon (foreground or, with --bg, detached)
 PROMPT=""
 if [ "$STOP" -eq 1 ]; then
   MODE="stop"
@@ -106,6 +139,16 @@ elif [ -n "$TICKET" ]; then
     MODE="bg"
   else
     MODE="fg"
+  fi
+elif [ "$WATCH" -eq 1 ]; then
+  # Bare `--watch`, no ticket: attach a read-only mirror to whatever Conductor
+  # session is already running (e.g. one muaddib.sh dispatched earlier) rather
+  # than starting a new bare idle daemon — watching implies one already exists.
+  if daemon_alive; then
+    MODE="watchonly"
+  else
+    echo "conductor.sh: --watch with no ticket/task needs an already-running daemon (none found — start one first, e.g. via muaddib.sh)" >&2
+    exit 1
   fi
 else
   MODE="start"
@@ -127,9 +170,10 @@ source "$FLEET_DIR/bin/load-env-file.sh"
 CONDUCTOR_SECRETS_FILE="${CONDUCTOR_SECRETS_FILE:-$HOME/.muaddib/conductor-secrets.env}"
 muaddib_load_env_file "$CONDUCTOR_SECRETS_FILE"
 
-# Tearing the daemon down (--stop) is pure process management — it needs no
-# subscription token, so a missing one must not block a stop.
-if [ "$MODE" != "stop" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+# Tearing the daemon down (--stop) is pure process management, and mirroring an
+# already-running session (watchonly) reads an existing tmux pane — neither
+# needs a subscription token, so a missing one must not block either.
+if [ "$MODE" != "stop" ] && [ "$MODE" != "watchonly" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
   echo "conductor.sh: CLAUDE_CODE_OAUTH_TOKEN is not set (expected in the shell env or $CONDUCTOR_SECRETS_FILE)" >&2
   exit 1
 fi
@@ -153,6 +197,7 @@ case "$MODE" in
     node "$DAEMON" --send "$TICKET"
     echo "→ sent to running conductor-daemon (PID $(cat "$PID_FILE"))"
     [ "$ATTACH" -eq 1 ] && attach_when_ready
+    [ "$WATCH" -eq 1 ] && watch_when_ready
     ;;
   bg)
     clear_stale_session
@@ -160,10 +205,15 @@ case "$MODE" in
     echo $! > "$PID_FILE"
     echo "→ conductor-daemon started (PID $(cat "$PID_FILE"), logs: $FLEET_DIR/.muaddib-conductor.log)"
     [ "$ATTACH" -eq 1 ] && attach_when_ready
+    [ "$WATCH" -eq 1 ] && watch_when_ready
     ;;
   fg)
     clear_stale_session
     exec node "$DAEMON" "$TICKET"
+    ;;
+  watchonly)
+    # Daemon (and its tmux session) already exist — no dispatch, just mirror.
+    watch_when_ready
     ;;
   start)
     if [ "$BG" -eq 1 ]; then
