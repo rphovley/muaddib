@@ -95,6 +95,9 @@ TEST_SCRIPT='
     echo "=== scripts/test-gather-context ==="
     node "$MUADDIB/scripts/test-gather-context.js"
 
+    echo "=== scripts/test-size-and-schedule ==="
+    node "$MUADDIB/scripts/test-size-and-schedule.js"
+
     echo "=== scripts/test-muaddib-dispatch ==="
     bash "$MUADDIB/scripts/test-muaddib-dispatch.sh"
 

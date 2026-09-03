@@ -13,6 +13,7 @@
 //   node ticket-cli.js post-comment <id>                <  body.md   -> prints commentId
 //   node ticket-cli.js mention <handle>                 -> prints the @mention markup
 //   node ticket-cli.js create-sub-issue <parentId> <title>  <  desc.md  -> prints child JSON
+//   node ticket-cli.js add-blocking-relation <blockerId> <blockedId>     -> exit 0 (no stdout)
 //
 // `id` / `parentId` is the source-neutral identifier the worker stores in state
 // (ticket_identifier, e.g. "QUO-274" for Linear or "muaddib#37" for GitHub) —
@@ -21,15 +22,18 @@
 // Comment/description bodies are read from STDIN, not argv: they're large,
 // multi-line markdown, so stdin sidesteps arg-quoting and escaping bugs.
 //
-// raw source: the write subcommands (post-comment, create-sub-issue) are a
-// clean no-op — print nothing, exit 0 — since a raw ticket has no backend to
-// write to (raw.createSubIssue() throws by design; short-circuiting keeps that
-// from surfacing as an error the skills must special-case). fetch and mention
-// work on raw as-is.
+// raw source: the write subcommands (post-comment, create-sub-issue,
+// add-blocking-relation) are a clean no-op — print nothing, exit 0 — since a raw
+// ticket has no backend to write to (raw.createSubIssue() throws by design;
+// short-circuiting keeps that from surfacing as an error the skills must
+// special-case; raw.addBlockingRelation() is itself a no-op, but skipping early
+// matches the other writes and needs no id resolution). fetch and mention work
+// on raw as-is.
 
 const USAGE =
   'usage: ticket-cli.js fetch <id> | post-comment <id> (body on stdin) | ' +
-  'mention <handle> | create-sub-issue <parentId> <title> (description on stdin)\n';
+  'mention <handle> | create-sub-issue <parentId> <title> (description on stdin) | ' +
+  'add-blocking-relation <blockerId> <blockedId>\n';
 
 // Read all of stdin as a UTF-8 string. Resolves '' if stdin is empty/closed.
 //
@@ -109,6 +113,19 @@ async function run({ argv = [], source, readBody = readStdin, stdout = process.s
       const description = await readBody();
       const child = await source.createSubIssue(parentId, title, description);
       stdout.write(`${JSON.stringify(child)}\n`);
+      return 0;
+    }
+
+    case 'add-blocking-relation': {
+      // Both ids are on argv (no stdin), so — unlike post-comment /
+      // create-sub-issue — there's nothing to read; still short-circuit raw
+      // early to match the other write subcommands (raw.addBlockingRelation is
+      // itself a no-op, but skipping keeps the raw path uniform). "blockerId
+      // blocks blockedId": blockerId is the relation source, blockedId the
+      // target — the exact edge getBlockingStatus reads back.
+      const [blockerId, blockedId] = args;
+      if (isRaw) return 0;
+      await source.addBlockingRelation(blockerId, blockedId);
       return 0;
     }
 
