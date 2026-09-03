@@ -8,13 +8,14 @@
 // implementation.
 //
 // This script runs in three modes (muaddib#107 split the eager one-shot into a
-// human-confirmation checkpoint for the plan-only flow):
+// human-confirmation checkpoint that every workflow now runs):
 //   - eager  (no flag, the default): size → create sub-issues → wire relations →
 //            scoped context → post a "## Sub-issues created" comment (the same
 //            children-created marker --commit posts, so the two dedup against each
-//            other). The pre-#107 behavior, still used by feature.json / bug.json
-//            where an autonomous worker decomposes and keeps going with no human
-//            gate.
+//            other). The pre-#107 one-shot: decompose and keep going with no human
+//            gate. No workflow wires it any more — feature.json / bug.json / plan.json
+//            all use the --propose → confirm → --commit flow below — but it is kept
+//            as a manual CLI mode for an autonomous, un-gated decomposition.
 //   - --propose: size → post a "## Sizing & Scheduling" PREVIEW (planned streams
 //            + planned edges, NO sub-issues created) for the operator to confirm.
 //   - --commit:  size → create sub-issues → wire relations → scoped context →
@@ -22,8 +23,8 @@
 //            "create tickets and dispatch" (worker state sizing_confirm=dispatch),
 //            also mark each child ready-for-dispatch so the dispatch daemon
 //            picks it up. Idempotent on its "## Sub-issues created" marker.
-// plan.json wires --propose → a confirm/adjust loop → --commit around this script.
-// No mode implements or commits git.
+// feature.json / bug.json / plan.json each wire --propose → a confirm/adjust loop →
+// --commit around this script. No mode implements or commits git.
 //
 // Mirrors scripts/gather-context.js: a deterministic, unit-tested JS `script`
 // step (pure functions + a thin CLI wrapper), reserving claude-tui skills for
@@ -513,7 +514,8 @@ async function createChildren(ctx) {
 
 // run(opts) — EAGER phase (default, no flag). Size → create children → wire
 // relations → scoped context → post the "## Sub-issues created" comment. The
-// pre-#107 one-shot, still used by feature.json / bug.json. Idempotent on the
+// pre-#107 one-shot; no workflow wires it any more (they use --propose/--commit),
+// kept as a manual CLI mode for an un-gated decomposition. Idempotent on the
 // "## Sub-issues created" marker — the SAME marker runCommit posts, so eager and
 // commit dedup against each other: a ticket already decomposed by either route is
 // never re-decomposed into a duplicate set of children by the other. (The propose
