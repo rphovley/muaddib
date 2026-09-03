@@ -98,6 +98,9 @@ TEST_SCRIPT='
     echo "=== scripts/test-size-and-schedule ==="
     node "$MUADDIB/scripts/test-size-and-schedule.js"
 
+    echo "=== scripts/test-sizing-hook ==="
+    node "$MUADDIB/scripts/test-sizing-hook.js"
+
     echo "=== scripts/test-muaddib-dispatch ==="
     bash "$MUADDIB/scripts/test-muaddib-dispatch.sh"
 

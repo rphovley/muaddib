@@ -352,7 +352,9 @@ async function run(opts = {}) {
     return noop('sizing hook error');
   }
 
-  // No hook configured (muaddib's own self-hosting steady state) → nothing to do.
+  // No hook configured (a project that ships no .muaddib/hooks/sizing.*) → nothing
+  // to do. muaddib itself now ships an active sizing.js (muaddib#118), so its own
+  // self-hosting resolves a real signal rather than this not-configured branch.
   if (!signalResult || signalResult.configured !== true) return noop('sizing not configured');
   const signal = signalResult.signal || {};
   if (signal.recommendSplit !== true) return noop('recommendSplit=false');
