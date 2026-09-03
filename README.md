@@ -181,6 +181,31 @@ as an issue number. `muaddib.sh --raw` (and its thin alias `muaddib-task.sh`)
 skips detection and forces `raw`, for task text that could itself look like a
 ticket reference (e.g. free-form text containing `QUO-123`).
 
+## Autonomy level config
+
+How much the Conductor may act on its own — before escalating a decision to a
+human — is declared in `.muaddib/manifest.json`, not hard-coded:
+
+```json
+"autonomyLevel": "L0"
+```
+
+The four levels:
+
+- **`L0`** — report-only (the default when the key is absent, preserving
+  existing behavior): the Conductor never acts, it only reports.
+- **`L1`** — answer low-risk/informational requests directly; escalate anything
+  consequential.
+- **`L2`** — act on already-confirmed outcomes without re-asking.
+- **`L3`** — fully autonomous within the budget/concurrency caps in
+  `.muaddib/goals.md`.
+
+`read-config.sh` validates it and fails loud on anything else, exporting it as
+`MUADDIB_AUTONOMY_LEVEL`. Node consumers read the same value through
+`readAutonomyLevel(repoDir)` in `services/muaddib-config.js`, which applies the
+identical `L0` default and fail-loud contract. `VALID_AUTONOMY_LEVELS`
+(`services/validate-manifest.js`) is the source of truth for the enum.
+
 ## Context source config
 
 Beyond the ticket backend, a project can declare the *other* sources of truth

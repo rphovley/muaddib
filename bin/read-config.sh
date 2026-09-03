@@ -109,3 +109,22 @@ if [ "$MUADDIB_TICKET_SOURCE" = "github" ] && { [ -z "$MUADDIB_GITHUB_OWNER" ] |
     echo "muaddib: $_MUADDIB_CONFIG sets \"ticketSource\":\"github\" but is missing \"githubOwner\"/\"githubRepo\"" >&2
     return 1 2>/dev/null || exit 1
 fi
+
+# Conductor autonomy level. Committed in the manifest so a project *declares* how
+# much the Conductor may act on its own before escalating to a human (see
+# muaddib#121). Default "L0" (report-only) keeps existing manifests unchanged.
+# Validated here — a typo'd level should fail loud, not silently downgrade the
+# Conductor's authority (matches the ticketSource case above). Levels: L0
+# report-only, L1 answer low-risk/informational directly, L2 act on confirmed
+# outcomes, L3 fully autonomous within .muaddib/goals.md caps.
+# `//` would also swallow an explicit `false` into "L0"; match the JS validator,
+# which only defaults null/absent and rejects `false`, by defaulting only null.
+MUADDIB_AUTONOMY_LEVEL="$(jq -r 'if .autonomyLevel == null then "L0" else .autonomyLevel end' "$_MUADDIB_CONFIG")"
+case "$MUADDIB_AUTONOMY_LEVEL" in
+    L0|L1|L2|L3) ;;
+    *)
+        echo "muaddib: $_MUADDIB_CONFIG has invalid \"autonomyLevel\": \"$MUADDIB_AUTONOMY_LEVEL\" (must be \"L0\", \"L1\", \"L2\", or \"L3\")" >&2
+        return 1 2>/dev/null || exit 1
+        ;;
+esac
+export MUADDIB_AUTONOMY_LEVEL
