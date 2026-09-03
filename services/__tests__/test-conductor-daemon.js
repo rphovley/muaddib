@@ -19,6 +19,9 @@
 // testResolveInitialPromptEnvFallback — CONDUCTOR_INITIAL_PROMPT used when argv empty
 // testResolveInitialPromptArgvWins    — argv takes precedence over the env fallback
 // testResolveInitialPromptEmpty       — no argv, no env → ""
+// testSetGetLoopSeam                  — _setLoop/_getLoop inject and read the loop
+// testShutdownStopsLoop               — shutdown() stops the reasoning loop and
+//                                       clears it, alongside the session
 
 const fs = require("fs");
 const os = require("os");
@@ -251,6 +254,49 @@ async function testResolveInitialPromptEmpty() {
   }
 }
 
+// ─── reasoning-loop wiring ──────────────────────────────────────────────────
+// The loop itself is covered end-to-end in orchestrator/test-conductor-loop.js;
+// here we only prove the daemon's seam and shutdown path drive it.
+
+async function testSetGetLoopSeam() {
+  const fake = { start() {}, stop() {}, rescan() {} };
+  daemon._setLoop(fake);
+  try {
+    if (daemon._getLoop() !== fake) throw new Error("_getLoop should return the injected loop");
+  } finally {
+    daemon._setLoop(null);
+  }
+}
+
+async function testShutdownStopsLoop() {
+  // shutdown() ends with process.exit(0); stub it so the test survives and can
+  // assert the loop (and session) were torn down first.
+  const stopped = { loop: false, session: false };
+  daemon._setLoop({
+    start() {},
+    rescan() {},
+    stop() { stopped.loop = true; },
+  });
+  daemon._setSession({ name: "conductor-test", isAlive: () => true, stop() { stopped.session = true; } });
+
+  const realExit = process.exit;
+  let exitCode = null;
+  process.exit = (code) => { exitCode = code; };
+  try {
+    daemon.shutdown();
+  } finally {
+    process.exit = realExit;
+  }
+
+  if (!stopped.loop) throw new Error("shutdown() must stop the reasoning loop");
+  if (!stopped.session) throw new Error("shutdown() must stop the session");
+  if (daemon._getLoop() !== null) throw new Error("shutdown() must clear the loop reference");
+  if (exitCode !== 0) throw new Error(`shutdown() should exit 0, got ${exitCode}`);
+
+  daemon._setLoop(null);
+  daemon._setSession(null);
+}
+
 function restore(key, prev) {
   if (prev === undefined) delete process.env[key];
   else process.env[key] = prev;
@@ -271,6 +317,8 @@ async function main() {
     ["resolveInitialPrompt: CONDUCTOR_INITIAL_PROMPT fallback", testResolveInitialPromptEnvFallback],
     ["resolveInitialPrompt: argv wins over env fallback", testResolveInitialPromptArgvWins],
     ["resolveInitialPrompt: empty argv + no env → \"\"", testResolveInitialPromptEmpty],
+    ["_setLoop/_getLoop seam injects and reads the loop", testSetGetLoopSeam],
+    ["shutdown() stops and clears the reasoning loop", testShutdownStopsLoop],
   ];
 
   let passed = 0;
