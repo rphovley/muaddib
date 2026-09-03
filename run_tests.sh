@@ -80,6 +80,9 @@ TEST_SCRIPT='
     echo "=== orchestrator/test-worker-input ==="
     node "$MUADDIB/orchestrator/__tests__/test-worker-input.js"
 
+    echo "=== orchestrator/test-fleet-control-cli ==="
+    node "$MUADDIB/orchestrator/__tests__/test-fleet-control-cli.js"
+
     echo "=== scripts/test-read-config ==="
     bash "$MUADDIB/scripts/test-read-config.sh"
 
