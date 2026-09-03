@@ -21,6 +21,8 @@ Read `/tmp/ticket-${WORKER_INDEX:-0}.json`. Extract the `title`, `description`, 
 
 ## Step 2 — Read codebase context
 
+If `.muaddib/context.md` exists, read it first — the `gather-context` step aggregates the project's declared sources of truth (task manager, decision log, process docs) into it before this step runs, so it is the fastest way to pick up prior decisions and process constraints that bear on the plan. It may be absent (no `contextSources` configured, or nothing gathered) — that is fine; proceed without it.
+
 Read `CLAUDE.md` (root). Identify which project(s) the ticket touches, then read the relevant project-level `CLAUDE.md`. Explore files most likely to be affected — use `find` and `grep` to locate controllers, services, database files, and frontend components. Read enough to understand existing patterns.
 
 ## Step 3 — Write a draft plan to `.muaddib/plan.md`

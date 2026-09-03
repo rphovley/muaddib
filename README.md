@@ -230,6 +230,36 @@ with a clear per-entry error — the same "must be a known backend" contract
 concern; "Existing Behavior" — CLAUDE.md + `Explore` — deliberately stays out of
 this registry, since it's not an external system with swappable implementations.)
 
+### Context gathering (`## Context`)
+
+The `gather-context` step (`scripts/gather-context.js`) turns the declared
+`contextSources` into durable, discoverable context on the ticket. It runs after
+`fetch-ticket` and before `analyze-ticket` in the `feature`/`bug`/`plan`
+workflows (`feature-fast` deliberately skips planning, so it has no gather step).
+For each configured source it calls `gatherContext(ticketId, ticket)` — reusing
+the ticket object `fetch-ticket` already wrote to `/tmp/ticket-${WORKER_INDEX}.json`,
+so `taskManager` needs no refetch — aggregates the results, and:
+
+- posts them to the ticket under a searchable **`## Context`** header, mirroring
+  the `## Plan` / `## Sketch` convention. An aggregate that exceeds a backend's
+  comment size limit is split on source-section boundaries into
+  **`## Context (n/m)`** parts (`services/context-comments.js#splitIntoParts`);
+- writes the same markdown to **`.muaddib/context.md`** for same-run downstream
+  steps (`analyze-ticket`, `implement`, `implement-bug` all read it when present);
+- records `context_status` (`posted` | `empty` | `skipped`) to worker state.
+
+It is **idempotent**: a re-run or resumed worker whose ticket already carries a
+`## Context` comment does not re-post — it just hydrates `.muaddib/context.md`
+from the existing comment(s) and records `skipped`. Read-back collects every
+`## Context (n/m)` part by index and, when the current ticket has none, falls
+back to the **parent** ticket's `## Context`
+(`services/context-comments.js#resolveContext`) — the same own→parent precedence
+`fetch-ticket` uses for `## Plan`, and which it now also applies to hydrate
+`.muaddib/context.md`. (Copying a parent's context *slice* into each child at
+scheduling time is a later sub-issue; only the read-back parent fallback is built
+here.) Read-back goes through `TicketSource.fetchComments(id)` →
+`{ own, parent }`, since `fetchTicket()` returns no comments.
+
 ## Preview server config (`services/start-servers.js`, `dispatch-daemon.js`)
 
 Both read `.muaddib/manifest.json` directly (not through `read-config.sh`, since they

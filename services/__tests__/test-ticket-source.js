@@ -733,6 +733,87 @@ async function testLinearAddBlockingRelationRoundTrip() {
   assert.deepStrictEqual(blockerStatus.blocking.map((b) => b.identifier), ['QUO-2']);
 }
 
+// ─── fetchComments (read-back seam) ──────────────────────────────────────────────
+
+async function testGithubFetchCommentsOwnOnly() {
+  // No "Part of #" back-reference in the body → own comments only, parent [].
+  const api = fakeApi({
+    '/issues/34/comments': [{ id: 1, body: '## Context\n\nx' }, { id: 2, body: 'review' }],
+    '/repos/rphovley/muaddib/issues/34': { number: 34, body: 'a standalone issue, no parent' },
+  });
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  const res = await src.fetchComments('34');
+  assert.deepStrictEqual(res.own, [{ id: 1, body: '## Context\n\nx' }, { id: 2, body: 'review' }]);
+  assert.deepStrictEqual(res.parent, []);
+}
+
+async function testGithubFetchCommentsFollowsParentBackReference() {
+  // A child carrying "Part of #7" → the parent's comments are read back too.
+  const api = fakeApi({
+    '/issues/34/comments': [{ id: 1, body: 'child comment' }],
+    '/repos/rphovley/muaddib/issues/34': { number: 34, body: 'Part of #7\n\nchild body' },
+    '/issues/7/comments': [{ id: 9, body: '## Context\n\nparent ctx' }],
+  });
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  const res = await src.fetchComments('34');
+  assert.deepStrictEqual(res.own, [{ id: 1, body: 'child comment' }]);
+  assert.deepStrictEqual(res.parent, [{ id: 9, body: '## Context\n\nparent ctx' }]);
+}
+
+async function testGithubFetchCommentsParentDetectionDegrades() {
+  // The issue-body GET (for parent detection) fails → own comments still stand.
+  const api = fakeApi({
+    '/issues/34/comments': [{ id: 1, body: 'child comment' }],
+    '/repos/rphovley/muaddib/issues/34': new Error('GitHub REST 500'),
+  });
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  const res = await src.fetchComments('34');
+  assert.deepStrictEqual(res.own, [{ id: 1, body: 'child comment' }]);
+  assert.deepStrictEqual(res.parent, []);
+}
+
+async function testGithubFetchCommentsEmptyId() {
+  const src = createGithubSource({ api: fakeApi({}), owner: 'o', repo: 'r' });
+  assert.deepStrictEqual(await src.fetchComments(''), { own: [], parent: [] });
+}
+
+async function testLinearFetchCommentsOwnAndParent() {
+  const gql = fakeGraphql({
+    FetchComments: {
+      issue: {
+        comments: { nodes: [{ id: 'c1', body: '## Context\n\nown' }, { id: 'c2', body: 'review' }] },
+        parent: { comments: { nodes: [{ id: 'p1', body: '## Context\n\nparent' }] } },
+      },
+    },
+  });
+  const src = createLinearSource({ graphql: gql });
+  const res = await src.fetchComments('QUO-1');
+  assert.deepStrictEqual(gql.calls[0].variables, { id: 'QUO-1' });
+  assert.deepStrictEqual(res.own, [{ id: 'c1', body: '## Context\n\nown' }, { id: 'c2', body: 'review' }]);
+  assert.deepStrictEqual(res.parent, [{ id: 'p1', body: '## Context\n\nparent' }]);
+}
+
+async function testLinearFetchCommentsNoParent() {
+  const gql = fakeGraphql({
+    FetchComments: { issue: { comments: { nodes: [{ id: 'c1', body: 'hi' }] }, parent: null } },
+  });
+  const src = createLinearSource({ graphql: gql });
+  const res = await src.fetchComments('QUO-1');
+  assert.deepStrictEqual(res.own, [{ id: 'c1', body: 'hi' }]);
+  assert.deepStrictEqual(res.parent, []);
+}
+
+async function testLinearFetchCommentsMissingIssue() {
+  const gql = fakeGraphql({ FetchComments: { issue: null } });
+  const src = createLinearSource({ graphql: gql });
+  assert.deepStrictEqual(await src.fetchComments('QUO-404'), { own: [], parent: [] });
+}
+
+async function testRawFetchCommentsEmpty() {
+  const src = getTicketSource('raw');
+  assert.deepStrictEqual(await src.fetchComments('anything'), { own: [], parent: [] });
+}
+
 // ─── raw backend (getBlockingStatus) ────────────────────────────────────────────
 
 async function testRawGetBlockingStatusUnsupported() {
@@ -933,6 +1014,14 @@ async function main() {
     ['linear: addBlockingRelation throws on !success', testLinearAddBlockingRelationThrowsOnFailure],
     ['linear: addBlockingRelation is idempotent on a duplicate', testLinearAddBlockingRelationIdempotentOnDuplicate],
     ['linear: addBlockingRelation round-trips through getBlockingStatus', testLinearAddBlockingRelationRoundTrip],
+    ['github: fetchComments returns own comments, parent [] when no back-ref', testGithubFetchCommentsOwnOnly],
+    ['github: fetchComments follows a "Part of #" parent back-reference', testGithubFetchCommentsFollowsParentBackReference],
+    ['github: fetchComments degrades to own-only if parent detection fails', testGithubFetchCommentsParentDetectionDegrades],
+    ['github: fetchComments short-circuits an empty id', testGithubFetchCommentsEmptyId],
+    ['linear: fetchComments returns own + parent comments', testLinearFetchCommentsOwnAndParent],
+    ['linear: fetchComments parent [] when issue has no parent', testLinearFetchCommentsNoParent],
+    ['linear: fetchComments empty on a missing issue', testLinearFetchCommentsMissingIssue],
+    ['raw: fetchComments is empty (no thread)', testRawFetchCommentsEmpty],
     ['raw: getBlockingStatus is unsupported', testRawGetBlockingStatusUnsupported],
     ['raw: addBlockingRelation is a void no-op', testRawAddBlockingRelationNoop],
     ['fetchTicket: returns the issue with id var', testFetchTicketReturnsIssue],

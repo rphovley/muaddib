@@ -57,6 +57,13 @@ const rawSource = {
     return { commentId: null };
   },
 
+  // No comment thread on a raw ticket (see fetch-ticket.js's raw branch) — there
+  // is nothing to read back, so both own and parent are empty. Shaped like the
+  // other backends ({ own, parent }) so read-back callers need no raw-specific branch.
+  async fetchComments() {
+    return { own: [], parent: [] };
+  },
+
   // Pure string helper — same shape regardless of backend, no reason to differ.
   mentionUser(handle) {
     const h = String(handle == null ? '' : handle).trim().replace(/^@+/, '');

@@ -10,6 +10,13 @@
       "stateWrites": ["ticket_identifier", "ticket_url", "ticket_title", "plan_status"]
     },
     {
+      "id": "gather-context",
+      "type": "script",
+      "script": "scripts/gather-context.js",
+      "stateReads": ["ticket_identifier", "ticket_url"],
+      "stateWrites": ["context_status"]
+    },
+    {
       "id": "analyze-ticket",
       "type": "claude-tui",
       "skill": "analyze-ticket",

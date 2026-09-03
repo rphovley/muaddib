@@ -16,6 +16,14 @@
 //   graphql(query, variables)                   raw client escape hatch (backend-specific)
 //   verifySignature(rawBody, header, secret)    validate an inbound webhook signature
 //   fetchTicket(id)                          -> the ticket object (or null)
+//   fetchComments(id)                        -> { own, parent }, each a { id, body }[]
+//                                               the issue's own comment thread plus its
+//                                               parent's (parent [] when none). The generic
+//                                               read-back seam — fetchTicket() returns no
+//                                               comments, so consumers that scan for a
+//                                               "## Plan"/"## Context" comment (idempotency,
+//                                               .muaddib/context.md hydration) go through here.
+//                                               raw has no thread (both []).
 //   pollIssues()                             -> (poll mode) the open issues, normalized like fetchTicket
 //   postComment(id, body)                    -> { commentId }
 //   mentionUser(handle)                      -> comment-body markup that notifies handle
