@@ -23,8 +23,10 @@ implemented (and reviewed) as their own tickets — typically `L`/`XL`. A single
 cohesive change, however big, is not a split candidate.
 
 Set `confidence` to how sure you are of this assessment given what the ticket
-and context actually tell you: `high` when the scope is clear, `low` when the
-ticket is vague enough that you are largely guessing.
+and context actually tell you: `high` when the scope is clear and well-specified,
+`medium` when the scope is mostly clear but some parts are underspecified or you
+are inferring intent, and `low` when the ticket is vague enough that you are
+largely guessing.
 
 If, and only if, there are questions that genuinely block sizing — information a
 human must supply before the scope can be judged — list them as short strings in

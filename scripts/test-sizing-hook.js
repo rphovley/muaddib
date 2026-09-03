@@ -9,7 +9,7 @@
 // still called), and that the name handed to the createSession factory is unique
 // per call and never the shared 'conductor' default.
 
-const { run } = require('../.muaddib/hooks/sizing.example');
+const { run } = require('../.muaddib/hooks/sizing');
 
 // ─── harness ──────────────────────────────────────────────────────────────────
 
@@ -102,6 +102,47 @@ async function main() {
     assert('size extracted from surrounding prose', sig.size === 'L', JSON.stringify(sig));
     assert('recommendSplit extracted', sig.recommendSplit === true);
     assert('blockingQuestions extracted', Array.isArray(sig.blockingQuestions) && sig.blockingQuestions[0] === 'which API?');
+  });
+
+  await test('echoed prompt JSON before the answer → last balanced object wins', async () => {
+    // ConductorSession hands back the echoed prompt (which can carry JSON from the
+    // ticket body / gathered context) BEFORE the model's answer, so a first-match
+    // would return that echoed blob. extractJsonObject must return the FINAL object.
+    const { factory } = fakeSessionFactory({
+      reply: [
+        '## Project context',
+        '{"unrelated":"config from context.md","size":"XL"}',
+        '## Response format',
+        '{"size":"S","confidence":"high","recommendSplit":false}',
+      ].join('\n'),
+    });
+    const sig = await run(baseOpts({ createSession: factory }));
+    assert('returned the model answer, not the echoed context JSON', sig.size === 'S', JSON.stringify(sig));
+    assert('did not leak the echoed object fields', sig.unrelated === undefined, JSON.stringify(sig));
+  });
+
+  await test('cached ticket id mismatches requested id → live-fetches the right ticket', async () => {
+    const { factory, calls } = fakeSessionFactory({
+      reply: '{"size":"M","confidence":"high","recommendSplit":false}',
+    });
+    let fetchedId = null;
+    const ticketSource = {
+      fetchTicket: async (id) => {
+        fetchedId = id;
+        return { identifier: id, title: 'Right ticket', description: 'the real body' };
+      },
+    };
+    const sig = await run(baseOpts({
+      createSession: factory,
+      // Cache holds a DIFFERENT ticket than the one requested (muaddib#117).
+      ticket: { identifier: 'other#999', title: 'Wrong ticket', description: 'stale body' },
+      ticketSource,
+    }));
+    assert('fell back to a live fetch for the requested id', fetchedId === 'muaddib#117', String(fetchedId));
+    assert('sized the fetched ticket, not the stale cache',
+      calls.asked[0].prompt === 'T=Right ticket B=the real body C=some gathered context',
+      calls.asked[0].prompt);
+    assert('signal parsed', sig.size === 'M', JSON.stringify(sig));
   });
 
   await test('no JSON object in the reply → run rejects', async () => {

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 'use strict';
-// EXAMPLE sizing hook (`.muaddib/hooks/sizing.example.js`) — a reference
+// muaddib's ACTIVE sizing hook (`.muaddib/hooks/sizing.js`) — a live
 // implementation of the well-known `.muaddib/hooks/sizing(.js|.sh)` hook that
 // orchestrator/sizing-signal.js#findSizingHook discovers and runs as
 // `node <hook> <ticketId>` (ticket id at process.argv[2], also env
@@ -9,21 +9,27 @@
 //   { size, confidence, recommendSplit, blockingQuestions? }
 // See orchestrator/sizing-signal.js#validateSignal for the exact contract.
 //
-// IMPORTANT — why this ships as `.example.js`, NOT `sizing.js`: muaddib self-hosts
-// against its own checkout, and findSizingHook only matches the exact names
-// `sizing.js` / `sizing.sh`. Shipping a live hook at that path would make
-// computeSizingSignal discover and RUN it for muaddib's own tickets — breaking the
-// first-class `{ configured: false }` invariant sizing-signal.js documents (and
-// spinning up an unwanted ~90s ConductorSession per ticket, plus the
-// scripts/size-and-schedule.js dispatch path). The `.example.js` suffix keeps this
-// off the discovery glob: muaddib stays `{ configured: false }`, and a real
-// consuming project opts in by copying this to its own `.muaddib/hooks/sizing.js`.
+// SELF-HOSTING — muaddib now sizes its OWN tickets for real (muaddib#118): this
+// ships at the exact `sizing.js` name findSizingHook matches, so muaddib self-
+// hosting flips from `{ configured: false }` to a real signal and the
+// scripts/size-and-schedule.js split path (muaddib#106) finally runs against a
+// genuine sizing decision — the whole point of the #106/#107 dogfooding effort.
+// The ~90s-per-ticket ConductorSession cost is deliberately accepted: sizing runs
+// once per ticket (not per request), so it is not a hot path. muaddib's own
+// tickets no longer resolve `{ configured: false }`; that non-error state still
+// covers any project that ships no sizing hook (see sizing-signal.js).
+//
+// DOUBLES AS THE REFERENCE: this file is also the copyable reference other
+// projects adapt — a consuming project drops its own `.muaddib/hooks/sizing.js`
+// (this exact contract) and owns it entirely. A project that prefers a cheap
+// heuristic over an LLM call swaps out the run() body; sizing-signal.js is
+// agnostic about how the hook forms its answer.
 //
 // WHY THIS EXISTS (muaddib#117, superseding #116): the split path in
 // scripts/size-and-schedule.js (muaddib#106) had never run against a real sizing
 // signal because no reference hook existed. #116 proposed a word-count heuristic;
 // but sizing/splitting is a judgment call a model reading the ticket + gathered
-// context does meaningfully better than counting words. So this example hook gets
+// context does meaningfully better than counting words. So this hook gets
 // its judgment from an LLM — reusing the repo's verified-interactive
 // ConductorSession driver rather than a headless `claude -p` call (the repo
 // deliberately keeps all LLM work on the subscription-billed interactive session;
@@ -96,11 +102,20 @@ function fillTemplate(template, values) {
 // swallowing that prose into an unparseable span. Instead, scan each candidate
 // object starting at a `{`, tracking brace depth while skipping over string
 // literals (so braces inside a JSON string, or in prose, never throw off the
-// match), and return the first balanced span that JSON.parses. Validation against
-// the enums is sizing-signal.js#validateSignal's job; this hook just emits what it
-// parsed.
+// match).
+//
+// Return the LAST balanced span that JSON.parses, not the first: ConductorSession
+// hands back the newly-rendered pane region, which includes the echoed prompt
+// (the interpolated {{TICKET_BODY}}/{{CONTEXT}} and the response-format section)
+// BEFORE the model's answer. Since context and ticket bodies frequently carry
+// their own JSON, a first-match would return that echoed blob instead of the
+// sizing signal; the model's actual object is the final one, so last-match is the
+// robust choice. Validation against the enums is sizing-signal.js#validateSignal's
+// job; this hook just emits what it parsed.
 function extractJsonObject(text) {
   const s = String(text == null ? '' : text);
+  let parsed;
+  let found = false;
   for (let i = 0; i < s.length; i++) {
     if (s[i] !== '{') continue;
     let depth = 0;
@@ -120,14 +135,18 @@ function extractJsonObject(text) {
         depth -= 1;
         if (depth === 0) {
           try {
-            return JSON.parse(s.slice(i, j + 1));
+            parsed = JSON.parse(s.slice(i, j + 1));
+            found = true;
+            i = j; // keep the LAST match: resume scanning past this object
           } catch (_) {
-            break; // this `{` didn't start valid JSON — try the next one
+            // this `{` didn't start valid JSON — try the next one
           }
+          break;
         }
       }
     }
   }
+  if (found) return parsed;
   throw new Error(
     `sizing hook: no JSON object found in model response: ${JSON.stringify(s.slice(0, 300))}`,
   );
@@ -202,6 +221,16 @@ async function run(opts = {}) {
   // Ticket: prefer the already-fetched /tmp/ticket-${worker}.json (no re-fetch in
   // the fleet flow); fall back to a live fetch for standalone/manual invocation.
   let ticket = opts.ticket ?? readTicketJson(worker);
+  // Guard against sizing the WRONG ticket. The cache file is keyed by worker, not
+  // by ticket id, so a stale or cross-worker cache (e.g. WORKER_INDEX unset →
+  // worker '0' reading another run's /tmp/ticket-0.json) can hold a DIFFERENT
+  // ticket than the one we were asked to size — and size-and-schedule.js would
+  // then split the wrong parent. When the cached ticket carries an identifier that
+  // disagrees with the requested ticketId, distrust the cache and live-fetch the
+  // ticket we actually mean. (An injected/identifier-less ticket skips the check.)
+  if (ticket && ticket.identifier && ticket.identifier !== ticketId) {
+    ticket = null;
+  }
   if (!ticket) {
     // Lazy require so the module (and its tests, which always inject a ticket)
     // never pull the ticket-source registry unless a live fetch is actually needed.
