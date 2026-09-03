@@ -25,7 +25,7 @@ DAEMON="$FLEET_DIR/services/conductor-daemon.js"
 PID_FILE="${CONDUCTOR_PID_FILE:-$FLEET_DIR/.muaddib-conductor.pid}"
 
 usage() {
-  echo "usage: conductor.sh [--bg|--stop] [--dry-run] [ticket-or-task]" >&2
+  echo "usage: conductor.sh [--bg|--stop] [--attach] [--dry-run] [ticket-or-task]" >&2
 }
 
 # True iff a daemon we started is still running (matches --stop's liveness check).
@@ -45,11 +45,29 @@ clear_stale_session() {
   tmux kill-session -t "${CONDUCTOR_SESSION_NAME:-conductor}" 2>/dev/null || true
 }
 
+# Block until the Conductor's tmux session exists (up to 60s — matches
+# ConductorSession's own default readyTimeoutMs), then exec into it so the
+# operator lands in the real interactive session instead of a background PID
+# with no visible output. MUADIB_NO_ATTACH=1 (the same escape hatch
+# spawn-worker.sh honors) skips this — for a programmatic caller (a script,
+# dispatch-daemon) that must not have its process replaced by an attach.
+attach_when_ready() {
+  [ "${MUADIB_NO_ATTACH:-0}" = "1" ] && return 0
+  local session="${CONDUCTOR_SESSION_NAME:-conductor}"
+  local i
+  for i in $(seq 1 60); do
+    tmux has-session -t "$session" 2>/dev/null && exec tmux attach -t "$session"
+    sleep 1
+  done
+  echo "conductor.sh: session '$session' did not come up within 60s — not attaching (watch: tmux attach -t $session once it is)" >&2
+}
+
 # ─── argument parsing ───────────────────────────────────────────────────────────
 # Extract leading flags; everything after them is the ticket/task. Mirrors
 # muaddib.sh's leading-flag-then-argument shape.
 BG=0
 STOP=0
+ATTACH=0
 DRY_RUN=0
 [ "${CONDUCTOR_DRY_RUN:-0}" = "1" ] && DRY_RUN=1
 
@@ -57,6 +75,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --bg)      BG=1; shift ;;
     --stop)    STOP=1; shift ;;
+    --attach)  ATTACH=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --)        shift; break ;;
     -*)        usage; exit 1 ;;
@@ -133,12 +152,14 @@ case "$MODE" in
     # the session is alive, types the prompt, and exits.
     node "$DAEMON" --send "$TICKET"
     echo "→ sent to running conductor-daemon (PID $(cat "$PID_FILE"))"
+    [ "$ATTACH" -eq 1 ] && attach_when_ready
     ;;
   bg)
     clear_stale_session
     nohup node "$DAEMON" "$TICKET" >"$FLEET_DIR/.muaddib-conductor.log" 2>&1 &
     echo $! > "$PID_FILE"
     echo "→ conductor-daemon started (PID $(cat "$PID_FILE"), logs: $FLEET_DIR/.muaddib-conductor.log)"
+    [ "$ATTACH" -eq 1 ] && attach_when_ready
     ;;
   fg)
     clear_stale_session

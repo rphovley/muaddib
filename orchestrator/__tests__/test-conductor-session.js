@@ -161,14 +161,60 @@ function testConductorSkillsPresent() {
   }
 }
 
+// The Conductor runs on the bare host, not inside a worker's container sandbox —
+// it must never default to --dangerously-skip-permissions (a prompt-injected or
+// hallucinated Bash call would execute for real on the operator's machine).
+// permFlag() is decoupled from CLAUDE_PERMISSION_MODE (the Worker-facing var,
+// default bypassPermissions there — justified by the container sandbox) via its
+// own CONDUCTOR_PERMISSION_MODE, defaulting to '' (no flag — Claude Code's normal
+// interactive gating) rather than any bypass.
+function testPermFlagDefaultsSafe() {
+  const savedConductor = process.env.CONDUCTOR_PERMISSION_MODE;
+  const savedClaude = process.env.CLAUDE_PERMISSION_MODE;
+  delete process.env.CONDUCTOR_PERMISSION_MODE;
+  try {
+    // Decoupling: even with the Worker var set to bypass, the Conductor's own
+    // flag must stay unset — the two must never cross-contaminate.
+    process.env.CLAUDE_PERMISSION_MODE = 'bypassPermissions';
+    const flag = permFlag();
+    if (flag !== '') {
+      throw new Error(`expected permFlag() to default to '' (no bypass), got: ${JSON.stringify(flag)}`);
+    }
+    const s = createConductorSession({ name: `conductor-permflag-${process.pid}` });
+    if (s.claudeCmd.includes('--dangerously-skip-permissions')) {
+      throw new Error(`default claudeCmd must not bypass permissions, got: ${s.claudeCmd}`);
+    }
+    if (/claude\s{2,}/.test(s.claudeCmd)) {
+      throw new Error(`empty permFlag() must not leave a stray double space, got: ${JSON.stringify(s.claudeCmd)}`);
+    }
+  } finally {
+    if (savedConductor === undefined) delete process.env.CONDUCTOR_PERMISSION_MODE;
+    else process.env.CONDUCTOR_PERMISSION_MODE = savedConductor;
+    if (savedClaude === undefined) delete process.env.CLAUDE_PERMISSION_MODE;
+    else process.env.CLAUDE_PERMISSION_MODE = savedClaude;
+  }
+}
+
+// An operator who explicitly wants more autonomy can still opt in.
+function testPermFlagExplicitOptIn() {
+  const saved = process.env.CONDUCTOR_PERMISSION_MODE;
+  try {
+    process.env.CONDUCTOR_PERMISSION_MODE = 'bypassPermissions';
+    if (permFlag() !== '--dangerously-skip-permissions') {
+      throw new Error(`explicit opt-in should resolve to the skip flag, got: ${JSON.stringify(permFlag())}`);
+    }
+    process.env.CONDUCTOR_PERMISSION_MODE = 'acceptEdits';
+    if (permFlag() !== '--permission-mode acceptEdits') {
+      throw new Error(`explicit non-bypass mode should resolve to --permission-mode, got: ${JSON.stringify(permFlag())}`);
+    }
+  } finally {
+    if (saved === undefined) delete process.env.CONDUCTOR_PERMISSION_MODE;
+    else process.env.CONDUCTOR_PERMISSION_MODE = saved;
+  }
+}
+
 async function main() {
   ensureTmux();
-  // Sanity: permFlag must resolve to the interactive skip flag under the default
-  // bypassPermissions mode (how the daemon launches claude).
-  if (!permFlag().includes('--dangerously-skip-permissions') && (process.env.CLAUDE_PERMISSION_MODE || 'bypassPermissions') === 'bypassPermissions') {
-    console.error('FAIL — permFlag() should be --dangerously-skip-permissions under bypassPermissions');
-    process.exit(1);
-  }
 
   const tests = [
     ['start() → isAlive() true; stop() → isAlive() false', testStartIsAliveStop],
@@ -176,6 +222,8 @@ async function main() {
     ['sendPrompt() on a dead session throws', testSendPromptDeadSession],
     ['default claudeCmd wires --plugin-dir at the conductor plugin dir', testPluginDirWiredIntoClaudeCmd],
     ['conductor plugin manifest + seed skills are present on disk', testConductorSkillsPresent],
+    ['permFlag() defaults to no bypass, decoupled from CLAUDE_PERMISSION_MODE', testPermFlagDefaultsSafe],
+    ['permFlag() honors an explicit CONDUCTOR_PERMISSION_MODE opt-in', testPermFlagExplicitOptIn],
     ['(opt-in) live claude ask(2+2) → non-empty', testLiveClaudeAsk],
   ];
 

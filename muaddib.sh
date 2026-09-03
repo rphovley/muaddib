@@ -121,8 +121,12 @@ if [ "$ROUTE" = "conductor" ]; then
     # decision is to dispatch — provisions a worker itself via the Fleet Control
     # spawn bridge. `conductor.sh --bg` reuses a live daemon if one is up (sends
     # the prompt and returns), else starts one detached with this as its initial
-    # prompt, so the shell returns promptly instead of blocking on a foreground
-    # daemon.
+    # prompt; `--attach` then waits for the (real, host-level) tmux session to
+    # come up and execs into it, so the operator lands in the actual interactive
+    # Conductor session instead of a bare "started, PID N" message with nothing
+    # visibly happening. The Conductor is NOT a worker — bin/attend.sh and
+    # bin/attach.sh are docker-exec-based and only know about numbered worker
+    # containers, so they don't apply here at all.
     #
     # The spawn command uses the absolute fleet-control-cli.js path (robust to the
     # daemon's cwd) and `1` as a slot *hint* — spawn-worker.sh auto-advances past
@@ -137,8 +141,7 @@ worker now by running exactly:
   node \"$DIR/orchestrator/fleet-control-cli.js\" spawn 1 \"${TASK}\"
 On defer or skip, do not spawn — just record the decision and its rationale."
     echo "→ muaddib (${SOURCE}): ${ARG} — routed to the Conductor"
-    echo "  watch:  ./bin/attend.sh    attach: ./bin/attach.sh <n>"
-    exec "$DIR/conductor.sh" --bg "$PROMPT"
+    exec "$DIR/conductor.sh" --bg --attach "$PROMPT"
 fi
 
 # Direct route: dispatch straight to a worker (pre-Conductor behavior).

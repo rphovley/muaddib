@@ -27,11 +27,19 @@
 const { spawnSync } = require('child_process');
 const path = require('path');
 
-// Mirror runner.js/worker-entrypoint.sh: bypassPermissions → the skip flag,
-// anything else → an explicit --permission-mode. Kept identical so the Conductor
-// launches claude the same way Workers do.
+// Conductor-specific permission default — deliberately DECOUPLED from
+// CLAUDE_PERMISSION_MODE (runner.js/worker-entrypoint.sh's var, default
+// bypassPermissions there, justified by the container sandbox). The Conductor
+// runs directly on the HOST with no such sandbox: a prompt-injected or
+// hallucinated Bash call under bypass would execute for real against the
+// operator's own machine. So the default here is NO flag at all — Claude
+// Code's own normal interactive permission gating — unless an operator
+// explicitly opts into more autonomy via CONDUCTOR_PERMISSION_MODE (including
+// 'bypassPermissions', if they really want it). Empty return means omit the
+// flag entirely; callers must not leave a stray double space.
 function permFlag() {
-  const p = process.env.CLAUDE_PERMISSION_MODE || 'bypassPermissions';
+  const p = process.env.CONDUCTOR_PERMISSION_MODE || '';
+  if (!p) return '';
   return p === 'bypassPermissions'
     ? '--dangerously-skip-permissions'
     : `--permission-mode ${p}`;
@@ -97,10 +105,14 @@ class ConductorSession {
     // The `claude` invocation — overridable for tests (e.g. a fake CLI). The
     // default loads the Conductor's own skill set via --plugin-dir (see
     // conductorPluginDir); the path is single-quoted because claudeCmd is handed
-    // to `tmux new-session` as one string and re-parsed by the shell.
+    // to `tmux new-session` as one string and re-parsed by the shell. permFlag()
+    // is '' by default (see above) — filter it out rather than leave a stray
+    // double space in the command string.
     this.claudeCmd =
       opts.claudeCmd ||
-      `claude ${permFlag()} --plugin-dir '${conductorPluginDir()}'`;
+      ['claude', permFlag(), `--plugin-dir '${conductorPluginDir()}'`]
+        .filter(Boolean)
+        .join(' ');
     // Pane snapshot taken just before the last sendPrompt, so readResponse can
     // diff it out and return only the newly-rendered text.
     this._preSnapshot = '';
