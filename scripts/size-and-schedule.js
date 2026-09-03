@@ -26,9 +26,16 @@
 //     resolved TicketSource. Dependency edges are the deterministic rule: a
 //     linear chain (Stream N blocks N+1) unless a stream's body explicitly says
 //     "depends on Stream X".
-//   - Step 5 gives every child the whole parent `## Context` verbatim when
-//     .muaddib/context.md exists — the safe, fully-deterministic MVP (a smarter
-//     per-child scoping pass is a follow-up, mirroring gather-context's phasing).
+//   - Step 5 gives each child a `## Context` SCOPED to its work stream: every
+//     context item (formatContext's per-source { title, url?, body } units,
+//     parsed back out of .muaddib/context.md) is scored by simple keyword overlap
+//     against the stream's own text, and only the items that clear the floor are
+//     posted. The scoring is inclusion-biased (dropping context a child needed is
+//     worse than a little extra noise) and any child that matches nothing falls
+//     back to the whole parent context rather than being left under-scoped. Still
+//     fully deterministic — no model call (conductor-session.js keeps all LLM work
+//     on the subscription-billed interactive session, so a script must not reach
+//     the model directly).
 //   - Step 6 posts the review comment — pure templating.
 
 const fs = require('fs');
@@ -37,7 +44,7 @@ const path = require('path');
 const state = require('../orchestrator/state');
 const { getTicketSource } = require('../services/ticket-source');
 const { computeSizingSignal } = require('../orchestrator/sizing-signal');
-const { MAX_COMMENT_CHARS, splitIntoParts } = require('../services/context-comments');
+const { MAX_COMMENT_CHARS, splitIntoParts, formatContext } = require('../services/context-comments');
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -142,6 +149,116 @@ function computeEdges(streams) {
     edges.push({ blocker: override != null ? override : streams[i - 1].number, blocked: s.number });
   }
   return edges;
+}
+
+// ─── per-child context scoping (context.md → items → relevant slice) ───────────
+
+// parseContextItems(markdown) → the per-source addressable units, inverting
+// context-comments.js#formatContext: [{ name, summary, items:[{title,url?,body}] }]
+// in document order. Splits on `### <name>` source sections and, within each, on
+// `#### <title>` item blocks (the text before the first item is that source's
+// summary; a bare url line right under the title is the item's url, the rest its
+// body). A body that itself contains a literal "#### " line is an inherent
+// round-trip ambiguity we accept — the template formatContext emits doesn't, and
+// mis-parsing only ever changes which slice a child sees, never correctness.
+function parseContextItems(markdown) {
+  const text = String(markdown || '');
+  // pieces[0] is the "## Context" header block; keep only real "### " sections.
+  const sections = text.split(/\n(?=### )/).filter((p) => /^### /.test(p));
+  return sections.map((sec) => {
+    const nl = sec.indexOf('\n');
+    const name = sec.slice(3, nl === -1 ? undefined : nl).trim();
+    const rest = nl === -1 ? '' : sec.slice(nl + 1);
+    // Text before the first "#### " item header is the source summary.
+    const parts = rest.split(/\n(?=#### )/);
+    let summary = '';
+    const items = [];
+    for (const part of parts) {
+      if (/^#### /.test(part)) {
+        items.push(parseContextItem(part));
+      } else if (items.length === 0) {
+        summary = part.trim();
+      }
+    }
+    return { name, summary, items };
+  });
+}
+
+// parseContextItem("#### title\n[url]\n\nbody") → { title, url?, body }.
+function parseContextItem(block) {
+  const lines = block.split('\n');
+  const title = lines[0].replace(/^####\s+/, '').trim();
+  let idx = 1;
+  let url;
+  // A non-blank line immediately under the title (before any blank) is the url —
+  // exactly how formatContext lays "#### <title>\n<url>" out.
+  if (lines[idx] !== undefined && lines[idx].trim() !== '') {
+    url = lines[idx].trim();
+    idx += 1;
+  }
+  const body = lines.slice(idx).join('\n').trim();
+  return url ? { title, url, body } : { title, body };
+}
+
+// Words too common to signal relevance — dropped before overlap scoring so a
+// shared "the"/"and" can't pull an unrelated item into a child's context.
+const STOPWORDS = new Set([
+  'the', 'and', 'for', 'with', 'that', 'this', 'from', 'into', 'are', 'was',
+  'will', 'has', 'have', 'not', 'but', 'its', 'our', 'out', 'use', 'used',
+  'add', 'adds', 'new', 'via', 'per', 'all', 'any', 'can', 'get', 'set',
+  'when', 'then', 'than', 'each', 'also', 'must', 'should', 'stream',
+]);
+
+// termSet(text) → the set of lowercased alphanumeric terms (≥ 3 chars, minus
+// stopwords) used as the overlap alphabet for relevance scoring.
+function termSet(text) {
+  const out = new Set();
+  for (const raw of String(text || '').toLowerCase().match(/[a-z0-9_]+/g) || []) {
+    if (raw.length < 3 || STOPWORDS.has(raw)) continue;
+    out.add(raw);
+  }
+  return out;
+}
+
+const streamText = (stream) =>
+  [stream && stream.name, ...((stream && stream.steps) || []), stream && stream.body]
+    .filter(Boolean)
+    .join('\n');
+
+const itemText = (item) => [item && item.title, item && item.body].filter(Boolean).join('\n');
+
+// selectRelevantItems(items, stream) → the subset of `items` whose text shares at
+// least one meaningful term with the stream (name + steps + body). The floor is
+// deliberately low (one shared term): a false positive is just a little extra
+// noise in a child's context, while a false negative drops context the child
+// needed and risks it re-litigating a settled decision — so we bias to include.
+// A stream with no scorable terms of its own yields [] (the caller then falls
+// back to the whole parent context rather than under-scoping the child).
+function selectRelevantItems(items, stream) {
+  const streamTerms = termSet(streamText(stream));
+  if (streamTerms.size === 0) return [];
+  const shares = (item) => {
+    for (const t of termSet(itemText(item))) if (streamTerms.has(t)) return true;
+    return false;
+  };
+  return (items || []).filter(shares);
+}
+
+// scopeContextForStream(sources, stream) → the "## Context" markdown scoped to one
+// work stream, or null when nothing scored above the floor (caller falls back to
+// the full parent context). Each source keeps its summary line (short, legible)
+// and only its stream-relevant items; formatContext drops any source left wholly
+// empty. Returns null only when NO item across all sources matched — never an
+// empty/summary-only document that would silently under-scope the child.
+function scopeContextForStream(sources, stream) {
+  let selectedCount = 0;
+  const scoped = (sources || []).map((src) => {
+    const items = selectRelevantItems(src.items, stream);
+    selectedCount += items.length;
+    return { name: src.name, summary: src.summary, items };
+  });
+  if (selectedCount === 0) return null;
+  return formatContext(scoped);
 }
 
 // ─── idempotency ───────────────────────────────────────────────────────────────
@@ -293,20 +410,30 @@ async function run(opts = {}) {
 
   // ── Step 5: scoped "## Context" per child ────────────────────────────────────
 
-  // Deterministic MVP: give every child the WHOLE parent context verbatim when
-  // .muaddib/context.md exists (own→parent already resolved by gather-context).
-  // A smarter per-child scoping pass is a follow-up, not a blocker here.
+  // Give each child a "## Context" scoped to ITS work stream: parse the parent
+  // context (own→parent already resolved by gather-context) back into its
+  // per-source items and keep, per child, only the items that share a term with
+  // that stream. Inclusion-biased — a child that matches nothing gets the whole
+  // parent context rather than being under-scoped. Deterministic, no model call.
   const context = opts.context ?? readMuaddibFile(repo, 'context.md');
   if (context && context.trim()) {
-    const parts = splitIntoParts(context, maxCommentChars);
+    const sources = parseContextItems(context);
+    const fullParts = splitIntoParts(context, maxCommentChars);
+    let scopedCount = 0;
     for (const c of children) {
       if (!c.identifier) continue;
+      const stream = streams.find((s) => s.number === c.number);
+      const scoped = scopeContextForStream(sources, stream);
+      if (scoped) scopedCount += 1;
+      const parts = scoped ? splitIntoParts(scoped, maxCommentChars) : fullParts;
       for (const part of parts) {
         // eslint-disable-next-line no-await-in-loop
         await source.postComment(c.identifier, part);
       }
     }
-    process.stderr.write(`[size-and-schedule] posted ## Context to ${children.length} child(ren)\n`);
+    process.stderr.write(
+      `[size-and-schedule] posted ## Context to ${children.length} child(ren) (${scopedCount} scoped, ${children.length - scopedCount} full fallback)\n`,
+    );
   }
 
   // ── Step 6: post the sizing/scheduling plan on the parent ────────────────────
@@ -337,6 +464,9 @@ module.exports = {
   extractWorkStreamsSection,
   parseWorkStreams,
   computeEdges,
+  parseContextItems,
+  selectRelevantItems,
+  scopeContextForStream,
   alreadyScheduled,
   formatReviewComment,
 };

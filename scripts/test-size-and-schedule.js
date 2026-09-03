@@ -22,8 +22,12 @@ const {
   extractWorkStreamsSection,
   parseWorkStreams,
   computeEdges,
+  parseContextItems,
+  selectRelevantItems,
+  scopeContextForStream,
   alreadyScheduled,
 } = require('./size-and-schedule');
+const { formatContext } = require('../services/context-comments');
 
 // ─── harness ──────────────────────────────────────────────────────────────────
 
@@ -131,6 +135,26 @@ Dependency-ordered.
 ### Open Questions
 `;
 
+// A realistic parent "## Context" built through the real formatContext, so the
+// per-child scoping tests exercise the actual round-trip parseContextItems has to
+// invert. Item bodies are worded to overlap PLAN's three streams one-to-one; the
+// "Deployment runbook" item overlaps none of them (it must never leak into a
+// scoped child), and processDocs is a summary-only source (no items).
+const CONTEXT_RESULTS = [
+  {
+    name: 'taskManager',
+    summary: '',
+    items: [
+      { title: 'Database schema notes', body: 'The users table needs a new column and a backfill migration.' },
+      { title: 'API routing conventions', body: 'All endpoints validate input before hitting the route handler.' },
+      { title: 'Frontend form guidelines', url: 'https://wiki.example/forms', body: 'Render the form with the shared component.' },
+      { title: 'Deployment runbook', body: 'The CI pipeline deploys nightly to production.' },
+    ],
+  },
+  { name: 'processDocs', summary: 'No linked docs configured.', items: [] },
+];
+const CONTEXT_WITH_ITEMS = formatContext(CONTEXT_RESULTS);
+
 // ─── tests ──────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -213,6 +237,55 @@ async function main() {
     const edges = computeEdges(streams);
     assert('one edge', edges.length === 1, `${edges.length}`);
     assert('linear 1→2 only', edges[0].blocker === 1 && edges[0].blocked === 2);
+  });
+
+  await test('parseContextItems inverts formatContext (sources, summary, items, url)', () => {
+    const sources = parseContextItems(CONTEXT_WITH_ITEMS);
+    assert('two sources', sources.length === 2, `${sources.length}`);
+    assert('names in order', sources[0].name === 'taskManager' && sources[1].name === 'processDocs');
+    assert('taskManager has four items', sources[0].items.length === 4, `${sources[0].items.length}`);
+    assert('item titles parsed', sources[0].items[0].title === 'Database schema notes');
+    assert('item body parsed', /backfill migration/.test(sources[0].items[0].body));
+    const frontend = sources[0].items.find((it) => it.title === 'Frontend form guidelines');
+    assert('item url parsed', frontend.url === 'https://wiki.example/forms');
+    assert('url is not swallowed into the body', !/wiki\.example/.test(frontend.body) && /Render the form/.test(frontend.body));
+    assert('summary-only source kept, no items', sources[1].items.length === 0 && /No linked docs/.test(sources[1].summary));
+  });
+
+  await test('parseContextItems: no ### sections → []', () => {
+    assert('empty', parseContextItems('').length === 0);
+    assert('header only', parseContextItems('## Context\n\nsome prose, no sources').length === 0);
+    assert('null', parseContextItems(null).length === 0);
+  });
+
+  await test('selectRelevantItems keeps overlapping items, drops the rest', () => {
+    const streams = parseWorkStreams(PLAN);
+    const items = parseContextItems(CONTEXT_WITH_ITEMS)[0].items;
+    const s1 = selectRelevantItems(items, streams[0]); // Schema migration
+    assert('stream 1 → only the schema item', s1.length === 1 && s1[0].title === 'Database schema notes', JSON.stringify(s1.map((i) => i.title)));
+    const s2 = selectRelevantItems(items, streams[1]); // API endpoint
+    assert('stream 2 → only the API item', s2.length === 1 && s2[0].title === 'API routing conventions', JSON.stringify(s2.map((i) => i.title)));
+    const s3 = selectRelevantItems(items, streams[2]); // Frontend
+    assert('stream 3 → only the frontend item', s3.length === 1 && s3[0].title === 'Frontend form guidelines', JSON.stringify(s3.map((i) => i.title)));
+    assert('the unrelated deployment item is never selected', ![s1, s2, s3].some((sel) => sel.some((it) => it.title === 'Deployment runbook')));
+  });
+
+  await test('selectRelevantItems: a termless stream selects nothing (→ caller falls back)', () => {
+    const items = parseContextItems(CONTEXT_WITH_ITEMS)[0].items;
+    assert('empty stream → []', selectRelevantItems(items, { name: '', steps: [], body: '' }).length === 0);
+    assert('stopwords-only stream → []', selectRelevantItems(items, { name: 'the and for', steps: [], body: '' }).length === 0);
+  });
+
+  await test('scopeContextForStream: scoped markdown on a match, null on none', () => {
+    const streams = parseWorkStreams(PLAN);
+    const sources = parseContextItems(CONTEXT_WITH_ITEMS);
+    const scoped = scopeContextForStream(sources, streams[0]); // Schema migration
+    assert('returns a ## Context doc', typeof scoped === 'string' && scoped.startsWith('## Context'));
+    assert('keeps the relevant item', /Database schema notes/.test(scoped));
+    assert('drops the API item', !/API routing conventions/.test(scoped));
+    assert('drops the unrelated deployment item', !/Deployment runbook/.test(scoped));
+    const none = scopeContextForStream(sources, { number: 9, name: 'Documentation polish', steps: ['Proofread wording'], body: 'Proofread wording' });
+    assert('no match anywhere → null (fallback signal)', none === null);
   });
 
   await test('alreadyScheduled detects a "## Sizing & Scheduling" own comment', () => {
@@ -326,6 +399,50 @@ async function main() {
     const st = readState(worker);
     assert('recommend_split=true', st.recommend_split === 'true');
     assert('sub_issues persisted as JSON array', st.sub_issues === JSON.stringify(ids));
+  });
+
+  await test('split: each child gets a "## Context" scoped to its own work stream', async () => {
+    const worker = 69;
+    const source = fakeTicketSource();
+    const res = await run({
+      worker, repo: TMP, ticketId: 'muaddib#55', ticketTitle: 'Big feature',
+      source, computeSizingSignal: fakeSizing(SPLIT), plan: PLAN, context: CONTEXT_WITH_ITEMS,
+    });
+    assert('status scheduled', res.status === 'scheduled', res.status);
+    const ids = source.created.map((c) => c.identifier); // [c1=Schema, c2=API, c3=Frontend]
+    const ctx = (id) => source.posts.filter((p) => p.id === id).map((p) => p.body).join('\n');
+
+    assert('schema child sees the schema item', /Database schema notes/.test(ctx(ids[0])));
+    assert('schema child does NOT see the API item', !/API routing conventions/.test(ctx(ids[0])));
+    assert('API child sees the API item', /API routing conventions/.test(ctx(ids[1])));
+    assert('API child does NOT see the schema item', !/Database schema notes/.test(ctx(ids[1])));
+    assert('frontend child sees the frontend item', /Frontend form guidelines/.test(ctx(ids[2])));
+    assert('frontend child does NOT see the API item', !/API routing conventions/.test(ctx(ids[2])));
+    // The unrelated item scopes into no child.
+    assert('no child sees the unrelated deployment item', ![ids[0], ids[1], ids[2]].some((id) => /Deployment runbook/.test(ctx(id))));
+    // One scoped comment per child (each fits under the cap).
+    assert('one context comment per child', source.posts.filter((p) => ids.includes(p.id)).length === 3);
+  });
+
+  await test('split: a child whose stream matches nothing falls back to the FULL parent context', async () => {
+    const worker = 70;
+    const source = fakeTicketSource();
+    // Stream 1 overlaps the schema item; Stream 2 ("Documentation polish") overlaps
+    // no context item, so it must receive the whole parent context, not zero.
+    const plan =
+      '### Work Streams\n\n**Stream 1 — Schema migration**\n\n- Add the column\n- Backfill\n\n' +
+      '**Stream 2 — Documentation polish**\n\n- Proofread the wording\n';
+    const res = await run({
+      worker, repo: TMP, ticketId: 'muaddib#56', ticketTitle: 'Mixed',
+      source, computeSizingSignal: fakeSizing(SPLIT), plan, context: CONTEXT_WITH_ITEMS,
+    });
+    assert('status scheduled', res.status === 'scheduled', res.status);
+    const ids = source.created.map((c) => c.identifier); // [c1=Schema, c2=Docs]
+    const ctx = (id) => source.posts.filter((p) => p.id === id).map((p) => p.body).join('\n');
+
+    assert('schema child is scoped (no deployment item)', /Database schema notes/.test(ctx(ids[0])) && !/Deployment runbook/.test(ctx(ids[0])));
+    // The non-matching child gets everything, including the otherwise-dropped item.
+    assert('docs child falls back to full context', /Deployment runbook/.test(ctx(ids[1])) && /Database schema notes/.test(ctx(ids[1])) && /API routing conventions/.test(ctx(ids[1])));
   });
 
   await test('split with no context.md → children + relations + review, but no context comments', async () => {
