@@ -21,7 +21,14 @@
 // testLiveClaudeAsk     — (opt-in) ask('what is 2+2') vs real claude → non-empty
 
 const { spawnSync } = require('child_process');
-const { ConductorSession, createConductorSession, permFlag } = require('../conductor-session');
+const fs = require('fs');
+const path = require('path');
+const {
+  ConductorSession,
+  createConductorSession,
+  permFlag,
+  conductorPluginDir,
+} = require('../conductor-session');
 
 // A fake interactive "CLI": echo each submitted line back. Fast settle/poll so
 // the test doesn't drag. Unique session name to avoid colliding with a real
@@ -112,6 +119,48 @@ async function testLiveClaudeAsk() {
   }
 }
 
+// The Conductor loads its own skill set via `--plugin-dir <repo>/conductor`
+// (conductor/.claude-plugin/plugin.json + conductor/skills/*), separate from the
+// worker-baked claude/skills/*. Assert the default launch command wires the flag
+// at the resolved plugin dir, and that the seed skills are actually on disk there
+// — no tmux, no claude, no token needed.
+function testPluginDirWiredIntoClaudeCmd() {
+  const s = createConductorSession({ name: `conductor-plugindir-${process.pid}` });
+  const dir = conductorPluginDir();
+  if (!s.claudeCmd.includes('--plugin-dir')) {
+    throw new Error(`expected default claudeCmd to include --plugin-dir, got: ${s.claudeCmd}`);
+  }
+  if (!s.claudeCmd.includes(dir)) {
+    throw new Error(`expected claudeCmd to reference the conductor plugin dir ${dir}, got: ${s.claudeCmd}`);
+  }
+  if (!path.isAbsolute(dir)) {
+    throw new Error(`expected conductorPluginDir() to be absolute, got: ${dir}`);
+  }
+  // An explicit claudeCmd override (the test/fake-CLI path) must NOT get the flag.
+  const overridden = createConductorSession({ claudeCmd: 'fake-cli' });
+  if (overridden.claudeCmd.includes('--plugin-dir')) {
+    throw new Error('an explicit claudeCmd override must not have --plugin-dir appended');
+  }
+}
+
+function testConductorSkillsPresent() {
+  const dir = conductorPluginDir();
+  const manifest = path.join(dir, '.claude-plugin', 'plugin.json');
+  if (!fs.existsSync(manifest)) {
+    throw new Error(`missing conductor plugin manifest at ${manifest}`);
+  }
+  for (const skill of ['triage', 'dispatch-decision']) {
+    const md = path.join(dir, 'skills', skill, 'SKILL.md');
+    if (!fs.existsSync(md)) {
+      throw new Error(`missing conductor skill at ${md}`);
+    }
+    const body = fs.readFileSync(md, 'utf8');
+    if (!/^---[\s\S]*\nname:\s*/.test(body)) {
+      throw new Error(`conductor skill ${skill} is missing name: frontmatter`);
+    }
+  }
+}
+
 async function main() {
   ensureTmux();
   // Sanity: permFlag must resolve to the interactive skip flag under the default
@@ -125,6 +174,8 @@ async function main() {
     ['start() → isAlive() true; stop() → isAlive() false', testStartIsAliveStop],
     ['ask() returns non-empty settled echo output', testAskEchoes],
     ['sendPrompt() on a dead session throws', testSendPromptDeadSession],
+    ['default claudeCmd wires --plugin-dir at the conductor plugin dir', testPluginDirWiredIntoClaudeCmd],
+    ['conductor plugin manifest + seed skills are present on disk', testConductorSkillsPresent],
     ['(opt-in) live claude ask(2+2) → non-empty', testLiveClaudeAsk],
   ];
 

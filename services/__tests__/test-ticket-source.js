@@ -733,6 +733,65 @@ async function testLinearAddBlockingRelationRoundTrip() {
   assert.deepStrictEqual(blockerStatus.blocking.map((b) => b.identifier), ['QUO-2']);
 }
 
+// ─── markReadyForDispatch ─────────────────────────────────────────────────────────
+
+async function testGithubMarkReadyForDispatchAddsLabel() {
+  const api = fakeApi({ '/issues/34/labels': [{ name: 'auto' }] });
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  await src.markReadyForDispatch('34');
+  assert.strictEqual(api.calls.length, 1);
+  assert.strictEqual(api.calls[0].path, '/repos/rphovley/muaddib/issues/34/labels');
+  assert.strictEqual(api.calls[0].method, 'POST');
+  assert.deepStrictEqual(api.calls[0].body, { labels: ['auto'] });
+}
+
+async function testGithubMarkReadyForDispatchToleratesRepoHashPrefix() {
+  // A cross-repo id resolves against its own repo, like the sibling write methods.
+  const api = fakeApi({ '/labels': [{ name: 'auto' }] });
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  await src.markReadyForDispatch('other#7');
+  assert.strictEqual(api.calls[0].path, '/repos/rphovley/other/issues/7/labels');
+}
+
+async function testGithubMarkReadyForDispatchRejectsEmptyId() {
+  const src = createGithubSource({ api: fakeApi({}), owner: 'o', repo: 'r' });
+  await assert.rejects(() => src.markReadyForDispatch(''), /requires an issue id/);
+}
+
+async function testLinearMarkReadyForDispatchResolvesLabelThenAdds() {
+  const gql = fakeGraphql({
+    'team { id }': { issue: { team: { id: 'team-9' } } },
+    TeamLabels: { team: { labels: { nodes: [{ id: 'lbl-auto', name: 'auto' }, { id: 'lbl-bug', name: 'bug' }] } } },
+    IssueAddLabel: { issueAddLabel: { success: true } },
+  });
+  const src = createLinearSource({ graphql: gql });
+  await src.markReadyForDispatch('QUO-2');
+  // 1) resolve the issue's team, 2) list the team labels, 3) attach 'auto'.
+  assert.deepStrictEqual(gql.calls[0].variables, { id: 'QUO-2' });
+  assert.deepStrictEqual(gql.calls[1].variables, { id: 'team-9' });
+  assert.deepStrictEqual(gql.calls[2].variables, { id: 'QUO-2', labelId: 'lbl-auto' });
+}
+
+async function testLinearMarkReadyForDispatchThrowsWhenLabelMissing() {
+  const gql = fakeGraphql({
+    'team { id }': { issue: { team: { id: 'team-9' } } },
+    TeamLabels: { team: { labels: { nodes: [{ id: 'lbl-bug', name: 'bug' }] } } },
+  });
+  const src = createLinearSource({ graphql: gql });
+  await assert.rejects(() => src.markReadyForDispatch('QUO-2'), /no "auto" label/);
+}
+
+async function testLinearMarkReadyForDispatchThrowsWhenTeamUnresolved() {
+  const gql = fakeGraphql({ 'team { id }': { issue: { team: null } } });
+  const src = createLinearSource({ graphql: gql });
+  await assert.rejects(() => src.markReadyForDispatch('QUO-2'), /could not resolve team/);
+}
+
+async function testRawMarkReadyForDispatchNoop() {
+  const src = getTicketSource('raw');
+  assert.strictEqual(await src.markReadyForDispatch('a'), undefined);
+}
+
 // ─── fetchComments (read-back seam) ──────────────────────────────────────────────
 
 async function testGithubFetchCommentsOwnOnly() {
@@ -1014,6 +1073,13 @@ async function main() {
     ['linear: addBlockingRelation throws on !success', testLinearAddBlockingRelationThrowsOnFailure],
     ['linear: addBlockingRelation is idempotent on a duplicate', testLinearAddBlockingRelationIdempotentOnDuplicate],
     ['linear: addBlockingRelation round-trips through getBlockingStatus', testLinearAddBlockingRelationRoundTrip],
+    ['github: markReadyForDispatch adds the auto label', testGithubMarkReadyForDispatchAddsLabel],
+    ['github: markReadyForDispatch tolerates a repo# prefix', testGithubMarkReadyForDispatchToleratesRepoHashPrefix],
+    ['github: markReadyForDispatch rejects an empty id', testGithubMarkReadyForDispatchRejectsEmptyId],
+    ['linear: markReadyForDispatch resolves the label then issueAddLabel', testLinearMarkReadyForDispatchResolvesLabelThenAdds],
+    ['linear: markReadyForDispatch throws when the label is missing', testLinearMarkReadyForDispatchThrowsWhenLabelMissing],
+    ['linear: markReadyForDispatch throws when the team is unresolved', testLinearMarkReadyForDispatchThrowsWhenTeamUnresolved],
+    ['raw: markReadyForDispatch is a void no-op', testRawMarkReadyForDispatchNoop],
     ['github: fetchComments returns own comments, parent [] when no back-ref', testGithubFetchCommentsOwnOnly],
     ['github: fetchComments follows a "Part of #" parent back-reference', testGithubFetchCommentsFollowsParentBackReference],
     ['github: fetchComments degrades to own-only if parent detection fails', testGithubFetchCommentsParentDetectionDegrades],

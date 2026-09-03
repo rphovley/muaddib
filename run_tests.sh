@@ -47,6 +47,9 @@ TEST_SCRIPT='
     echo "=== orchestrator/test-conductor-session ==="
     node "$MUADDIB/orchestrator/__tests__/test-conductor-session.js"
 
+    echo "=== orchestrator/test-conductor-loop ==="
+    node "$MUADDIB/orchestrator/__tests__/test-conductor-loop.js"
+
     echo "=== orchestrator/test-fleet-control ==="
     node "$MUADDIB/orchestrator/__tests__/test-fleet-control.js"
 
@@ -80,6 +83,9 @@ TEST_SCRIPT='
     echo "=== orchestrator/test-worker-input ==="
     node "$MUADDIB/orchestrator/__tests__/test-worker-input.js"
 
+    echo "=== orchestrator/test-fleet-control-cli ==="
+    node "$MUADDIB/orchestrator/__tests__/test-fleet-control-cli.js"
+
     echo "=== scripts/test-read-config ==="
     bash "$MUADDIB/scripts/test-read-config.sh"
 
@@ -94,6 +100,12 @@ TEST_SCRIPT='
 
     echo "=== scripts/test-gather-context ==="
     node "$MUADDIB/scripts/test-gather-context.js"
+
+    echo "=== scripts/test-size-and-schedule ==="
+    node "$MUADDIB/scripts/test-size-and-schedule.js"
+
+    echo "=== scripts/test-sizing-hook ==="
+    node "$MUADDIB/scripts/test-sizing-hook.js"
 
     echo "=== scripts/test-muaddib-dispatch ==="
     bash "$MUADDIB/scripts/test-muaddib-dispatch.sh"

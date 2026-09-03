@@ -25,6 +25,7 @@
 //   stop()                        — tmux kill-session.
 
 const { spawnSync } = require('child_process');
+const path = require('path');
 
 // Mirror runner.js/worker-entrypoint.sh: bypassPermissions → the skip flag,
 // anything else → an explicit --permission-mode. Kept identical so the Conductor
@@ -34,6 +35,20 @@ function permFlag() {
   return p === 'bypassPermissions'
     ? '--dangerously-skip-permissions'
     : `--permission-mode ${p}`;
+}
+
+// The Conductor-owned skill set lives at <repo>/conductor as a minimal Claude
+// Code plugin (conductor/.claude-plugin/plugin.json + conductor/skills/*). It is
+// deliberately SEPARATE from the worker-baked claude/skills/* — those are COPYed
+// into the worker image and only exist inside worker containers, whereas the
+// Conductor runs on the host. We load it with `--plugin-dir` (not a project-local
+// .claude/skills/ at cwd) so the skills scope to the Conductor's own session
+// only: a human running plain `claude` in the repo root does NOT pick them up,
+// and no copy/symlink staging step is needed. Absolute + cwd-independent so it
+// resolves however the daemon is launched. Verified against claude 2.1.x:
+// `claude plugin validate` recognizes the manifest and both skills.
+function conductorPluginDir() {
+  return path.resolve(__dirname, '..', 'conductor');
 }
 
 // Synchronous sleep — the whole driver is spawnSync-based, so blocking the
@@ -79,8 +94,13 @@ class ConductorSession {
       process.env.CONDUCTOR_READY_TIMEOUT_MS,
       60000,
     );
-    // The `claude` invocation — overridable for tests (e.g. a fake CLI).
-    this.claudeCmd = opts.claudeCmd || `claude ${permFlag()}`;
+    // The `claude` invocation — overridable for tests (e.g. a fake CLI). The
+    // default loads the Conductor's own skill set via --plugin-dir (see
+    // conductorPluginDir); the path is single-quoted because claudeCmd is handed
+    // to `tmux new-session` as one string and re-parsed by the shell.
+    this.claudeCmd =
+      opts.claudeCmd ||
+      `claude ${permFlag()} --plugin-dir '${conductorPluginDir()}'`;
     // Pane snapshot taken just before the last sendPrompt, so readResponse can
     // diff it out and return only the newly-rendered text.
     this._preSnapshot = '';
@@ -341,4 +361,9 @@ function createConductorSession(opts) {
   return new ConductorSession(opts);
 }
 
-module.exports = { ConductorSession, createConductorSession, permFlag };
+module.exports = {
+  ConductorSession,
+  createConductorSession,
+  permFlag,
+  conductorPluginDir,
+};
