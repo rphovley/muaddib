@@ -7,9 +7,24 @@
 // review (muaddib#106). Runs after gather-context/analyze-ticket, before
 // implementation.
 //
-// This step STOPS at posting the review comment — the human confirmation loop
-// (review → confirm → spawn children) is a separate milestone. It never
-// implements and never commits.
+// This script runs in three modes (muaddib#107 split the eager one-shot into a
+// human-confirmation checkpoint that every workflow now runs):
+//   - eager  (no flag, the default): size → create sub-issues → wire relations →
+//            scoped context → post a "## Sub-issues created" comment (the same
+//            children-created marker --commit posts, so the two dedup against each
+//            other). The pre-#107 one-shot: decompose and keep going with no human
+//            gate. No workflow wires it any more — feature.json / bug.json / plan.json
+//            all use the --propose → confirm → --commit flow below — but it is kept
+//            as a manual CLI mode for an autonomous, un-gated decomposition.
+//   - --propose: size → post a "## Sizing & Scheduling" PREVIEW (planned streams
+//            + planned edges, NO sub-issues created) for the operator to confirm.
+//   - --commit:  size → create sub-issues → wire relations → scoped context →
+//            post a "## Sub-issues created" comment. When the operator confirmed
+//            "create tickets and dispatch" (worker state sizing_confirm=dispatch),
+//            also mark each child ready-for-dispatch so the dispatch daemon
+//            picks it up. Idempotent on its "## Sub-issues created" marker.
+// feature.json / bug.json / plan.json each wire --propose → a confirm/adjust loop →
+// --commit around this script. No mode implements or commits git.
 //
 // Mirrors scripts/gather-context.js: a deterministic, unit-tested JS `script`
 // step (pure functions + a thin CLI wrapper), reserving claude-tui skills for
@@ -36,7 +51,7 @@
 //     fully deterministic — no model call (conductor-session.js keeps all LLM work
 //     on the subscription-billed interactive session, so a script must not reach
 //     the model directly).
-//   - Step 6 posts the review comment — pure templating.
+//   - Step 6 posts the summary comment — pure templating.
 
 const fs = require('fs');
 const path = require('path');
@@ -263,30 +278,72 @@ function scopeContextForStream(sources, stream) {
 
 // ─── idempotency ───────────────────────────────────────────────────────────────
 
-// The parent's review comment is anchored on this header — the same role
-// "## Context" plays for gather-context's idempotency check.
+// Idempotency is anchored on a comment header — the same role "## Context" plays
+// for gather-context. Both children-creating routes (eager `run` and `--commit`)
+// post and dedup against the SAME "## Sub-issues created" marker, so whichever
+// route decomposed the ticket first, the other one skips instead of minting a
+// duplicate set of children. The propose preview reuses the "## Sizing &
+// Scheduling" header (it IS the sizing/scheduling review the operator confirms)
+// and is deliberately NOT a children-created marker: it is posted with no
+// children yet, so a bare preview must never block `--commit` from creating them.
 const SIZING_HEADER_RE = /^##\s+Sizing\s*&\s*Scheduling\b/m;
+const CREATED_HEADER_RE = /^##\s+Sub-issues\s+created\b/m;
+
+// commentMatches(ownComments, re) → true iff the ticket's OWN comment thread
+// already carries a comment whose body matches `re`. Only the ticket's own
+// comments count (never a parent's) — mirroring gather-context's own→parent
+// precedence for the idempotency decision.
+function commentMatches(ownComments, re) {
+  return (ownComments || []).some((c) => re.test(String((c && c.body) || '')));
+}
 
 // alreadyScheduled(ownComments) → true iff the ticket's OWN comment thread
-// already carries a "## Sizing & Scheduling" comment, i.e. this step ran before.
-// Only the ticket's own comments count (never a parent's) — mirroring
-// gather-context's own→parent precedence for the idempotency decision.
+// already carries a "## Sizing & Scheduling" comment, i.e. the eager step ran
+// before.
 function alreadyScheduled(ownComments) {
-  return (ownComments || []).some((c) => SIZING_HEADER_RE.test(String((c && c.body) || '')));
+  return commentMatches(ownComments, SIZING_HEADER_RE);
 }
 
 // ─── templating (sizing/scheduling review comment) ─────────────────────────────
 
-// formatReviewComment({ signal, children, edges }) → the "## Sizing & Scheduling"
-// markdown posted on the parent. `children` is [{ identifier, title }] in
-// dependency order; `edges` is [{ blockerId, blockedId }].
-function formatReviewComment({ signal, children, edges }) {
+// formatProposalComment({ signal, streams, edges }) → the "## Sizing & Scheduling"
+// PREVIEW posted by the propose phase, BEFORE any sub-issue exists. Lists the
+// planned streams and planned blocking edges by stream number (no identifiers
+// yet) and spells out the operator's three confirmation choices. `streams` is the
+// parsed work streams; `edges` is [{ blocker, blocked }] as stream numbers.
+function formatProposalComment({ signal, streams, edges }) {
+  const streamLines = streams.map((s) => `${s.number}. Stream ${s.number} — ${s.name}`);
+  const edgeLines = edges.length
+    ? edges.map((e) => `- Stream ${e.blocker} blocks Stream ${e.blocked}`)
+    : ['- (none)'];
+  return [
+    '## Sizing & Scheduling',
+    '',
+    `**Size:** ${signal.size} (confidence: ${signal.confidence})`,
+    '',
+    '**Proposed sub-issues** (dependency order):',
+    ...streamLines,
+    '',
+    '**Blocking relations:**',
+    ...edgeLines,
+    '',
+    '_Proposed — no tickets created yet. Confirm in the worker session:_',
+    '_1) create tickets and dispatch · 2) create tickets only · 3) needs adjustment._',
+  ].join('\n');
+}
+
+// formatCreatedComment({ signal, children, edges }) → the "## Sub-issues created"
+// comment the commit phase posts after actually creating the children. Same
+// shape as formatReviewComment but with a distinct header (the commit
+// idempotency marker) and no "confirmation is a separate step" footer — by this
+// point confirmation already happened.
+function formatCreatedComment({ signal, children, edges }) {
   const subLines = children.map((c, i) => `${i + 1}. ${c.identifier} — ${c.title}`);
   const edgeLines = edges.length
     ? edges.map((e) => `- ${e.blockerId} blocks ${e.blockedId}`)
     : ['- (none)'];
   return [
-    '## Sizing & Scheduling',
+    '## Sub-issues created',
     '',
     `**Size:** ${signal.size} (confidence: ${signal.confidence})`,
     '',
@@ -295,21 +352,28 @@ function formatReviewComment({ signal, children, edges }) {
     '',
     '**Blocking relations:**',
     ...edgeLines,
-    '',
-    '_Review these before spawning. Confirmation is a separate step._',
   ].join('\n');
 }
 
 // ─── core logic (injectable deps for testing) ──────────────────────────────────
 
-// opts (all optional; env/defaults otherwise):
+// opts (all optional; env/defaults otherwise), shared by every phase:
 //   worker, repo, ticketSource (kind string), ticketId, ticketTitle
-//   source              injected TicketSource backend (createSubIssue/addBlockingRelation/postComment seam)
+//   source              injected TicketSource backend (createSubIssue/addBlockingRelation/postComment/markReadyForDispatch seam)
 //   computeSizingSignal injected sizing resolver (tests stub the hook result)
 //   plan                injected plan.md text (skips the file read)
 //   context             injected context.md text (null = absent; skips the file read)
 //   maxCommentChars     child-context chunking ceiling override
-async function run(opts = {}) {
+//   dispatch            (commit only) override the sizing_confirm=dispatch state read
+
+// prepare(opts, { idempotencyHeaderRe, alreadyReason }) → { skip:true, result }
+// for a no-op / already-done finish, or { skip:false, ctx } carrying everything
+// the phases need (resolved source/ticket/parent + signal + parsed streams +
+// edges + context). Owns the whole no-op gate (raw source, no ticket, sizing
+// signal, recommendSplit) and, when idempotencyHeaderRe is given, the
+// "this phase already ran" skip. Shared by eager/propose/commit so the gating is
+// identical across modes.
+async function prepare(opts = {}, { idempotencyHeaderRe = null, alreadyReason = 'already scheduled' } = {}) {
   const worker = opts.worker ?? Number(process.env.WORKER_INDEX ?? '0');
   const repo = (opts.repo ?? process.env.REPO_DIR ?? process.cwd()).trim();
   const ticketSourceKind = (opts.ticketSource ?? process.env.TICKET_SOURCE ?? 'linear').toLowerCase();
@@ -331,7 +395,7 @@ async function run(opts = {}) {
   const noop = (reason) => {
     state.merge(worker, { recommend_split: 'false' });
     process.stderr.write(`[size-and-schedule] no-op (${reason}) — recommend_split=false\n`);
-    return { status: 'skipped', reason };
+    return { skip: true, result: { status: 'skipped', reason } };
   };
 
   // ── Step 1: sizing signal + no-op gating ────────────────────────────────────
@@ -359,20 +423,23 @@ async function run(opts = {}) {
   const signal = signalResult.signal || {};
   if (signal.recommendSplit !== true) return noop('recommendSplit=false');
 
-  // Idempotency: a re-dispatched / resumed worker whose parent already carries a
-  // "## Sizing & Scheduling" comment must NOT re-create the sub-issues, blocking
-  // relations, and comments — that would mint a duplicate set of children on
-  // every retry. Mirror gather-context's own-comment idempotency check: if the
-  // read fails we can't confirm, so fall through and schedule rather than abort.
-  try {
-    const existing = await source.fetchComments(ticketId);
-    if (alreadyScheduled(existing && existing.own)) {
-      state.merge(worker, { recommend_split: 'true' });
-      process.stderr.write('[size-and-schedule] existing ## Sizing & Scheduling comment — not re-scheduling\n');
-      return { status: 'skipped', reason: 'already scheduled' };
+  // Idempotency: a re-dispatched / resumed worker whose parent already carries
+  // this phase's marker comment must NOT redo the phase (the eager/commit phases
+  // create sub-issues, and a re-run would mint a duplicate set of children).
+  // Mirror gather-context's own-comment check: if the read fails we can't
+  // confirm, so fall through and proceed rather than abort. propose passes a null
+  // marker (it re-posts a fresh preview every round of the adjust loop).
+  if (idempotencyHeaderRe) {
+    try {
+      const existing = await source.fetchComments(ticketId);
+      if (commentMatches(existing && existing.own, idempotencyHeaderRe)) {
+        state.merge(worker, { recommend_split: 'true' });
+        process.stderr.write(`[size-and-schedule] existing marker comment — ${alreadyReason}\n`);
+        return { skip: true, result: { status: 'skipped', reason: alreadyReason } };
+      }
+    } catch (err) {
+      process.stderr.write(`[size-and-schedule] fetchComments failed (continuing): ${err.message}\n`);
     }
-  } catch (err) {
-    process.stderr.write(`[size-and-schedule] fetchComments failed (continuing): ${err.message}\n`);
   }
 
   // ── Step 2: draft children from plan.md ──────────────────────────────────────
@@ -382,9 +449,23 @@ async function run(opts = {}) {
   if (streams.length === 0) return noop('no work streams in plan.md');
 
   const edges = computeEdges(streams);
+  const context = opts.context ?? readMuaddibFile(repo, 'context.md');
 
-  // ── Step 3: create sub-issues (dependency order) ─────────────────────────────
+  return {
+    skip: false,
+    ctx: { worker, repo, source, ticketId, parentTitle, signal, streams, edges, context, maxCommentChars },
+  };
+}
 
+// createChildren(ctx) → { children, resolvedEdges }. The shared, non-idempotent
+// write half of the eager/commit phases: create a sub-issue per stream (in
+// dependency order), wire the native blocking relations, and post each child a
+// "## Context" SCOPED to its own work stream (inclusion-biased; a child matching
+// nothing gets the whole parent context rather than being under-scoped).
+async function createChildren(ctx) {
+  const { source, ticketId, parentTitle, streams, edges, context, maxCommentChars } = ctx;
+
+  // ── create sub-issues (dependency order) ────────────────────────────────────
   const children = [];
   const numberToId = new Map();
   for (const s of streams) {
@@ -397,8 +478,7 @@ async function run(opts = {}) {
     process.stderr.write(`[size-and-schedule] created ${identifier} — ${title}\n`);
   }
 
-  // ── Step 4: wire native blocking relations ───────────────────────────────────
-
+  // ── wire native blocking relations ──────────────────────────────────────────
   const resolvedEdges = [];
   for (const e of edges) {
     const blockerId = numberToId.get(e.blocker);
@@ -410,14 +490,7 @@ async function run(opts = {}) {
     process.stderr.write(`[size-and-schedule] ${blockerId} blocks ${blockedId}\n`);
   }
 
-  // ── Step 5: scoped "## Context" per child ────────────────────────────────────
-
-  // Give each child a "## Context" scoped to ITS work stream: parse the parent
-  // context (own→parent already resolved by gather-context) back into its
-  // per-source items and keep, per child, only the items that share a term with
-  // that stream. Inclusion-biased — a child that matches nothing gets the whole
-  // parent context rather than being under-scoped. Deterministic, no model call.
-  const context = opts.context ?? readMuaddibFile(repo, 'context.md');
+  // ── scoped "## Context" per child ───────────────────────────────────────────
   if (context && context.trim()) {
     const sources = parseContextItems(context);
     const fullParts = splitIntoParts(context, maxCommentChars);
@@ -438,23 +511,125 @@ async function run(opts = {}) {
     );
   }
 
-  // ── Step 6: post the sizing/scheduling plan on the parent ────────────────────
+  return { children, resolvedEdges };
+}
 
-  const reviewBody = formatReviewComment({ signal, children, edges: resolvedEdges });
-  await source.postComment(ticketId, reviewBody);
+// run(opts) — EAGER phase (default, no flag). Size → create children → wire
+// relations → scoped context → post the "## Sub-issues created" comment. The
+// pre-#107 one-shot; no workflow wires it any more (they use --propose/--commit),
+// kept as a manual CLI mode for an un-gated decomposition. Idempotent on the
+// "## Sub-issues created" marker — the SAME marker runCommit posts, so eager and
+// commit dedup against each other: a ticket already decomposed by either route is
+// never re-decomposed into a duplicate set of children by the other. (The propose
+// preview's "## Sizing & Scheduling" header is deliberately NOT a children-created
+// marker — it is posted with no children yet — so neither creating route keys off
+// it.)
+async function run(opts = {}) {
+  const prep = await prepare(opts, {
+    idempotencyHeaderRe: CREATED_HEADER_RE,
+    alreadyReason: 'already scheduled',
+  });
+  if (prep.skip) return prep.result;
+  const { ctx } = prep;
+
+  const { children, resolvedEdges } = await createChildren(ctx);
+
+  const createdBody = formatCreatedComment({ signal: ctx.signal, children, edges: resolvedEdges });
+  await ctx.source.postComment(ctx.ticketId, createdBody);
 
   const identifiers = children.map((c) => c.identifier);
-  state.merge(worker, { recommend_split: 'true', sub_issues: JSON.stringify(identifiers) });
+  state.merge(ctx.worker, { recommend_split: 'true', sub_issues: JSON.stringify(identifiers) });
   process.stderr.write(
     `[size-and-schedule] scheduled ${children.length} sub-issue(s), ${resolvedEdges.length} relation(s) — recommend_split=true\n`,
   );
   return { status: 'scheduled', subIssues: identifiers, edges: resolvedEdges };
 }
 
+// runPropose(opts) — PROPOSE phase (--propose). Size → post a
+// "## Sizing & Scheduling" PREVIEW (planned streams + edges, NO children). Writes
+// recommend_split=true + sub_issues_plan. Not idempotent by design: the adjust
+// loop re-runs it each round to re-post a revised preview.
+async function runPropose(opts = {}) {
+  const prep = await prepare(opts, { idempotencyHeaderRe: null });
+  if (prep.skip) return prep.result;
+  const { ctx } = prep;
+
+  const previewBody = formatProposalComment({ signal: ctx.signal, streams: ctx.streams, edges: ctx.edges });
+  await ctx.source.postComment(ctx.ticketId, previewBody);
+
+  const planned = ctx.streams.map((s) => ({ number: s.number, name: s.name }));
+  state.merge(ctx.worker, { recommend_split: 'true', sub_issues_plan: JSON.stringify(planned) });
+  process.stderr.write(
+    `[size-and-schedule] proposed ${ctx.streams.length} stream(s), ${ctx.edges.length} edge(s) — recommend_split=true\n`,
+  );
+  return { status: 'proposed', streams: planned, edges: ctx.edges };
+}
+
+// runCommit(opts) — COMMIT phase (--commit). Size → create children → wire
+// relations → scoped context → post the "## Sub-issues created" comment. When the
+// operator confirmed "create tickets and dispatch" (worker state
+// sizing_confirm=dispatch, or opts.dispatch), also mark each child ready for the
+// dispatch daemon to auto-route. Marking is best-effort — the children are
+// already created (the expensive, non-idempotent work), so a labeling miss is
+// logged, not fatal. Idempotent on the "## Sub-issues created" marker.
+async function runCommit(opts = {}) {
+  const prep = await prepare(opts, {
+    idempotencyHeaderRe: CREATED_HEADER_RE,
+    alreadyReason: 'already committed',
+  });
+  if (prep.skip) return prep.result;
+  const { ctx } = prep;
+
+  const { children, resolvedEdges } = await createChildren(ctx);
+
+  // Dispatch decision: an explicit opts.dispatch wins; otherwise read the
+  // operator's confirmed choice from worker state. Only 'dispatch' marks
+  // ready-for-dispatch; 'tickets_only' finishes at creation.
+  const dispatch = opts.dispatch !== undefined
+    ? Boolean(opts.dispatch)
+    : state.get(ctx.worker, 'sizing_confirm') === 'dispatch';
+
+  let dispatched = 0;
+  if (dispatch) {
+    for (const c of children) {
+      if (!c.identifier) continue;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await ctx.source.markReadyForDispatch(c.identifier);
+        dispatched += 1;
+        process.stderr.write(`[size-and-schedule] marked ${c.identifier} ready-for-dispatch\n`);
+      } catch (err) {
+        process.stderr.write(
+          `[size-and-schedule] markReadyForDispatch(${c.identifier}) failed (continuing): ${err.message}\n`,
+        );
+      }
+    }
+  }
+
+  // Post the "## Sub-issues created" idempotency marker only AFTER the
+  // dispatch-marking loop. It is the skip signal a resumed worker keys off, so a
+  // crash mid-marking must leave NO marker — otherwise the retry would skip and
+  // the operator's dispatch choice would be silently dropped (the children never
+  // get marked ready-for-dispatch).
+  const createdBody = formatCreatedComment({ signal: ctx.signal, children, edges: resolvedEdges });
+  await ctx.source.postComment(ctx.ticketId, createdBody);
+
+  const identifiers = children.map((c) => c.identifier);
+  state.merge(ctx.worker, { recommend_split: 'true', sub_issues: JSON.stringify(identifiers) });
+  process.stderr.write(
+    `[size-and-schedule] committed ${children.length} sub-issue(s), ${resolvedEdges.length} relation(s), ${dispatched} dispatched — recommend_split=true\n`,
+  );
+  return { status: 'committed', subIssues: identifiers, edges: resolvedEdges, dispatched: dispatch };
+}
+
 // ─── CLI entry point ──────────────────────────────────────────────────────────
+// `--propose` / `--commit` select the split phases; no flag runs the eager
+// one-shot (feature.json / bug.json). The runner passes the flag via step.args.
 
 if (require.main === module) {
-  run().catch((err) => {
+  const arg = process.argv[2];
+  const entry = arg === '--commit' ? runCommit : arg === '--propose' ? runPropose : run;
+  entry().catch((err) => {
     process.stderr.write(`[size-and-schedule] FATAL: ${err.message}\n`);
     process.exit(1);
   });
@@ -462,6 +637,10 @@ if (require.main === module) {
 
 module.exports = {
   run,
+  runPropose,
+  runCommit,
+  prepare,
+  createChildren,
   readTicketJson,
   extractWorkStreamsSection,
   parseWorkStreams,
@@ -469,6 +648,8 @@ module.exports = {
   parseContextItems,
   selectRelevantItems,
   scopeContextForStream,
+  commentMatches,
   alreadyScheduled,
-  formatReviewComment,
+  formatProposalComment,
+  formatCreatedComment,
 };

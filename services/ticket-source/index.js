@@ -40,6 +40,15 @@
 //                                               terminal/closed state stays visible but no longer
 //                                               blocks). Each blockedBy/blocking entry is
 //                                               { identifier, title, state: { name }, active }.
+//   markReadyForDispatch(id)                 -> void
+//                                               mark an issue ready for the dispatch daemon to
+//                                               auto-route, by adding the label services/
+//                                               dispatch-daemon.js's resolveRoute() keys off
+//                                               (DISPATCH_LABEL, default "auto"). The sizing
+//                                               scheduler calls this on a freshly-created sub-issue
+//                                               when the operator confirms "create tickets and
+//                                               dispatch". Backends with no external system (raw)
+//                                               no-op it.
 //   addBlockingRelation(blockerId, blockedId) -> void
 //                                               create a "blockerId blocks blockedId" relation — the
 //                                               exact edge getBlockingStatus reads back (blockerId ends

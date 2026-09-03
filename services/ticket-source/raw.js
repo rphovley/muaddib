@@ -89,6 +89,12 @@ const rawSource = {
   // here to hold it structurally.
   async addBlockingRelation() {},
 
+  // No external backend, so nothing to label and no dispatch daemon watching a
+  // raw ticket — a void no-op (like postComment / addBlockingRelation above).
+  // The sizing scheduler never reaches this for raw anyway (it no-ops the whole
+  // step on a raw source), but the interface stays complete.
+  async markReadyForDispatch() {},
+
   async registerWatch() {
     throw new Error('raw ticket source has no backend — registerWatch() is not supported');
   },
