@@ -32,6 +32,13 @@
 //                                               terminal/closed state stays visible but no longer
 //                                               blocks). Each blockedBy/blocking entry is
 //                                               { identifier, title, state: { name }, active }.
+//   addBlockingRelation(blockerId, blockedId) -> void
+//                                               create a "blockerId blocks blockedId" relation — the
+//                                               exact edge getBlockingStatus reads back (blockerId ends
+//                                               up in blockedId's blockedBy; blockedId in blockerId's
+//                                               blocking). The scheduler calls this when it splits a
+//                                               ticket into dependent sub-issues. Backends with no
+//                                               ticket relationships (raw) no-op it.
 //   registerWatch({ teamId, url, secret })   -> { watchId }
 //   deregisterWatch(watchId)                 -> tears the watch down
 //

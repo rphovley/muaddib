@@ -76,6 +76,12 @@ const rawSource = {
     return { supported: false, blocked: false, blockedBy: [], blocking: [] };
   },
 
+  // No external backend, so no ticket relationships to create — no-op returning
+  // void (like postComment / deregisterWatch above). A raw-backed dependency has
+  // to be declared in the free-form task text itself; there's no ticket system
+  // here to hold it structurally.
+  async addBlockingRelation() {},
+
   async registerWatch() {
     throw new Error('raw ticket source has no backend — registerWatch() is not supported');
   },
