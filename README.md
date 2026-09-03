@@ -591,8 +591,24 @@ npm run muaddib https://github.com/owner/repo/issues/36          # or just: npm 
 npm run muaddib "fix the auth token expiry bug in the portal"
 ```
 
+By default a **ticket reference** dispatches *through the [Conductor](#the-conductor)*:
+`muaddib.sh` hands it to the persistent Conductor session, which triages it with
+its `dispatch-decision` skill and provisions a worker itself only if it decides to
+dispatch. Because the worker is spawned asynchronously by the Conductor, this path
+does **not** drop you into the worker; use `./muaddib/bin/attend.sh` to watch and
+`./muaddib/bin/attach.sh <n>` to attach. **Free-form task text** has no ticket to
+triage, so it always dispatches directly to a worker (and auto-attaches).
+
+To dispatch a ticket **directly** to a worker — bypassing the Conductor's triage,
+the pre-Conductor behavior (spawn `/muaddib <ref>` and auto-attach) — use
+`--direct`:
+
+```bash
+npm run muaddib -- --direct QUO-227      # skip triage; spawn a worker for QUO-227 now and attach
+```
+
 To force raw dispatch when task text could itself look like a ticket reference,
-use `--raw` (or the thin alias `muaddib-task.sh`):
+use `--raw` (or the thin alias `muaddib-task.sh`); raw dispatch is always direct:
 
 ```bash
 npm run muaddib -- --raw "investigate QUO-123 regression"   # treat as task text, not ticket QUO-123
