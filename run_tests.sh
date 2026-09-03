@@ -95,6 +95,9 @@ TEST_SCRIPT='
     echo "=== scripts/test-muaddib-dispatch ==="
     bash "$MUADDIB/scripts/test-muaddib-dispatch.sh"
 
+    echo "=== scripts/test-conductor-dispatch ==="
+    bash "$MUADDIB/scripts/test-conductor-dispatch.sh"
+
     echo "=== services/test-ticket-source ==="
     node "$MUADDIB/services/__tests__/test-ticket-source.js"
 

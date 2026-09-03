@@ -14,6 +14,11 @@
 // testReportFleetStateReadOnly       — reportFleetState() returns a human-readable
 //                                       string and takes no action (Autonomy L0):
 //                                       the session is never driven, no events written
+// testResolveInitialPromptSingleToken — a single-token ticket arg is returned as-is
+// testResolveInitialPromptMultiWord   — multi-word task argv is joined with spaces
+// testResolveInitialPromptEnvFallback — CONDUCTOR_INITIAL_PROMPT used when argv empty
+// testResolveInitialPromptArgvWins    — argv takes precedence over the env fallback
+// testResolveInitialPromptEmpty       — no argv, no env → ""
 
 const fs = require("fs");
 const os = require("os");
@@ -182,6 +187,70 @@ async function testReportFleetStateReadOnly() {
   }
 }
 
+// ─── resolveInitialPrompt ──────────────────────────────────────────────────────
+// The prompt-resolution seam: joined argv > CONDUCTOR_INITIAL_PROMPT > "". Pure
+// (aside from the env fallback), so these are plain input/output assertions.
+
+async function testResolveInitialPromptSingleToken() {
+  const prev = process.env.CONDUCTOR_INITIAL_PROMPT;
+  delete process.env.CONDUCTOR_INITIAL_PROMPT;
+  try {
+    const got = daemon.resolveInitialPrompt(["QUO-507"]);
+    if (got !== "QUO-507")
+      throw new Error(`expected "QUO-507", got ${JSON.stringify(got)}`);
+  } finally {
+    restore("CONDUCTOR_INITIAL_PROMPT", prev);
+  }
+}
+
+async function testResolveInitialPromptMultiWord() {
+  const prev = process.env.CONDUCTOR_INITIAL_PROMPT;
+  delete process.env.CONDUCTOR_INITIAL_PROMPT;
+  try {
+    const got = daemon.resolveInitialPrompt(["look", "into", "the", "flaky", "preview"]);
+    if (got !== "look into the flaky preview")
+      throw new Error(`expected joined task text, got ${JSON.stringify(got)}`);
+  } finally {
+    restore("CONDUCTOR_INITIAL_PROMPT", prev);
+  }
+}
+
+async function testResolveInitialPromptEnvFallback() {
+  const prev = process.env.CONDUCTOR_INITIAL_PROMPT;
+  process.env.CONDUCTOR_INITIAL_PROMPT = "QUO-900";
+  try {
+    const got = daemon.resolveInitialPrompt([]);
+    if (got !== "QUO-900")
+      throw new Error(`expected env fallback "QUO-900", got ${JSON.stringify(got)}`);
+  } finally {
+    restore("CONDUCTOR_INITIAL_PROMPT", prev);
+  }
+}
+
+async function testResolveInitialPromptArgvWins() {
+  const prev = process.env.CONDUCTOR_INITIAL_PROMPT;
+  process.env.CONDUCTOR_INITIAL_PROMPT = "QUO-900";
+  try {
+    const got = daemon.resolveInitialPrompt(["QUO-507"]);
+    if (got !== "QUO-507")
+      throw new Error(`argv must win over env fallback, got ${JSON.stringify(got)}`);
+  } finally {
+    restore("CONDUCTOR_INITIAL_PROMPT", prev);
+  }
+}
+
+async function testResolveInitialPromptEmpty() {
+  const prev = process.env.CONDUCTOR_INITIAL_PROMPT;
+  delete process.env.CONDUCTOR_INITIAL_PROMPT;
+  try {
+    const got = daemon.resolveInitialPrompt([]);
+    if (got !== "")
+      throw new Error(`expected "" with no argv and no env, got ${JSON.stringify(got)}`);
+  } finally {
+    restore("CONDUCTOR_INITIAL_PROMPT", prev);
+  }
+}
+
 function restore(key, prev) {
   if (prev === undefined) delete process.env[key];
   else process.env[key] = prev;
@@ -197,6 +266,11 @@ async function main() {
     ["healthCheck: tokenPresent=false when token unset", testHealthCheckTokenAbsent],
     ["healthCheck: sessionAlive=false when no session set", testHealthCheckNoSession],
     ["reportFleetState: human-readable string, takes no action", testReportFleetStateReadOnly],
+    ["resolveInitialPrompt: single-token ticket returned as-is", testResolveInitialPromptSingleToken],
+    ["resolveInitialPrompt: multi-word argv joined with spaces", testResolveInitialPromptMultiWord],
+    ["resolveInitialPrompt: CONDUCTOR_INITIAL_PROMPT fallback", testResolveInitialPromptEnvFallback],
+    ["resolveInitialPrompt: argv wins over env fallback", testResolveInitialPromptArgvWins],
+    ["resolveInitialPrompt: empty argv + no env → \"\"", testResolveInitialPromptEmpty],
   ];
 
   let passed = 0;

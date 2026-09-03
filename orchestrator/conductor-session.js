@@ -178,6 +178,40 @@ class ConductorSession {
 
   // ─── prompt / response ───────────────────────────────────────────────────
 
+  // Block until claude has finished any in-flight turn: the pane shows no
+  // working marker and has stayed unchanged for settleMs. A prompt typed into a
+  // session that's still mid-turn is dropped or garbled by the TUI, so a caller
+  // reusing a session that may already be busy (e.g. the daemon's --send reuse
+  // path) waits this out first. Returns this once idle; throws on a dead session
+  // or timeout.
+  waitUntilIdle(opts = {}) {
+    const settleMs = intOpt(opts.settleMs, null, this.settleMs);
+    const timeoutMs = intOpt(opts.timeoutMs, null, this.timeoutMs);
+    const pollMs = intOpt(opts.pollMs, null, this.pollMs);
+
+    const deadline = Date.now() + timeoutMs;
+    let last = null;
+    let stableSince = Date.now();
+    while (Date.now() < deadline) {
+      if (!this.isAlive()) {
+        throw new Error('ConductorSession.waitUntilIdle: session is not alive');
+      }
+      const pane = this._capture();
+      if (pane === last) {
+        if (paneIsIdle(pane) && Date.now() - stableSince >= settleMs) {
+          return this;
+        }
+      } else {
+        last = pane;
+        stableSince = Date.now();
+      }
+      msleep(pollMs);
+    }
+    throw new Error(
+      `ConductorSession.waitUntilIdle: pane still busy after ${timeoutMs}ms`,
+    );
+  }
+
   // Type text literally, then submit with Enter. Records a pre-prompt snapshot
   // so readResponse can diff against it.
   sendPrompt(text) {
