@@ -231,6 +231,39 @@ function createGithubSource(opts = {}) {
       return { commentId: created.id };
     },
 
+    // fetchComments(id) → { own, parent }, each a normalized { id, body }[].
+    // The generic read-back seam (idempotency checks, .muaddib/context.md
+    // hydration) for the github backend, whose fetchTicket returns no comments.
+    //   own    — GET .../issues/:n/comments
+    //   parent — GitHub Issues have no native parent, but createSubIssue writes a
+    //            "Part of #<n>" back-reference at the top of a child's body; when
+    //            that marker is present we read the referenced parent's comments
+    //            so read-back can fall back to the parent's "## Context". Parent
+    //            detection is best-effort — any failure degrades to own-only.
+    async fetchComments(id) {
+      const number = issueNumber(id);
+      if (!number) return { own: [], parent: [] };
+      const { owner, repo } = resolveRepo();
+      const norm = (arr) => (Array.isArray(arr) ? arr : []).map((c) => ({ id: c.id, body: c.body }));
+      const own = norm(await api(`/repos/${owner}/${repo}/issues/${number}/comments`));
+
+      let parent = [];
+      try {
+        const issue = await api(`/repos/${owner}/${repo}/issues/${number}`);
+        const body = (issue && issue.body) || '';
+        // createSubIssue writes the marker as the very first line of the body, so
+        // anchor to the body's start — a "Part of #n" appearing later in prose
+        // must not be mistaken for the parent back-reference.
+        const m = body.match(/^Part of #(\d+)\b/);
+        if (m) {
+          parent = norm(await api(`/repos/${owner}/${repo}/issues/${m[1]}/comments`));
+        }
+      } catch (_) {
+        // Parent detection is advisory; own comments still stand.
+      }
+      return { own, parent };
+    },
+
     // mentionUser(handle) → the markup that notifies `handle` inside a comment
     // body. Pure string helper; normalizes a leading '@'.
     //

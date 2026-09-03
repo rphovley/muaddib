@@ -151,6 +151,19 @@ const INVERSE_RELATIONS_PAGE_QUERY = `
   }
 `;
 
+// fetchComments reads a ticket's comment thread (and its parent's) for the
+// generic read-back seam — separate from fetch-ticket.js's own richer,
+// comment-aware query. Kept minimal: only { id, body }, the fields the "## Plan"
+// / "## Context" scanners actually read.
+const COMMENTS_QUERY = `
+  query FetchComments($id: String!) {
+    issue(id: $id) {
+      comments(first: 100) { nodes { id body } }
+      parent { comments(first: 100) { nodes { id body } } }
+    }
+  }
+`;
+
 const COMMENT_CREATE = `
   mutation CommentCreate($issueId: String!, $body: String!) {
     commentCreate(input: { issueId: $issueId, body: $body }) {
@@ -225,6 +238,21 @@ function createLinearSource(opts = {}) {
     async fetchTicket(id) {
       const data = await graphql(FETCH_TICKET_QUERY, { id });
       return (data && data.issue) || null;
+    },
+
+    // fetchComments(id) → { own, parent }, each a normalized { id, body }[].
+    // The generic read-back path callers use when they don't have fetch-ticket's
+    // richer query in hand (idempotency checks, .muaddib/context.md hydration).
+    // `parent` is [] when the issue has no parent. A missing issue → both empty.
+    async fetchComments(id) {
+      const data = await graphql(COMMENTS_QUERY, { id });
+      const issue = (data && data.issue) || null;
+      if (!issue) return { own: [], parent: [] };
+      const norm = (nodes) => (nodes || []).map((c) => ({ id: c.id, body: c.body }));
+      return {
+        own: norm(issue.comments && issue.comments.nodes),
+        parent: norm(issue.parent && issue.parent.comments && issue.parent.comments.nodes),
+      };
     },
 
     // postComment(id, body) → the created comment's id.

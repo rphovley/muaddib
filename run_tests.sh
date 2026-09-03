@@ -92,6 +92,9 @@ TEST_SCRIPT='
     echo "=== scripts/test-fetch-ticket ==="
     node "$MUADDIB/scripts/test-fetch-ticket.js"
 
+    echo "=== scripts/test-gather-context ==="
+    node "$MUADDIB/scripts/test-gather-context.js"
+
     echo "=== scripts/test-muaddib-dispatch ==="
     bash "$MUADDIB/scripts/test-muaddib-dispatch.sh"
 
@@ -103,6 +106,9 @@ TEST_SCRIPT='
 
     echo "=== services/test-context-source ==="
     node "$MUADDIB/services/__tests__/test-context-source.js"
+
+    echo "=== services/test-context-comments ==="
+    node "$MUADDIB/services/__tests__/test-context-comments.js"
 
     echo "=== services/test-notify ==="
     node "$MUADDIB/services/__tests__/test-notify.js"

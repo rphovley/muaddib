@@ -21,6 +21,13 @@
       ]
     },
     {
+      "id": "gather-context",
+      "type": "script",
+      "script": "scripts/gather-context.js",
+      "stateReads": ["ticket_identifier", "ticket_url"],
+      "stateWrites": ["context_status"]
+    },
+    {
       "id": "branch",
       "type": "script",
       "script": "scripts/branch.sh",
