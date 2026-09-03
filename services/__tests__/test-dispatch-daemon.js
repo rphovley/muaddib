@@ -27,6 +27,11 @@
 // testValidateEnvThrowsOnMissingAccountTokens — validateEnv() throws, naming the missing
 //                                    CLAUDE_CODE_OAUTH_TOKEN/GITHUB_TOKEN (fail fast at startup
 //                                    rather than silently at worker-spawn time)
+// testDispatchIssueBlockedIsHeld           — a ticket blocked by an active dependency is held
+//                                    (active blocker logged, unmarked → retryable, never spawned)
+// testDispatchIssueUnblockedFallsThrough   — blocked:false proceeds past the coordination gate
+// testDispatchIssueUnsupportedBackendUnaffected — raw's { supported:false } proceeds unchanged
+// testDispatchIssueBlockingErrorFailsOpen  — a getBlockingStatus error is logged and fails open (proceeds)
 
 const fs = require("fs");
 const os = require("os");
@@ -781,6 +786,129 @@ async function testPollAndDispatchSwallowsPollError() {
     throw new Error(`expected the poll error to be logged, got: ${logged}`);
 }
 
+// ─── dispatchIssue: coordination gate (blocked ticket held) ──────────────────────
+// The gate sits after the synchronous markDispatched reservation and before the
+// capacity/spawn logic: a ticket still blocked by an unresolved dependency is
+// held (unmarked → retryable) rather than dispatched. These run the gate in an
+// isolated subprocess so they never spawn a real worker: MAX_DISPATCH_WORKERS=0
+// forces any ticket that DOES pass the gate down the "queued" path (no spawn),
+// MUADDIB_DISPATCH_DIR points the dedup/queue ledger at a throwaway temp dir, and
+// a fake ticket source supplies getBlockingStatus. The manifest gives a
+// projectName so the (docker-less) worker-count read resolves cleanly.
+
+// mode drives the fake source's getBlockingStatus:
+//   blocked     — { blocked:true, blockedBy:[GH-99 active, GH-98 inactive] }
+//   unblocked   — { supported:true, blocked:false }
+//   unsupported — { supported:false, blocked:false } (raw-shaped)
+//   throw       — getBlockingStatus rejects
+function runDispatchGate(mode) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "muaddib-test-"));
+  writeManifest(tmpDir, JSON.stringify({ projectName: "p", ticketSource: "raw" }));
+  const program = `
+    const { dispatchIssue } = require(${JSON.stringify(DISPATCH_DAEMON_PATH)});
+    const mode = ${JSON.stringify(mode)};
+    const source = {
+      name: "fake",
+      getBlockingStatus: async (id) => {
+        if (mode === "throw") throw new Error("blocking API 500");
+        if (mode === "blocked") {
+          return {
+            supported: true,
+            blocked: true,
+            blockedBy: [
+              { identifier: "GH-99", title: "dep", state: { name: "In Progress" }, active: true },
+              { identifier: "GH-98", title: "closed dep", state: { name: "Done" }, active: false },
+            ],
+            blocking: [],
+          };
+        }
+        if (mode === "unsupported") return { supported: false, blocked: false, blockedBy: [], blocking: [] };
+        return { supported: true, blocked: false, blockedBy: [], blocking: [] };
+      },
+    };
+    dispatchIssue({ identifier: "GH-1", labels: ["auto"], assigneeId: null }, source)
+      .then(() => process.exit(0), (e) => { console.error("REJECTED", e && e.message); process.exit(3); });
+  `;
+  const env = {
+    ...process.env,
+    REPO_ROOT: tmpDir,
+    MUADDIB_DISPATCH_DIR: tmpDir,
+    MAX_DISPATCH_WORKERS: "0",
+  };
+  try {
+    const r = spawnSync(process.execPath, ["-e", program], {
+      encoding: "utf8",
+      env,
+      timeout: 20_000,
+    });
+    let dedup = "";
+    try {
+      dedup = fs.readFileSync(path.join(tmpDir, "dispatch.json"), "utf8");
+    } catch (_) {}
+    return { r, dedup };
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+async function testDispatchIssueBlockedIsHeld() {
+  const { r, dedup } = runDispatchGate("blocked");
+  if (r.status !== 0)
+    throw new Error(`gate subprocess failed (exit ${r.status}): ${r.stderr}`);
+  const out = r.stdout;
+  if (!out.includes("held"))
+    throw new Error(`expected a "held" log for a blocked ticket, got: ${out}`);
+  // Names the active blocker (GH-99), not the inactive/closed one (GH-98).
+  if (!out.includes("GH-99"))
+    throw new Error(`expected the active blocker GH-99 named in the held log, got: ${out}`);
+  if (out.includes("GH-98"))
+    throw new Error(`inactive blocker GH-98 should not be named as holding the ticket, got: ${out}`);
+  // Returned before the capacity/spawn logic — no "queued"/"dispatching" log.
+  if (out.includes("queued") || out.includes("dispatching"))
+    throw new Error(`a held ticket must not reach the spawn path, got: ${out}`);
+  // Unmarked → retryable: the dedup ledger must not retain GH-1.
+  if (dedup.includes("GH-1"))
+    throw new Error(`a held ticket must be left un-dispatched (retryable), dedup=${dedup}`);
+}
+
+async function testDispatchIssueUnblockedFallsThrough() {
+  const { r } = runDispatchGate("unblocked");
+  if (r.status !== 0)
+    throw new Error(`gate subprocess failed (exit ${r.status}): ${r.stderr}`);
+  const out = r.stdout;
+  if (out.includes("held"))
+    throw new Error(`an unblocked ticket must not be held, got: ${out}`);
+  // Proceeds past the gate into the capacity check (MAX_DISPATCH_WORKERS=0 → queued).
+  if (!out.includes("queued"))
+    throw new Error(`expected an unblocked ticket to proceed past the gate, got: ${out}`);
+}
+
+async function testDispatchIssueUnsupportedBackendUnaffected() {
+  // raw-shaped { supported:false, blocked:false } — no behavior change.
+  const { r } = runDispatchGate("unsupported");
+  if (r.status !== 0)
+    throw new Error(`gate subprocess failed (exit ${r.status}): ${r.stderr}`);
+  const out = r.stdout;
+  if (out.includes("held"))
+    throw new Error(`an unsupported backend (supported:false) must not hold the ticket, got: ${out}`);
+  if (!out.includes("queued"))
+    throw new Error(`expected an unsupported-backend ticket to proceed unchanged, got: ${out}`);
+}
+
+async function testDispatchIssueBlockingErrorFailsOpen() {
+  const { r } = runDispatchGate("throw");
+  if (r.status !== 0)
+    throw new Error(`gate subprocess failed (exit ${r.status}): ${r.stderr}`);
+  const out = r.stdout;
+  if (!out.includes("blocking check failed") || !out.includes("blocking API 500"))
+    throw new Error(`expected the blocking-check failure to be logged, got: ${out}`);
+  if (out.includes("held"))
+    throw new Error(`a failed blocking check must fail open, not hold, got: ${out}`);
+  // Fail-open → still proceeds to the capacity/spawn path (queued at 0 slots).
+  if (!out.includes("queued"))
+    throw new Error(`expected fail-open to proceed past the gate, got: ${out}`);
+}
+
 // ─── runner ──────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -899,6 +1027,22 @@ async function main() {
     [
       "pollAndDispatch: logs and swallows a pollIssues failure",
       testPollAndDispatchSwallowsPollError,
+    ],
+    [
+      "dispatchIssue: blocked ticket is held (unmarked, not spawned)",
+      testDispatchIssueBlockedIsHeld,
+    ],
+    [
+      "dispatchIssue: unblocked ticket falls through the gate",
+      testDispatchIssueUnblockedFallsThrough,
+    ],
+    [
+      "dispatchIssue: unsupported backend (supported:false) is unaffected",
+      testDispatchIssueUnsupportedBackendUnaffected,
+    ],
+    [
+      "dispatchIssue: getBlockingStatus error fails open",
+      testDispatchIssueBlockingErrorFailsOpen,
     ],
   ];
 

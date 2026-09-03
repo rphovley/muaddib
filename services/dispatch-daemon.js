@@ -115,6 +115,24 @@ let server = null;
 // set if it ever does route, so a later relapse to no-route logs afresh.
 const loggedNoRoute = new Set();
 
+// Identifiers already logged as "held" (blocked by an unresolved dependency).
+// Same rationale as loggedNoRoute: the poll path re-runs the coordination gate
+// for a persistently-held ticket on every ~20s tick, so log the hold once per
+// identifier. Cleared once the ticket later proceeds past the gate, so a future
+// relapse to blocked logs afresh.
+const loggedHeld = new Set();
+
+// Tickets currently held by the coordination gate, keyed by identifier, each
+// carrying the dispatch payload and the source it was seen on. Populated only in
+// webhook mode: the poll path re-examines every open issue on every tick, so a
+// held ticket there re-runs the gate on its own once the blocker clears. The
+// webhook path has no such loop and would otherwise strand the ticket — a
+// blocker-completion event fires on the *blocker*, not on the held ticket, and
+// the held ticket's own next event only re-dispatches on a label change. So the
+// daemon periodically re-runs the gate for these entries (sweepHeld, on the
+// existing flush interval), re-dispatching without another inbound event.
+const heldTickets = new Map();
+
 function log(msg) {
   process.stdout.write(`[dispatch-daemon] ${msg}\n`);
 }
@@ -481,7 +499,7 @@ async function trySpawn(entry) {
 // webhook path (handleEvent) and the GitHub poll path (pollAndDispatch) normalize
 // their backend-specific payload down to this shape and call in here.
 
-async function dispatchIssue({ identifier, labels, assigneeId }) {
+async function dispatchIssue({ identifier, labels, assigneeId }, source) {
   // Assignee guard: if DISPATCH_ASSIGNEE_ID is set, only dispatch tickets
   // assigned to that user. Prevents every machine from picking up the same
   // ticket when multiple dispatchers are running. (assigneeId is the Linear
@@ -524,6 +542,63 @@ async function dispatchIssue({ identifier, labels, assigneeId }) {
   // flush would spawn duplicate workers. trySpawn unmarks on a failed spawn,
   // so a genuine failure still retries.
   markDispatched(identifier);
+
+  // Coordination gate: hold a ticket that is still blocked by an unresolved
+  // dependency instead of spawning a worker for it. getBlockingStatus is a
+  // read-only report on the ticket source; acting on it (deciding NOT to
+  // dispatch) is this daemon's call. Placed after the synchronous markDispatched
+  // reservation and before the capacity check, so it runs only for tickets that
+  // are routed, pass the assignee guard, and are not already dispatched.
+  //
+  // Resolve the source lazily here (not at the top of the function): the
+  // early-return paths above must stay usable without a configured ticket
+  // source, and pollAndDispatch passes down the source it already resolved.
+  const src = source || ticketSource();
+  if (src && typeof src.getBlockingStatus === "function") {
+    let status = null;
+    try {
+      status = await src.getBlockingStatus(identifier);
+    } catch (err) {
+      // Fail open: a transient blocking-API error must not strand a routable
+      // ticket. Log and fall through to spawn — the daemon's normal retry
+      // posture (poll re-examines each tick, webhook re-fires) still applies.
+      log(`${identifier}: blocking check failed (${err.message}) — proceeding`);
+    }
+    if (status && status.blocked) {
+      // Held. Unmark (symmetric with trySpawn's unmark-on-failure) so the ticket
+      // stays retryable: the poll path re-spawns once the blocker clears, and the
+      // webhook path retries on the ticket's next event. Log the active blockers
+      // once per identifier (loggedHeld) so a persistently-held ticket doesn't
+      // flood the daemon log on every poll tick.
+      if (!loggedHeld.has(identifier)) {
+        loggedHeld.add(identifier);
+        const activeBlockers = (status.blockedBy || [])
+          .filter((b) => b && b.active)
+          .map((b) => b.identifier)
+          .filter(Boolean);
+        log(
+          `${identifier}: blocked by ${activeBlockers.join(", ") || "an unresolved dependency"} — held (will retry when unblocked)`,
+        );
+      }
+      // Register for the webhook-mode resume sweep (poll mode re-examines the
+      // ticket on its own next tick, so it needs no registration). Keyed by
+      // identifier, so re-holding an already-held ticket just refreshes it.
+      if (src.watchMode === "webhook") {
+        heldTickets.set(identifier, {
+          payload: { identifier, labels, assigneeId },
+          source: src,
+        });
+      }
+      unmarkDispatched(identifier);
+      return;
+    }
+  }
+  // Proceeding past the gate (not blocked, or the backend can't report blocking
+  // — raw reports supported:false / blocked:false, so it falls through here with
+  // no behavior change). Drop any earlier held-suppression so a future relapse to
+  // blocked logs afresh, and clear any resume-sweep registration.
+  loggedHeld.delete(identifier);
+  heldTickets.delete(identifier);
 
   const count = await countActiveWorkers();
   if (count >= MAX_WORKERS) {
@@ -611,15 +686,70 @@ async function pollAndDispatch(source) {
       .map((l) => (l && l.name ? l.name.toLowerCase() : ""))
       .filter(Boolean);
     try {
-      await dispatchIssue({
-        identifier: issue.identifier,
-        labels,
-        assigneeId: issue.assignee || null,
-      });
+      await dispatchIssue(
+        {
+          identifier: issue.identifier,
+          labels,
+          assigneeId: issue.assignee || null,
+        },
+        src,
+      );
     } catch (err) {
       log(`${issue.identifier}: dispatch error: ${err.message}`);
     }
   }
+}
+
+// ─── held-ticket resume sweep (webhook path) ──────────────────────────────────
+// Webhook mode has no poll loop, so a ticket held by the coordination gate would
+// strand once its blocker clears (the clearing event fires on the blocker, and
+// the held ticket's own next event only re-dispatches on a label change). Re-run
+// the gate for every held ticket on the flush interval: clear the registry first
+// and re-dispatch each entry, so dispatchIssue re-adds only the ones still
+// blocked — an unblocked (spawned/queued), re-routed, or already-dispatched
+// ticket simply isn't re-added, keeping the registry self-cleaning.
+async function sweepHeld() {
+  if (heldTickets.size === 0) return;
+  const entries = [...heldTickets.values()];
+  heldTickets.clear();
+  for (const { payload, source } of entries) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      await dispatchIssue(payload, source);
+    } catch (err) {
+      log(`${payload.identifier}: held-sweep error: ${err.message}`);
+    }
+  }
+}
+
+// ─── queue-drain spawn gate (flush path) ──────────────────────────────────────
+// flush() drains the overflow queue by calling trySpawn directly, bypassing the
+// dispatchIssue coordination gate — so a ticket queued at capacity that then
+// becomes blocked before a slot frees would spawn anyway. Re-check blocking here
+// before spawning: a blocked entry returns false so flush keeps it queued and
+// re-checks on the next drain (matching the poll/webhook retry posture). Errors
+// fail open, same rationale as the dispatch-path gate.
+async function spawnIfUnblocked(entry) {
+  const src = ticketSource();
+  if (src && typeof src.getBlockingStatus === "function") {
+    let status = null;
+    try {
+      status = await src.getBlockingStatus(entry.ticketId);
+    } catch (err) {
+      log(`${entry.ticketId}: blocking check failed (${err.message}) — proceeding`);
+    }
+    if (status && status.blocked) {
+      if (!loggedHeld.has(entry.ticketId)) {
+        loggedHeld.add(entry.ticketId);
+        log(`${entry.ticketId}: still blocked — kept queued (will retry when unblocked)`);
+      }
+      return false;
+    }
+  }
+  // Unblocked (or unreportable) — drop any held-suppression so a future relapse
+  // logs afresh, then hand off to the real spawn.
+  loggedHeld.delete(entry.ticketId);
+  return trySpawn(entry);
 }
 
 // ─── graceful shutdown ────────────────────────────────────────────────────────
@@ -770,9 +900,17 @@ async function main() {
     );
   }
 
-  // Overflow-queue flush + orphaned-status cleanup interval (every 30 s), in both modes.
+  // Overflow-queue flush + orphaned-status cleanup interval (every 30 s), in both
+  // modes. The flush drain re-checks blocking (spawnIfUnblocked) so a queued
+  // ticket that became blocked isn't spawned. In webhook mode, also sweep held
+  // tickets so one strands no longer once its blocker clears (poll mode re-runs
+  // the gate on its own tick).
+  const isWebhook = source.watchMode === "webhook";
   flushInterval = setInterval(() => {
-    flush(trySpawn).catch((err) => log(`flush error: ${err.message}`));
+    flush(spawnIfUnblocked).catch((err) => log(`flush error: ${err.message}`));
+    if (isWebhook) {
+      sweepHeld().catch((err) => log(`held-sweep error: ${err.message}`));
+    }
     cleanupOrphanedStatusFiles().catch((err) =>
       log(`cleanup error: ${err.message}`),
     );
