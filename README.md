@@ -644,6 +644,49 @@ Run with no argument for a bare idle daemon (`npm run muaddib:conductor`, or
 is already up, a ticket/task is sent to the existing session rather than spawning
 a second one.
 
+#### Conductor skills (`conductor/`)
+
+The Conductor has its **own** skill set, separate from the Worker skills under
+`claude/skills/*`. The two never mix:
+
+| | `claude/skills/*` (Worker skills) | `conductor/skills/*` (Conductor skills) |
+|---|---|---|
+| Runs on | inside each **Worker container** | the **host** Conductor session |
+| Loaded by | `COPY … claude/skills/ → ~/.claude/skills/` baked into `Dockerfile.worker` | `--plugin-dir <repo>/conductor` on the Conductor's `claude` launch |
+| Scope | every `claude` in the worker image | the Conductor's session only — a human running plain `claude` in the repo root does **not** get them |
+
+`conductor/` is a minimal [Claude Code plugin](https://docs.claude.com/en/docs/claude-code/plugins):
+a `conductor/.claude-plugin/plugin.json` manifest plus each skill at
+`conductor/skills/<name>/SKILL.md` (same frontmatter shape as the Worker skills).
+`orchestrator/conductor-session.js` appends `--plugin-dir '<repo>/conductor'` to
+the `claude` command it launches (see `conductorPluginDir()`), so the skills load
+for the Conductor and **only** the Conductor — no copy or symlink staging step,
+no ambient leakage into other host `claude` runs. This is why the flag was chosen
+over a project-local `.claude/skills/` at the repo root, which any host `claude`
+started there would also pick up.
+
+Validate the plugin (no token or running session needed — used in CI-style checks):
+
+```bash
+claude plugin validate muaddib/conductor          # manifest + every SKILL.md
+claude plugin validate --strict muaddib/conductor  # warnings are errors
+```
+
+Seed skills:
+
+- **`triage`** — a blocked or awaiting-review worker is waiting on an answer.
+  Decide whether the Conductor answers directly (drafting the answer) or escalates
+  to the human, weighing the project's configured autonomy level. (The concrete
+  `autonomyLevel` input lands with muaddib#121; the skill references it
+  conceptually until then.)
+- **`dispatch-decision`** — given a ticket, decide whether to dispatch a worker
+  now, defer, or skip, weighing readiness, the project's goals/concurrency limit,
+  and what is already in flight.
+
+The skills are written **agent-agnostically** — "what to decide," free of
+Claude-Code-specific mechanics — so the decision prose stays portable even though
+the load mechanism is Claude Code's plugin system.
+
 ## MuaddibApp — menu bar status board
 
 A native macOS menu bar app (`muaddib/MuaddibApp/`) that replaces the
