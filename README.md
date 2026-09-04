@@ -592,12 +592,15 @@ npm run muaddib "fix the auth token expiry bug in the portal"
 ```
 
 Dispatch is always direct — running the command IS the decision to put a worker
-on the ticket, so `muaddib.sh` spawns it straight away and auto-attaches you.
+on the ticket, so `muaddib.sh` spawns it straight away with no judgment step.
 (An earlier version routed a resolved ticket through the [Conductor](#the-conductor)'s
 `dispatch-decision` skill first; removed once every real trigger turned out to
-already carry an explicit human "yes," leaving the skill nothing to decide. The
-Conductor still runs independently, watching every worker for its own `/triage`
-job.)
+already carry an explicit human "yes," leaving the skill nothing to decide.)
+For a **ticket reference**, the operator lands in the persistent Conductor
+session, not the worker's own — the fleet manager stays the thing you interact
+with; use `./muaddib/bin/attach.sh <n>` for the worker's own session instead.
+**Free-form task text** has no ticket for the fleet manager to track, so it
+dispatches straight to the worker and auto-attaches there, unchanged.
 
 To force raw dispatch when task text could itself look like a ticket reference,
 use `--raw` (or the thin alias `muaddib-task.sh`); raw dispatch is always direct:
