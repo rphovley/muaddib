@@ -90,11 +90,13 @@
       "id": "implement",
       "type": "claude-tui",
       "skill": "implement",
+      "runIf": "state.recommend_split !== 'true'",
       "stateReads": ["branch", "ticket_identifier"]
     },
     {
       "id": "implement-check-loop",
       "type": "loop",
+      "runIf": "state.recommend_split !== 'true'",
       "minIterations": 1,
       "maxIterations": 5,
       "exitCondition": "state.check_status === 'pass'",
@@ -118,6 +120,7 @@
       "id": "review",
       "type": "claude-tui",
       "skill": "review-fleet",
+      "runIf": "state.recommend_split !== 'true'",
       "stateReads": ["ticket_url", "ticket_identifier"],
       "stateWrites": ["review_status", "review_findings"]
     },
@@ -155,6 +158,7 @@
       "id": "wrapup",
       "type": "claude-tui",
       "skill": "commit-and-pr",
+      "runIf": "state.recommend_split !== 'true'",
       "stateReads": ["branch", "ticket_url", "api_tunnel_url", "portal_url", "homeowner_url"],
       "stateWrites": ["pr_number"]
     }

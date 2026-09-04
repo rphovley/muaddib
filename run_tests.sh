@@ -86,6 +86,9 @@ TEST_SCRIPT='
     echo "=== orchestrator/test-fleet-control-cli ==="
     node "$MUADDIB/orchestrator/__tests__/test-fleet-control-cli.js"
 
+    echo "=== orchestrator/test-workflow-split-gating ==="
+    node "$MUADDIB/orchestrator/__tests__/test-workflow-split-gating.js"
+
     echo "=== scripts/test-read-config ==="
     bash "$MUADDIB/scripts/test-read-config.sh"
 
@@ -103,6 +106,9 @@ TEST_SCRIPT='
 
     echo "=== scripts/test-size-and-schedule ==="
     node "$MUADDIB/scripts/test-size-and-schedule.js"
+
+    echo "=== scripts/test-gather-dispatch-context ==="
+    node "$MUADDIB/scripts/test-gather-dispatch-context.js"
 
     echo "=== scripts/test-sizing-hook ==="
     node "$MUADDIB/scripts/test-sizing-hook.js"

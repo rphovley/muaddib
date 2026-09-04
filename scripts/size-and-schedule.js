@@ -57,6 +57,7 @@ const fs = require('fs');
 const path = require('path');
 
 const state = require('../orchestrator/state');
+const { emit } = require('../orchestrator/events');
 const { getTicketSource } = require('../services/ticket-source');
 const { computeSizingSignal } = require('../orchestrator/sizing-signal');
 const { MAX_COMMENT_CHARS, splitIntoParts, formatContext } = require('../services/context-comments');
@@ -579,6 +580,7 @@ async function runCommit(opts = {}) {
   });
   if (prep.skip) return prep.result;
   const { ctx } = prep;
+  const emitEvent = opts.emit ?? emit;
 
   const { children, resolvedEdges } = await createChildren(ctx);
 
@@ -602,6 +604,27 @@ async function runCommit(opts = {}) {
         process.stderr.write(
           `[size-and-schedule] markReadyForDispatch(${c.identifier}) failed (continuing): ${err.message}\n`,
         );
+      }
+    }
+
+    // Signal the Conductor directly, on this worker's own events stream —
+    // conductor-loop.js watches every worker's stream already (the same
+    // subscribe() poll it uses for BLOCKED/AWAITING_REVIEW) and, on seeing this,
+    // runs /dispatch-decision on each child itself (with the same pre-gathered
+    // context muaddib.sh builds for a human-triggered dispatch), rather than
+    // leaving the new tickets to sit on the "auto" label alone waiting for
+    // whatever picks it up. This worker's job ends at this ticket being split —
+    // dispatching the children is the fleet's decision, not this worker's (see
+    // the runIf gates on implement/review/wrapup keyed off recommend_split).
+    const readyIds = children.map((c) => c.identifier).filter(Boolean);
+    if (readyIds.length) {
+      try {
+        emitEvent(ctx.worker, 'size-and-schedule', 'tickets_ready_for_dispatch', {
+          parentTicket: ctx.ticketId,
+          children: readyIds,
+        });
+      } catch (err) {
+        process.stderr.write(`[size-and-schedule] emit(tickets_ready_for_dispatch) failed (continuing): ${err.message}\n`);
       }
     }
   }

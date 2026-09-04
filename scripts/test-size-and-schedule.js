@@ -636,6 +636,53 @@ async function main() {
     assert('marked the created identifiers', JSON.stringify(source.dispatched) === JSON.stringify(ids));
   });
 
+  await test('commit (dispatch): emits tickets_ready_for_dispatch for the Conductor', async () => {
+    const worker = 78;
+    const source = fakeTicketSource();
+    const emitted = [];
+    stateModuleSet(worker, 'sizing_confirm', 'dispatch');
+    const res = await runCommit({
+      worker, repo: TMP, ticketId: 'muaddib#140', ticketTitle: 'Big feature',
+      source, computeSizingSignal: fakeSizing(SPLIT), plan: PLAN,
+      emit: (...args) => emitted.push(args),
+    });
+    assert('status committed', res.status === 'committed', res.status);
+    assert('exactly one event emitted', emitted.length === 1, `${emitted.length}`);
+    const [w, job, event, payload] = emitted[0];
+    assert('emitted on this worker', w === worker);
+    assert('job is size-and-schedule', job === 'size-and-schedule');
+    assert('event is tickets_ready_for_dispatch', event === 'tickets_ready_for_dispatch');
+    assert('payload names the parent ticket', payload.parentTicket === 'muaddib#140');
+    const ids = source.created.map((c) => c.identifier);
+    assert('payload lists the created children', JSON.stringify(payload.children) === JSON.stringify(ids));
+  });
+
+  await test('commit (tickets_only): no tickets_ready_for_dispatch event — nothing to dispatch yet', async () => {
+    const worker = 79;
+    const source = fakeTicketSource();
+    const emitted = [];
+    stateModuleSet(worker, 'sizing_confirm', 'tickets_only');
+    await runCommit({
+      worker, repo: TMP, ticketId: 'muaddib#145', ticketTitle: 'Big feature',
+      source, computeSizingSignal: fakeSizing(SPLIT), plan: PLAN,
+      emit: (...args) => emitted.push(args),
+    });
+    assert('no event emitted', emitted.length === 0, `${emitted.length}`);
+  });
+
+  await test('commit (dispatch): a throwing emit is best-effort, does not fail the commit', async () => {
+    const worker = 80;
+    const source = fakeTicketSource();
+    stateModuleSet(worker, 'sizing_confirm', 'dispatch');
+    const res = await runCommit({
+      worker, repo: TMP, ticketId: 'muaddib#150', ticketTitle: 'Big feature',
+      source, computeSizingSignal: fakeSizing(SPLIT), plan: PLAN,
+      emit: () => { throw new Error('events dir unwritable'); },
+    });
+    assert('status still committed', res.status === 'committed', res.status);
+    assert('children still marked ready-for-dispatch', source.dispatched.length === 3);
+  });
+
   await test('commit: opts.dispatch overrides state (explicit dispatch)', async () => {
     const worker = 76;
     const source = fakeTicketSource();

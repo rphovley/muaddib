@@ -30,6 +30,8 @@ const {
   createConductorLoop,
   parseTriageDecision,
   buildTriagePrompt,
+  buildDispatchDecisionPrompt,
+  summarizeDispatchDecisionReply,
   DEFAULT_TRIGGER_STATES,
 } = require('../conductor-loop');
 
@@ -83,6 +85,9 @@ function makeLoop(overrides = {}) {
     },
     stateGet: (worker, key) => (stateData[worker] || {})[key],
     log: () => {},
+    gatherDispatchContext: overrides.gatherDispatchContext,
+    getTicketSource: overrides.getTicketSource,
+    readMuaddibConfig: overrides.readMuaddibConfig,
   });
 
   return {
@@ -366,6 +371,140 @@ async function testBuildTriagePrompt() {
   }
 }
 
+function testBuildDispatchDecisionPrompt() {
+  const p = buildDispatchDecisionPrompt('QUO-9', '## Pre-Dispatch Context: QUO-9\n\nsome facts', {
+    fleetDir: '/fake/fleet',
+  });
+  if (!/^\/dispatch-decision/.test(p)) throw new Error('prompt must invoke the /dispatch-decision skill on its first line');
+  for (const needle of ['QUO-9', 'some facts', '/fake/fleet/orchestrator/fleet-control-cli.js', 'spawn 1']) {
+    if (!p.includes(needle)) throw new Error(`prompt missing "${needle}": ${p}`);
+  }
+}
+
+function testBuildDispatchDecisionPromptDegradesWithNoContext() {
+  const p = buildDispatchDecisionPrompt('QUO-9', '', { fleetDir: '/fake/fleet' });
+  if (!p.includes('no pre-dispatch context available')) {
+    throw new Error(`empty context should degrade to a note, got: ${p}`);
+  }
+}
+
+function testSummarizeDispatchDecisionReply() {
+  const s = summarizeDispatchDecisionReply('Decision: dispatch\nRationale: ready and in scope\nPayload: QUO-9');
+  if (s.decision !== 'dispatch') throw new Error(`expected decision "dispatch", got ${s.decision}`);
+  if (s.rationale !== 'ready and in scope') throw new Error(`expected rationale, got ${s.rationale}`);
+}
+
+function testSummarizeDispatchDecisionReplyOnGarbage() {
+  const s = summarizeDispatchDecisionReply('not a structured reply at all');
+  if (s.decision !== '(no Decision section found)') throw new Error(`expected the no-section fallback, got ${s.decision}`);
+  if (s.rationale !== null) throw new Error(`expected null rationale, got ${s.rationale}`);
+}
+
+// ─── split fan-out: handleTicketsReadyForDispatch ──────────────────────────
+// scripts/size-and-schedule.js emits `tickets_ready_for_dispatch` on a worker's
+// own stream when the operator confirmed "create tickets and dispatch". These
+// tests drive it directly (the exposed test seam) since it's async and the
+// deliver()-via-subscribe path is fire-and-forget.
+
+async function testSplitFanOutDispatchesOnePerChild() {
+  const contextCalls = [];
+  const h = makeLoop({
+    reply: 'Decision: dispatch\nRationale: ready\nPayload: spawn it',
+    gatherDispatchContext: async (ticketId, opts) => {
+      contextCalls.push({ ticketId, source: opts.source });
+      return `## Pre-Dispatch Context: ${ticketId}\n\nfacts for ${ticketId}`;
+    },
+    getTicketSource: (kind) => ({ kind: kind || 'default' }),
+    readMuaddibConfig: () => ({ ticketSource: 'linear' }),
+  });
+
+  await h.loop.handleTicketsReadyForDispatch(7, { parentTicket: 'QUO-500', children: ['QUO-501', 'QUO-502'] });
+
+  if (contextCalls.length !== 2) throw new Error(`expected 2 context gathers, got ${contextCalls.length}`);
+  if (contextCalls[0].ticketId !== 'QUO-501' || contextCalls[1].ticketId !== 'QUO-502') {
+    throw new Error(`wrong ticket order: ${JSON.stringify(contextCalls)}`);
+  }
+  if (contextCalls[0].source.kind !== 'linear') throw new Error('resolved ticket source not passed through');
+
+  if (h.spies.asks.length !== 2) throw new Error(`expected 2 session.ask calls, got ${h.spies.asks.length}`);
+  if (!h.spies.asks[0].includes('facts for QUO-501')) throw new Error('prompt missing gathered context');
+  if (!h.spies.asks[0].includes('ticket: QUO-501')) throw new Error('prompt missing the ticket line');
+
+  if (h.spies.decisions.length !== 2) throw new Error(`expected 2 Decision Log entries, got ${h.spies.decisions.length}`);
+  const [d1, d2] = h.spies.decisions;
+  if (d1.scope !== 'QUO-501' || d2.scope !== 'QUO-502') throw new Error(`wrong scopes: ${JSON.stringify(h.spies.decisions)}`);
+  if (d1.fields.worker !== 7) throw new Error('worker not recorded');
+  if (d1.fields.parentTicket !== 'QUO-500') throw new Error('parentTicket not recorded');
+  if (d1.fields.decision !== 'dispatch') throw new Error(`expected recorded decision "dispatch", got ${d1.fields.decision}`);
+  if (d1.fields.rationale !== 'ready') throw new Error(`expected recorded rationale, got ${d1.fields.rationale}`);
+}
+
+async function testSplitFanOutEmptyChildrenIsNoop() {
+  const h = makeLoop({});
+  await h.loop.handleTicketsReadyForDispatch(7, { parentTicket: 'QUO-500', children: [] });
+  if (h.spies.asks.length !== 0) throw new Error('empty children must not call session.ask');
+  if (h.spies.decisions.length !== 0) throw new Error('empty children must not write a Decision Log entry');
+}
+
+async function testSplitFanOutContextGatherFailureDegradesButStillAsks() {
+  const h = makeLoop({
+    reply: 'Decision: skip\nRationale: nothing to see',
+    gatherDispatchContext: async () => { throw new Error('linear down'); },
+  });
+
+  await h.loop.handleTicketsReadyForDispatch(7, { children: ['QUO-501'] });
+
+  if (h.spies.asks.length !== 1) throw new Error('a context-gather failure must not skip the ask');
+  if (!h.spies.asks[0].includes('context gathering failed: linear down')) {
+    throw new Error(`prompt should carry the degraded-context note, got: ${h.spies.asks[0]}`);
+  }
+  if (h.spies.decisions[0].fields.decision !== 'skip') throw new Error('the ask should still have run and recorded normally');
+}
+
+async function testSplitFanOutAskFailureLogsErrorRecordAndContinues() {
+  let calls = 0;
+  // makeLoop's session.ask always returns a fixed cfg.reply — this test needs
+  // the FIRST call to throw and the second to succeed, so it builds a loop
+  // directly rather than going through makeLoop.
+  const spies = { asks: [], decisions: [] };
+  const loop = createConductorLoop({
+    session: {
+      ask: (prompt) => {
+        calls += 1;
+        spies.asks.push(prompt);
+        if (calls === 1) throw new Error('tmux session dead');
+        return 'Decision: dispatch\nRationale: fine';
+      },
+    },
+    repoDir: '/fake/repo',
+    listWorkers: () => [],
+    subscribe: () => ({ kill: () => {} }),
+    appendDecision: (repoDir, scope, fields) => { spies.decisions.push({ scope, fields }); },
+    gatherDispatchContext: async (ticketId) => `context for ${ticketId}`,
+    getTicketSource: () => ({}),
+    readMuaddibConfig: () => ({}),
+    log: () => {},
+  });
+
+  await loop.handleTicketsReadyForDispatch(1, { children: ['QUO-A', 'QUO-B'] });
+
+  if (spies.asks.length !== 2) throw new Error(`expected both children to be attempted, got ${spies.asks.length} asks`);
+  if (spies.decisions.length !== 2) throw new Error(`expected 2 Decision Log entries (one error, one real), got ${spies.decisions.length}`);
+  if (spies.decisions[0].fields.decision !== 'error') throw new Error(`first child should record an error, got ${spies.decisions[0].fields.decision}`);
+  if (!spies.decisions[0].fields.rationale.includes('tmux session dead')) throw new Error('error rationale should carry the failure message');
+  if (spies.decisions[1].fields.decision !== 'dispatch') throw new Error('second child must still be triaged normally');
+}
+
+async function testHandleEventRoutesSplitEventWithoutTouchingStateLatch() {
+  const h = makeLoop({ states: { 9: 'RUNNING' }, gatherDispatchContext: async () => 'ctx' });
+  h.loop.start();
+  h.deliver(9, { event: 'tickets_ready_for_dispatch', payload: { children: ['QUO-1'] } });
+  // Fire-and-forget from handleEvent — give the microtask queue a turn so the
+  // async fan-out (and its .catch) has run before we assert nothing crashed.
+  await new Promise((resolve) => setImmediate(resolve));
+  if (h.loop.isHandled(9)) throw new Error('the split event must not engage the BLOCKED/etc. trigger-state latch');
+}
+
 async function testDefaultTriggerStatesShape() {
   for (const s of ['BLOCKED', 'AWAITING_REVIEW', 'WAITING_FOR_INPUT']) {
     if (!DEFAULT_TRIGGER_STATES.includes(s)) throw new Error(`DEFAULT_TRIGGER_STATES missing ${s}`);
@@ -401,6 +540,15 @@ async function main() {
     ['parseTriageDecision: garbage → escalate', testParseTriageDecisionGarbageEscalates],
     ['parseTriageDecision: both verbs → escalate', testParseTriageDecisionBothVerbsEscalates],
     ['buildTriagePrompt carries the context', testBuildTriagePrompt],
+    ['buildDispatchDecisionPrompt carries ticket/context/spawn command', testBuildDispatchDecisionPrompt],
+    ['buildDispatchDecisionPrompt degrades with no context', testBuildDispatchDecisionPromptDegradesWithNoContext],
+    ['summarizeDispatchDecisionReply: parses Decision/Rationale', testSummarizeDispatchDecisionReply],
+    ['summarizeDispatchDecisionReply: garbage → no-section fallback', testSummarizeDispatchDecisionReplyOnGarbage],
+    ['split fan-out: one /dispatch-decision per child, audited', testSplitFanOutDispatchesOnePerChild],
+    ['split fan-out: empty children is a no-op', testSplitFanOutEmptyChildrenIsNoop],
+    ['split fan-out: context-gather failure degrades, ask still runs', testSplitFanOutContextGatherFailureDegradesButStillAsks],
+    ['split fan-out: an ask failure logs an error record and continues', testSplitFanOutAskFailureLogsErrorRecordAndContinues],
+    ['handleEvent routes the split event without touching the state latch', testHandleEventRoutesSplitEventWithoutTouchingStateLatch],
     ['DEFAULT_TRIGGER_STATES shape', testDefaultTriggerStatesShape],
     ['createConductorLoop requires a session', testSessionRequired],
   ];
