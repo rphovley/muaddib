@@ -16,18 +16,6 @@ source "$FLEET_DIR/bin/image-needs-rebuild.sh"
 source "$FLEET_DIR/bin/worker-alloc.sh"
 cd "$FLEET_DIR"
 
-# --- Temporary timing instrumentation for measuring pool ROI (see issue #115). ---
-# Marks land in a PID-scoped file until WORKER is known, then get moved into
-# status/worker-<N>-timing.log — the same path worker-entrypoint.sh appends to
-# from inside the container (via the status/ bind mount), giving one unified
-# host+container timeline per dispatch. Safe to delete this block once the
-# measurement is done; it's diagnostic-only, not meant to be permanent.
-MUADDIB_TIMING_FILE="$FLEET_DIR/status/.spawn-timing-$$.log"
-mkdir -p "$FLEET_DIR/status"
-: >"$MUADDIB_TIMING_FILE"
-mark() { printf '%s\t%s\t%s\n' "$1" "$(date +%s)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$MUADDIB_TIMING_FILE"; }
-mark script_start
-
 # When spawn-worker.sh is called from inside the dispatch Docker container
 # (docker.sock bind-mounted), `docker compose` sends volume-mount paths to the
 # HOST daemon, which resolves them on the host filesystem — not the container's.
@@ -68,9 +56,6 @@ if muaddib_image_needs_rebuild "$MUADDIB_WORKER_IMAGE" "$MUADDIB_BUILD_HASH"; th
     docker build --build-arg "MUADDIB_PREFIX=$MUADDIB_DOCKER_PREFIX" \
         --label "muaddib.build-hash=$MUADDIB_BUILD_HASH" \
         -f "$WORKER_DOCKERFILE" -t "$MUADDIB_WORKER_IMAGE" "$REPO_ROOT"
-    mark image_rebuilt
-else
-    mark image_reused
 fi
 
 # Serialize slot allocation across every dispatch path. The lock is held from the
@@ -81,22 +66,12 @@ fi
 # dispatch and a daemon dispatch share the same lock. status/ must exist first —
 # create it here (the later chmod-777 setup is now redundant of this).
 mkdir -p "$FLEET_DIR/status" && chmod 777 "$FLEET_DIR/status" 2>/dev/null || true
-mark before_alloc_lock
 muaddib_alloc_lock "$FLEET_DIR/status/.worker-alloc.lock" || exit 1
-mark alloc_lock_acquired
 WORKER="$(muaddib_select_worker "${WORKER_HINT:-1}")" || {
     echo "✗ No free worker slot — all ${MUADDIB_MAX_WORKERS:-64} are in use." >&2
     muaddib_alloc_unlock
     exit 1
 }
-mark worker_slot_selected
-
-# Now that the slot is known, move the buffered timing marks into the
-# worker-scoped log so the container's own marks (written by
-# worker-entrypoint.sh via the status/ bind mount) land in the same file.
-WORKER_TIMING_FILE="$FLEET_DIR/status/worker-${WORKER}-timing.log"
-mv "$MUADDIB_TIMING_FILE" "$WORKER_TIMING_FILE" 2>/dev/null || true
-MUADDIB_TIMING_FILE="$WORKER_TIMING_FILE"
 
 # Emit the real slot for non-interactive dispatchers (the dispatch daemon): the
 # leading arg was only a hint, and the allocator may have advanced past it to a
@@ -226,11 +201,9 @@ echo "→ Spawning ${PROJECT}: API :${API_PORT}  DB :${DB_PORT}  sketch :${SKETC
 
 # MUADDIB_COMPOSE_FILES (base + project overlay, if any) comes from
 # read-config.sh — teardown-worker.sh must use the exact same list.
-mark before_compose_up
 docker compose -p "$PROJECT" \
     --project-directory "$HOST_FLEET_DIR" \
     "${MUADDIB_COMPOSE_FILES[@]}" up -d
-mark after_compose_up
 
 # Capture container ID immediately — before it can be removed on fast exit.
 WORKER_CID=$(docker compose -p "$PROJECT" \
@@ -250,10 +223,9 @@ while :; do
     # READY      = interactive mode (no TASK set)
     # RUNNING / FEEDBACK* = task mode: orchestrator past provisioning
     case "$(cut -d' ' -f1 "$STATE_FILE" 2>/dev/null || true)" in
-        READY|RUNNING|FEEDBACK|FEEDBACK_WORKING) mark provisioning_ready; break ;;
+        READY|RUNNING|FEEDBACK|FEEDBACK_WORKING) break ;;
     esac
     if [ -z "$(docker ps -q --filter "label=com.docker.compose.project=${PROJECT}" --filter "name=worker")" ]; then
-        mark provisioning_failed_container_exited
         {
             echo
             echo "✗ Worker ${WORKER} exited during provisioning. Last log lines:"
@@ -265,7 +237,6 @@ while :; do
         exit 1
     fi
     if [ "$SECONDS" -ge 300 ]; then
-        mark provisioning_failed_timeout
         echo "✗ Worker ${WORKER} not READY after ${SECONDS}s. Recent logs:" >&2
         docker logs "${WORKER_CID}" 2>&1 | tail -30 >&2
         echo "(container still running — attach to inspect)" >&2

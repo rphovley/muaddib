@@ -22,14 +22,6 @@ echo -n "$WORKER_INDEX" > /tmp/worker-index
 STATUS_FILE="/var/run/agent-status/worker-${WORKER_INDEX}.state"
 note() { printf '%s %s\n' "$1" "$(date -u +%FT%TZ)" >"$STATUS_FILE" 2>/dev/null || true; }
 
-# Temporary timing instrumentation for measuring pool ROI (see issue #115).
-# Appends to the same file spawn-worker.sh writes on the host side, via the
-# status/ bind mount — one unified timeline per dispatch. Diagnostic-only;
-# safe to delete this block (and its call sites below) once measured.
-TIMING_FILE="/var/run/agent-status/worker-${WORKER_INDEX}-timing.log"
-mark() { printf '%s\t%s\t%s\n' "$1" "$(date -u +%s)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$TIMING_FILE" 2>/dev/null || true; }
-mark entrypoint_start
-
 # On ANY failed command (set -e), record FAILED + the offending command, so the
 # container doesn't just disappear: spawn-worker.sh dumps these logs and
 # attend.sh shows FAILED instead of a stale PROVISIONING.
@@ -47,11 +39,9 @@ git config user.name "agent-worker-${WORKER_INDEX}"
 git config user.email "agent+w${WORKER_INDEX}@${MUADDIB_PROJECT_NAME:-quotethat}.local"
 git fetch --depth 1 origin main
 git checkout -f -B "$BRANCH" FETCH_HEAD
-mark git_checked_out
 # Rewrite SSH submodule URLs to HTTPS so the GitHub token works (no SSH key in container).
 git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
 git submodule update --init --recursive --force
-mark submodules_updated
 
 # Consuming projects have muaddib checked out as a nested submodule
 # (WORKDIR/muaddib); muaddib building itself has no such nesting — the
@@ -74,7 +64,6 @@ while IFS= read -r p; do
         (cd "$p" && npm ci)
     fi
 done < <(jq -r '.projects[].path' "${MUADDIB_CONFIG_FILE:-$WORKDIR/.muaddib/manifest.json}")
-mark deps_checked
 
 # Run the project hook (if present). Projects drop their own setup logic here
 # (e.g. materializing secrets, writing config files) instead of baking it into
@@ -83,7 +72,6 @@ HOOK="$WORKDIR/.muaddib/hooks/on-worker-start.sh"
 if [ -x "$HOOK" ]; then
     bash "$HOOK"
 fi
-mark hook_done
 
 # Wire the Linear MCP via API key (Bearer header) — no OAuth/browser. Same
 # endpoint + tool names as the host's OAuth setup, so muaddib's mcp__linear__*
@@ -97,7 +85,6 @@ if [ -n "${LINEAR_API_KEY:-}" ]; then
         echo "⚠ failed to configure Linear MCP — muaddib ticket read/post-back will not work"
     fi
 fi
-mark mcp_wired
 
 # Keep lastOnboardingVersion in sync with whatever version is installed so
 # Claude never shows the theme-picker / welcome screen after a version bump.
@@ -107,7 +94,6 @@ if [ -n "$CLAUDE_VER" ]; then
         && mv /tmp/claude.json.tmp ~/.claude.json
     echo "→ lastOnboardingVersion patched to $CLAUDE_VER"
 fi
-mark entrypoint_provisioning_done
 
 SESSION="w${WORKER_INDEX}"
 
@@ -115,7 +101,6 @@ if [ -n "${TASK:-}" ]; then
     # Task mode: hand off to the orchestrator. Create a bare tmux session for
     # job windows, then exec the orchestrator as the container's main process.
     # The orchestrator owns the state machine (BOOTING → READY → … → DONE).
-    mark orchestrator_handoff
     tmux new-session -d -s "$SESSION"
     export REPO_DIR="$WORKDIR"
     echo "Worker ${WORKER_INDEX} starting orchestrator on branch ${BRANCH}."
@@ -123,7 +108,6 @@ if [ -n "${TASK:-}" ]; then
     exec node "$MUADDIB_ROOT/orchestrator/orchestrator.js"
 else
     # Interactive mode: drop to bash after Claude exits, keep container alive.
-    mark interactive_ready
     note "READY"
     PERM="${CLAUDE_PERMISSION_MODE:-bypassPermissions}"
     if [ "$PERM" = "bypassPermissions" ]; then

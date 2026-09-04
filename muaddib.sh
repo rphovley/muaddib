@@ -21,17 +21,6 @@
 #   npm run muaddib <linear-url-or-id | github-issue-url-or-number | "task text">
 #   ./muaddib.sh    <ticket-ref-or-task-text>
 #
-# A resolved ticket reference dispatches the worker immediately and
-# deterministically — running this command IS the decision, so there's no
-# judgment left to make (an earlier version routed it through the Conductor's
-# `dispatch-decision` skill first for exactly that judgment; removed once
-# every real trigger turned out to already carry an explicit human "yes").
-# But the *operator* still lands in the persistent Conductor session, not the
-# worker's own — the fleet manager stays the thing you interact with; use
-# `./muaddib/bin/attach.sh <n>` if you want the worker's own session instead.
-# Free-form task text has no ticket for the fleet manager to track, so it
-# dispatches straight to the worker and auto-attaches there, unchanged.
-#
 # Flags (leading, before the argument):
 #   --raw       Skip detection; force raw dispatch. Use when a task's text could
 #               look like a ticket reference (e.g. free-form text containing
@@ -117,21 +106,9 @@ if [ "$SOURCE" = "raw" ]; then
     # raw path regardless of this value.
     export TICKET_SOURCE=raw
     export TICKET_IDENTIFIER=raw
-
-    # No ticket for the fleet manager to track — dispatch straight to the
-    # worker and auto-attach there, as always. Empty slot arg → spawn-worker.sh
-    # auto-selects the slot under its allocation lock (bin/worker-alloc.sh); it
-    # announces the real slot via its "→ Spawning" line.
-    exec "$DIR/bin/spawn-worker.sh" "" "$TASK"
 fi
 
-# Ticket dispatch: spawn deterministically — MUADIB_NO_ATTACH=1 (spawn-worker.sh's
-# own spelling) suppresses ITS auto-attach so the operator lands in the
-# Conductor's session instead of the worker's own. `conductor.sh --bg --attach`
-# reuses a live Conductor daemon if one is up (types the message into it and
-# attaches) or starts one detached with this as its initial prompt — either
-# way it's purely informational, not an instruction the Conductor needs to act
-# on; the spawn already happened.
-MUADIB_NO_ATTACH=1 "$DIR/bin/spawn-worker.sh" "" "$TASK"
-exec "$DIR/conductor.sh" --bg --attach \
-  "FYI: worker dispatched directly for ${ARG} (${TASK}). No action needed — just letting you know."
+# Empty slot arg → spawn-worker.sh auto-selects the slot under its allocation
+# lock (see bin/worker-alloc.sh). It announces the real slot via its "→ Spawning"
+# line, so we don't guess a worker number here.
+exec "$DIR/bin/spawn-worker.sh" "" "$TASK"

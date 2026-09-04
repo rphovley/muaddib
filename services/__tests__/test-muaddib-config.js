@@ -12,7 +12,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { readMuaddibConfig, readAutonomyLevel } = require('../muaddib-config');
+const { readMuaddibConfig } = require('../muaddib-config');
 const { writeManifest } = require('./test-utils');
 
 let pass = 0;
@@ -78,52 +78,10 @@ async function testThrowsOnInvalidJson() {
   }
 }
 
-async function testAutonomyLevelDefaultsL0() {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-cfg-'));
-  try {
-    writeManifest(tmp, JSON.stringify({ projectName: 'x' })); // no autonomyLevel
-    assert(readAutonomyLevel(tmp) === 'L0', 'absent autonomyLevel should default to L0');
-  } finally {
-    fs.rmSync(tmp, { recursive: true });
-  }
-}
-
-async function testAutonomyLevelValidReturned() {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-cfg-'));
-  try {
-    for (const level of ['L0', 'L1', 'L2', 'L3']) {
-      writeManifest(tmp, JSON.stringify({ projectName: 'x', autonomyLevel: level }));
-      assert(readAutonomyLevel(tmp) === level, `expected ${level}, got ${readAutonomyLevel(tmp)}`);
-    }
-  } finally {
-    fs.rmSync(tmp, { recursive: true });
-  }
-}
-
-async function testAutonomyLevelBogusThrows() {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-cfg-'));
-  try {
-    writeManifest(tmp, JSON.stringify({ projectName: 'x', autonomyLevel: 'L9' }));
-    let threw = false;
-    try {
-      readAutonomyLevel(tmp);
-    } catch (err) {
-      threw = true;
-      assert(err.message.includes('autonomyLevel'), `error should name autonomyLevel, got: ${err.message}`);
-    }
-    assert(threw, 'a bogus autonomyLevel should throw');
-  } finally {
-    fs.rmSync(tmp, { recursive: true });
-  }
-}
-
 (async () => {
   await run('valid config parsed and returned verbatim', testReturnsParsedConfig);
   await run('missing .muaddib/manifest.json throws a clear error', testThrowsWhenMissing);
   await run('malformed .muaddib/manifest.json throws a clear error', testThrowsOnInvalidJson);
-  await run('absent autonomyLevel defaults to L0', testAutonomyLevelDefaultsL0);
-  await run('valid autonomyLevel returned', testAutonomyLevelValidReturned);
-  await run('bogus autonomyLevel throws', testAutonomyLevelBogusThrows);
 
   process.stdout.write(`\n${pass}/${pass + fail} passed\n`);
   if (fail > 0) process.exit(1);

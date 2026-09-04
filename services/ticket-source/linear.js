@@ -92,7 +92,6 @@ const FETCH_TICKET_QUERY = `
       description
       url
       state { name }
-      assignee { name }
       labels { nodes { name } }
     }
   }
@@ -152,19 +151,6 @@ const INVERSE_RELATIONS_PAGE_QUERY = `
   }
 `;
 
-// fetchComments reads a ticket's comment thread (and its parent's) for the
-// generic read-back seam — separate from fetch-ticket.js's own richer,
-// comment-aware query. Kept minimal: only { id, body }, the fields the "## Plan"
-// / "## Context" scanners actually read.
-const COMMENTS_QUERY = `
-  query FetchComments($id: String!) {
-    issue(id: $id) {
-      comments(first: 100) { nodes { id body } }
-      parent { comments(first: 100) { nodes { id body } } }
-    }
-  }
-`;
-
 const COMMENT_CREATE = `
   mutation CommentCreate($issueId: String!, $body: String!) {
     commentCreate(input: { issueId: $issueId, body: $body }) {
@@ -211,30 +197,6 @@ const WEBHOOK_DELETE = `
   }
 `;
 
-// markReadyForDispatch resolves the dispatch label (see DISPATCH_LABEL) within
-// the issue's own team, then attaches it. Labels are team-scoped, so we look
-// them up on the resolved team rather than assuming a workspace-global one.
-// first: 250 comfortably covers a team's label set; the dispatch label is one a
-// human already used to route the parent, so it's expected to exist.
-const TEAM_LABELS_QUERY = `
-  query TeamLabels($id: String!) {
-    team(id: $id) { labels(first: 250) { nodes { id name } } }
-  }
-`;
-
-const ISSUE_ADD_LABEL = `
-  mutation IssueAddLabel($id: String!, $labelId: String!) {
-    issueAddLabel(id: $id, labelId: $labelId) { success }
-  }
-`;
-
-// The label services/dispatch-daemon.js's resolveRoute() requires before it will
-// auto-route an issue to a worker. markReadyForDispatch adds it so the sizing
-// scheduler can hand a freshly-created sub-issue to the existing dispatch
-// automation. Lowercased — resolveRoute lowercases labels before matching, and
-// the team-label lookup below compares case-insensitively.
-const DISPATCH_LABEL = (process.env.MUADDIB_DISPATCH_LABEL || 'auto').toLowerCase();
-
 // ─── source factory ────────────────────────────────────────────────────────────
 // `graphql` is injectable so the interface methods can be unit-tested without
 // touching the network. Defaults to the real Linear client above.
@@ -263,21 +225,6 @@ function createLinearSource(opts = {}) {
     async fetchTicket(id) {
       const data = await graphql(FETCH_TICKET_QUERY, { id });
       return (data && data.issue) || null;
-    },
-
-    // fetchComments(id) → { own, parent }, each a normalized { id, body }[].
-    // The generic read-back path callers use when they don't have fetch-ticket's
-    // richer query in hand (idempotency checks, .muaddib/context.md hydration).
-    // `parent` is [] when the issue has no parent. A missing issue → both empty.
-    async fetchComments(id) {
-      const data = await graphql(COMMENTS_QUERY, { id });
-      const issue = (data && data.issue) || null;
-      if (!issue) return { own: [], parent: [] };
-      const norm = (nodes) => (nodes || []).map((c) => ({ id: c.id, body: c.body }));
-      return {
-        own: norm(issue.comments && issue.comments.nodes),
-        parent: norm(issue.parent && issue.parent.comments && issue.parent.comments.nodes),
-      };
     },
 
     // postComment(id, body) → the created comment's id.
@@ -400,35 +347,6 @@ function createLinearSource(opts = {}) {
       const created = data && data.issueRelationCreate;
       if (!created || !created.success) {
         throw new Error(`issueRelationCreate failed — response: ${JSON.stringify(data)}`);
-      }
-    },
-
-    // markReadyForDispatch(id) — mark a sub-issue ready for the dispatch daemon
-    // to auto-route, by attaching the DISPATCH_LABEL the daemon keys off. The
-    // sizing scheduler calls this (commit phase, "create tickets and dispatch"
-    // option) after creating and wiring a child so services/dispatch-daemon.js
-    // picks it up; the native blocking relations already gate a still-blocked
-    // child at dispatch time. Resolves the label id within the issue's team,
-    // then issueAddLabel — idempotent in effect (re-adding an already-present
-    // label is a no-op on Linear's side). Throws on a missing team/label or a
-    // !success mutation, mirroring the other write methods; the caller treats a
-    // dispatch-marking failure as best-effort (children are already created).
-    async markReadyForDispatch(id) {
-      const teamData = await graphql(ISSUE_TEAM_QUERY, { id });
-      const teamId = teamData && teamData.issue && teamData.issue.team && teamData.issue.team.id;
-      if (!teamId) {
-        throw new Error(`markReadyForDispatch: could not resolve team for ${id}`);
-      }
-      const labelsData = await graphql(TEAM_LABELS_QUERY, { id: teamId });
-      const nodes = (labelsData && labelsData.team && labelsData.team.labels && labelsData.team.labels.nodes) || [];
-      const label = nodes.find((l) => l && String(l.name).toLowerCase() === DISPATCH_LABEL);
-      if (!label || !label.id) {
-        throw new Error(`markReadyForDispatch: no "${DISPATCH_LABEL}" label in team ${teamId}`);
-      }
-      const data = await graphql(ISSUE_ADD_LABEL, { id, labelId: label.id });
-      const res = data && data.issueAddLabel;
-      if (!res || !res.success) {
-        throw new Error(`issueAddLabel failed — response: ${JSON.stringify(data)}`);
       }
     },
 

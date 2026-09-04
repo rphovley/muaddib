@@ -123,11 +123,6 @@ function issueRepo(id) {
   return m ? m[1] : null;
 }
 
-// The label services/dispatch-daemon.js's resolveRoute() requires before it will
-// auto-route an issue to a worker. markReadyForDispatch adds it. Lowercased —
-// resolveRoute lowercases labels before matching.
-const DISPATCH_LABEL = (process.env.MUADDIB_DISPATCH_LABEL || 'auto').toLowerCase();
-
 // ─── source factory ────────────────────────────────────────────────────────────
 // `api` is the injectable REST client (so the interface can be unit-tested with a
 // fake, no network); defaults to the real githubRequest above. `owner`/`repo`
@@ -234,39 +229,6 @@ function createGithubSource(opts = {}) {
         throw new Error(`postComment failed — response: ${JSON.stringify(created)}`);
       }
       return { commentId: created.id };
-    },
-
-    // fetchComments(id) → { own, parent }, each a normalized { id, body }[].
-    // The generic read-back seam (idempotency checks, .muaddib/context.md
-    // hydration) for the github backend, whose fetchTicket returns no comments.
-    //   own    — GET .../issues/:n/comments
-    //   parent — GitHub Issues have no native parent, but createSubIssue writes a
-    //            "Part of #<n>" back-reference at the top of a child's body; when
-    //            that marker is present we read the referenced parent's comments
-    //            so read-back can fall back to the parent's "## Context". Parent
-    //            detection is best-effort — any failure degrades to own-only.
-    async fetchComments(id) {
-      const number = issueNumber(id);
-      if (!number) return { own: [], parent: [] };
-      const { owner, repo } = resolveRepo();
-      const norm = (arr) => (Array.isArray(arr) ? arr : []).map((c) => ({ id: c.id, body: c.body }));
-      const own = norm(await api(`/repos/${owner}/${repo}/issues/${number}/comments`));
-
-      let parent = [];
-      try {
-        const issue = await api(`/repos/${owner}/${repo}/issues/${number}`);
-        const body = (issue && issue.body) || '';
-        // createSubIssue writes the marker as the very first line of the body, so
-        // anchor to the body's start — a "Part of #n" appearing later in prose
-        // must not be mistaken for the parent back-reference.
-        const m = body.match(/^Part of #(\d+)\b/);
-        if (m) {
-          parent = norm(await api(`/repos/${owner}/${repo}/issues/${m[1]}/comments`));
-        }
-      } catch (_) {
-        // Parent detection is advisory; own comments still stand.
-      }
-      return { own, parent };
     },
 
     // mentionUser(handle) → the markup that notifies `handle` inside a comment
@@ -437,28 +399,6 @@ function createGithubSource(opts = {}) {
         if (/already/i.test(err && err.message)) return;
         throw err;
       }
-    },
-
-    // markReadyForDispatch(id) — mark a sub-issue ready for the dispatch daemon
-    // to auto-route, by adding the DISPATCH_LABEL the daemon keys off. The sizing
-    // scheduler calls this (commit phase, "create tickets and dispatch" option)
-    // after creating and wiring a child so services/dispatch-daemon.js's poll
-    // picks it up; the native issue-dependency relations already gate a still-
-    // blocked child at dispatch time. GitHub's add-labels endpoint is idempotent
-    // (re-adding a present label is a no-op), so no dedup is needed. Tolerates a
-    // '#'/'repo#' prefix and resolves against the id's own repo like the sibling
-    // write methods. Returns void.
-    async markReadyForDispatch(id) {
-      const number = issueNumber(id);
-      if (!number) {
-        throw new Error(`markReadyForDispatch requires an issue id (got ${JSON.stringify(id)})`);
-      }
-      const { owner, repo } = resolveRepo();
-      const repoName = issueRepo(id) || repo;
-      await api(`/repos/${owner}/${repoName}/issues/${number}/labels`, {
-        method: 'POST',
-        body: { labels: [DISPATCH_LABEL] },
-      });
     },
 
     async registerWatch() {

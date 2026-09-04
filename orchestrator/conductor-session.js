@@ -25,38 +25,15 @@
 //   stop()                        — tmux kill-session.
 
 const { spawnSync } = require('child_process');
-const path = require('path');
 
-// Conductor-specific permission default — deliberately DECOUPLED from
-// CLAUDE_PERMISSION_MODE (runner.js/worker-entrypoint.sh's var, default
-// bypassPermissions there, justified by the container sandbox). The Conductor
-// runs directly on the HOST with no such sandbox: a prompt-injected or
-// hallucinated Bash call under bypass would execute for real against the
-// operator's own machine. So the default here is NO flag at all — Claude
-// Code's own normal interactive permission gating — unless an operator
-// explicitly opts into more autonomy via CONDUCTOR_PERMISSION_MODE (including
-// 'bypassPermissions', if they really want it). Empty return means omit the
-// flag entirely; callers must not leave a stray double space.
+// Mirror runner.js/worker-entrypoint.sh: bypassPermissions → the skip flag,
+// anything else → an explicit --permission-mode. Kept identical so the Conductor
+// launches claude the same way Workers do.
 function permFlag() {
-  const p = process.env.CONDUCTOR_PERMISSION_MODE || '';
-  if (!p) return '';
+  const p = process.env.CLAUDE_PERMISSION_MODE || 'bypassPermissions';
   return p === 'bypassPermissions'
     ? '--dangerously-skip-permissions'
     : `--permission-mode ${p}`;
-}
-
-// The Conductor-owned skill set lives at <repo>/conductor as a minimal Claude
-// Code plugin (conductor/.claude-plugin/plugin.json + conductor/skills/*). It is
-// deliberately SEPARATE from the worker-baked claude/skills/* — those are COPYed
-// into the worker image and only exist inside worker containers, whereas the
-// Conductor runs on the host. We load it with `--plugin-dir` (not a project-local
-// .claude/skills/ at cwd) so the skills scope to the Conductor's own session
-// only: a human running plain `claude` in the repo root does NOT pick them up,
-// and no copy/symlink staging step is needed. Absolute + cwd-independent so it
-// resolves however the daemon is launched. Verified against claude 2.1.x:
-// `claude plugin validate` recognizes the manifest and both skills.
-function conductorPluginDir() {
-  return path.resolve(__dirname, '..', 'conductor');
 }
 
 // Synchronous sleep — the whole driver is spawnSync-based, so blocking the
@@ -68,18 +45,7 @@ function msleep(ms) {
 // Working-state markers claude's TUI renders while a turn is in flight. Their
 // absence (plus a stable pane) is how we know the response has finished without
 // asking the model anything.
-//
-// A pending permission-approval prompt belongs here too, even though the model
-// isn't actively generating: it shows no "esc to interrupt" spinner (nothing is
-// "in flight"), so without this it reads as a genuinely finished, idle turn.
-// readResponse() would then return the prompt's own UI text as if it were the
-// answer — confirmed live: a sizing hook's read-only Linear MCP call hit an
-// unattended approval prompt, and the "response" extracted from it was the
-// prompt text itself (once, literally the tool-use dialog; another time the
-// bare echoed prompt, caught by the busyGraceMs widening below). Treating the
-// prompt as busy instead makes the caller correctly time out — "stuck, no real
-// answer" — rather than silently handing back a bogus one.
-const WORKING_MARKERS = [/esc to interrupt/i, /Do you want to proceed\?/i];
+const WORKING_MARKERS = [/esc to interrupt/i];
 
 function paneIsIdle(pane) {
   return !WORKING_MARKERS.some((re) => re.test(pane));
@@ -102,17 +68,10 @@ class ConductorSession {
     // How long readResponse will wait for claude's working spinner to appear
     // before treating an idle+stable pane as a finished (instantaneous) turn.
     // Guards against settling on the bare echoed prompt before the turn starts.
-    // A real turn that calls a tool (MCP round-trip, cold server auth, etc.)
-    // can easily take several seconds before the spinner ever renders —
-    // confirmed live: a sizing hook's session settled on its own bare echoed
-    // prompt because the previous default (== settleMs, 1500ms) elapsed before
-    // the first Linear MCP call showed any sign of life. Standalone default
-    // (not tied to settleMs, which callers often tune much smaller for fast
-    // polling) — generous enough to survive real tool-call startup latency.
     this.busyGraceMs = intOpt(
       opts.busyGraceMs,
       process.env.CONDUCTOR_BUSY_GRACE_MS,
-      10000,
+      this.settleMs,
     );
     // How long start() waits for the input box to come up.
     this.readyTimeoutMs = intOpt(
@@ -120,17 +79,8 @@ class ConductorSession {
       process.env.CONDUCTOR_READY_TIMEOUT_MS,
       60000,
     );
-    // The `claude` invocation — overridable for tests (e.g. a fake CLI). The
-    // default loads the Conductor's own skill set via --plugin-dir (see
-    // conductorPluginDir); the path is single-quoted because claudeCmd is handed
-    // to `tmux new-session` as one string and re-parsed by the shell. permFlag()
-    // is '' by default (see above) — filter it out rather than leave a stray
-    // double space in the command string.
-    this.claudeCmd =
-      opts.claudeCmd ||
-      ['claude', permFlag(), `--plugin-dir '${conductorPluginDir()}'`]
-        .filter(Boolean)
-        .join(' ');
+    // The `claude` invocation — overridable for tests (e.g. a fake CLI).
+    this.claudeCmd = opts.claudeCmd || `claude ${permFlag()}`;
     // Pane snapshot taken just before the last sendPrompt, so readResponse can
     // diff it out and return only the newly-rendered text.
     this._preSnapshot = '';
@@ -391,9 +341,4 @@ function createConductorSession(opts) {
   return new ConductorSession(opts);
 }
 
-module.exports = {
-  ConductorSession,
-  createConductorSession,
-  permFlag,
-  conductorPluginDir,
-};
+module.exports = { ConductorSession, createConductorSession, permFlag };
