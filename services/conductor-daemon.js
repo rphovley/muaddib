@@ -31,7 +31,6 @@
 
 const { createConductorSession } = require("../orchestrator/conductor-session");
 const { renderLiveFleetReport } = require("../orchestrator/fleet-report");
-const { createConductorLoop } = require("../orchestrator/conductor-loop");
 
 const HEARTBEAT_MS = parseInt(
   process.env.CONDUCTOR_HEARTBEAT_MS || "30000",
@@ -42,10 +41,6 @@ const HEARTBEAT_MS = parseInt(
 // module is importable by tests (require() alone must not start anything).
 let session = null;
 let heartbeat = null;
-// The reasoning loop this daemon runs on top of the session (detect → decide →
-// act → audit). Populated by main() alongside the session; left null so require()
-// stays side-effect-free and tests can inject a fake via _setLoop.
-let loop = null;
 
 function log(msg) {
   process.stdout.write(`[conductor-daemon] ${msg}\n`);
@@ -125,14 +120,6 @@ function shutdown() {
     clearInterval(heartbeat);
     heartbeat = null;
   }
-  if (loop) {
-    try {
-      loop.stop();
-    } catch (err) {
-      log(`loop.stop error: ${err.message}`);
-    }
-    loop = null;
-  }
   if (session) {
     try {
       session.stop();
@@ -164,15 +151,6 @@ async function main() {
     session.sendPrompt(initialPrompt);
   }
 
-  // Bring up the reasoning loop on top of the live session: it subscribes to
-  // every current worker's event stream and runs the detect → decide → act →
-  // audit cycle. A test may have pre-injected a fake loop via _setLoop; only
-  // build the real one when none is set. start() is safe to call regardless.
-  if (!loop) {
-    loop = createConductorLoop({ session, log });
-  }
-  loop.start();
-
   // Install graceful signal handlers only now that startup is done. session.start()
   // blocks the event loop on synchronous tmux polls (Atomics.wait), so a JS
   // SIGTERM/SIGINT listener registered earlier could not run until start()
@@ -182,19 +160,11 @@ async function main() {
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
 
-  // Indefinite loop — NOT a fixed workflow. The heartbeat keeps the event loop
-  // alive, periodically self-checks liveness, AND re-scans for workers that
-  // appeared after start() so the reasoning loop subscribes to them too (the
-  // loop's detection is event-driven; a brand-new worker has no subscription
-  // until we add one). rescan() is idempotent over the existing subscription set.
+  // Indefinite idle loop — NOT a fixed workflow. The heartbeat both keeps the
+  // event loop alive and periodically self-checks liveness. Fleet Control
+  // Surface behavior (proactive reasoning, tool invocation) is a later issue;
+  // the skeleton just stays up and observable.
   heartbeat = setInterval(() => {
-    if (loop) {
-      try {
-        loop.rescan();
-      } catch (err) {
-        log(`loop.rescan error: ${err.message}`);
-      }
-    }
     healthCheck()
       .then((h) => {
         if (!h.sessionAlive) {
@@ -225,13 +195,6 @@ module.exports = {
     session = s;
   },
   _getSession: () => session,
-  // Test seam mirroring _setSession for the reasoning loop: inject a fake loop
-  // (its start/stop/rescan are then driven by main()/shutdown()) or read the
-  // current one, without starting the daemon.
-  _setLoop: (l) => {
-    loop = l;
-  },
-  _getLoop: () => loop,
 };
 
 if (require.main === module) {

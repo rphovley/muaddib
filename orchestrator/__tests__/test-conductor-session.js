@@ -21,14 +21,7 @@
 // testLiveClaudeAsk     — (opt-in) ask('what is 2+2') vs real claude → non-empty
 
 const { spawnSync } = require('child_process');
-const fs = require('fs');
-const path = require('path');
-const {
-  ConductorSession,
-  createConductorSession,
-  permFlag,
-  conductorPluginDir,
-} = require('../conductor-session');
+const { ConductorSession, createConductorSession, permFlag } = require('../conductor-session');
 
 // A fake interactive "CLI": echo each submitted line back. Fast settle/poll so
 // the test doesn't drag. Unique session name to avoid colliding with a real
@@ -43,10 +36,6 @@ function newFakeSession(suffix) {
     pollMs: 100,
     timeoutMs: 8000,
     readyTimeoutMs: 8000,
-    // busyGraceMs now defaults to a standalone 10s (real tool-call latency
-    // headroom), independent of settleMs — explicit small override here so
-    // the fake CLI's instant, spinner-less echo still settles fast.
-    busyGraceMs: 400,
   });
 }
 
@@ -123,165 +112,19 @@ async function testLiveClaudeAsk() {
   }
 }
 
-// The Conductor loads its own skill set via `--plugin-dir <repo>/conductor`
-// (conductor/.claude-plugin/plugin.json + conductor/skills/*), separate from the
-// worker-baked claude/skills/*. Assert the default launch command wires the flag
-// at the resolved plugin dir, and that the seed skills are actually on disk there
-// — no tmux, no claude, no token needed.
-function testPluginDirWiredIntoClaudeCmd() {
-  const s = createConductorSession({ name: `conductor-plugindir-${process.pid}` });
-  const dir = conductorPluginDir();
-  if (!s.claudeCmd.includes('--plugin-dir')) {
-    throw new Error(`expected default claudeCmd to include --plugin-dir, got: ${s.claudeCmd}`);
-  }
-  if (!s.claudeCmd.includes(dir)) {
-    throw new Error(`expected claudeCmd to reference the conductor plugin dir ${dir}, got: ${s.claudeCmd}`);
-  }
-  if (!path.isAbsolute(dir)) {
-    throw new Error(`expected conductorPluginDir() to be absolute, got: ${dir}`);
-  }
-  // An explicit claudeCmd override (the test/fake-CLI path) must NOT get the flag.
-  const overridden = createConductorSession({ claudeCmd: 'fake-cli' });
-  if (overridden.claudeCmd.includes('--plugin-dir')) {
-    throw new Error('an explicit claudeCmd override must not have --plugin-dir appended');
-  }
-}
-
-function testConductorSkillsPresent() {
-  const dir = conductorPluginDir();
-  const manifest = path.join(dir, '.claude-plugin', 'plugin.json');
-  if (!fs.existsSync(manifest)) {
-    throw new Error(`missing conductor plugin manifest at ${manifest}`);
-  }
-  for (const skill of ['triage']) {
-    const md = path.join(dir, 'skills', skill, 'SKILL.md');
-    if (!fs.existsSync(md)) {
-      throw new Error(`missing conductor skill at ${md}`);
-    }
-    const body = fs.readFileSync(md, 'utf8');
-    if (!/^---[\s\S]*\nname:\s*/.test(body)) {
-      throw new Error(`conductor skill ${skill} is missing name: frontmatter`);
-    }
-  }
-}
-
-// The Conductor runs on the bare host, not inside a worker's container sandbox —
-// it must never default to --dangerously-skip-permissions (a prompt-injected or
-// hallucinated Bash call would execute for real on the operator's machine).
-// permFlag() is decoupled from CLAUDE_PERMISSION_MODE (the Worker-facing var,
-// default bypassPermissions there — justified by the container sandbox) via its
-// own CONDUCTOR_PERMISSION_MODE, defaulting to '' (no flag — Claude Code's normal
-// interactive gating) rather than any bypass.
-function testPermFlagDefaultsSafe() {
-  const savedConductor = process.env.CONDUCTOR_PERMISSION_MODE;
-  const savedClaude = process.env.CLAUDE_PERMISSION_MODE;
-  delete process.env.CONDUCTOR_PERMISSION_MODE;
-  try {
-    // Decoupling: even with the Worker var set to bypass, the Conductor's own
-    // flag must stay unset — the two must never cross-contaminate.
-    process.env.CLAUDE_PERMISSION_MODE = 'bypassPermissions';
-    const flag = permFlag();
-    if (flag !== '') {
-      throw new Error(`expected permFlag() to default to '' (no bypass), got: ${JSON.stringify(flag)}`);
-    }
-    const s = createConductorSession({ name: `conductor-permflag-${process.pid}` });
-    if (s.claudeCmd.includes('--dangerously-skip-permissions')) {
-      throw new Error(`default claudeCmd must not bypass permissions, got: ${s.claudeCmd}`);
-    }
-    if (/claude\s{2,}/.test(s.claudeCmd)) {
-      throw new Error(`empty permFlag() must not leave a stray double space, got: ${JSON.stringify(s.claudeCmd)}`);
-    }
-  } finally {
-    if (savedConductor === undefined) delete process.env.CONDUCTOR_PERMISSION_MODE;
-    else process.env.CONDUCTOR_PERMISSION_MODE = savedConductor;
-    if (savedClaude === undefined) delete process.env.CLAUDE_PERMISSION_MODE;
-    else process.env.CLAUDE_PERMISSION_MODE = savedClaude;
-  }
-}
-
-// An operator who explicitly wants more autonomy can still opt in.
-function testPermFlagExplicitOptIn() {
-  const saved = process.env.CONDUCTOR_PERMISSION_MODE;
-  try {
-    process.env.CONDUCTOR_PERMISSION_MODE = 'bypassPermissions';
-    if (permFlag() !== '--dangerously-skip-permissions') {
-      throw new Error(`explicit opt-in should resolve to the skip flag, got: ${JSON.stringify(permFlag())}`);
-    }
-    process.env.CONDUCTOR_PERMISSION_MODE = 'acceptEdits';
-    if (permFlag() !== '--permission-mode acceptEdits') {
-      throw new Error(`explicit non-bypass mode should resolve to --permission-mode, got: ${JSON.stringify(permFlag())}`);
-    }
-  } finally {
-    if (saved === undefined) delete process.env.CONDUCTOR_PERMISSION_MODE;
-    else process.env.CONDUCTOR_PERMISSION_MODE = saved;
-  }
-}
-
-// A pending permission-approval prompt has no "esc to interrupt" spinner, so
-// without treating it as busy it reads as a genuinely finished, idle turn —
-// confirmed live: a sizing hook's unattended session hit a Linear MCP approval
-// prompt and readResponse() handed back the prompt's own UI text as if it were
-// the model's answer. This fake CLI never resolves the "prompt" it prints (no
-// further output after it), so a correct readResponse() must never settle on
-// it — it should time out instead of returning bogus "settled" text.
-async function testPendingApprovalPromptNeverSettles() {
-  const s = createConductorSession({
-    name: `conductor-test-${process.pid}-stuck-approval`,
-    claudeCmd: "bash -c 'while IFS= read -r line; do printf \"Do you want to proceed?\\n\"; done'",
-    settleMs: 200,
-    pollMs: 100,
-    timeoutMs: 1000,
-    readyTimeoutMs: 8000,
-    busyGraceMs: 200,
-  });
-  try {
-    s.start();
-    let threw = false;
-    try {
-      s.ask('run something risky');
-    } catch (err) {
-      threw = true;
-      if (!/no settled response/i.test(err.message)) {
-        throw new Error(`expected a settle-timeout error, got: ${err.message}`);
-      }
-    }
-    if (!threw) {
-      throw new Error('expected ask() to time out rather than return the pending-approval text as an answer');
-    }
-  } finally {
-    s.stop();
-  }
-}
-
-// busyGraceMs must have its own standalone default — NOT derived from
-// settleMs — since callers (like tests) often tune settleMs much smaller than
-// what real tool-call startup latency needs. Pure construction check, no tmux.
-function testBusyGraceMsDefaultIsStandalone() {
-  const s = createConductorSession({
-    name: `conductor-test-${process.pid}-busygrace`,
-    settleMs: 50,
-  });
-  if (s.busyGraceMs === 50) {
-    throw new Error('busyGraceMs must not silently inherit a small settleMs override');
-  }
-  if (s.busyGraceMs < 5000) {
-    throw new Error(`expected a generous standalone default (>=5000ms), got: ${s.busyGraceMs}`);
-  }
-}
-
 async function main() {
   ensureTmux();
+  // Sanity: permFlag must resolve to the interactive skip flag under the default
+  // bypassPermissions mode (how the daemon launches claude).
+  if (!permFlag().includes('--dangerously-skip-permissions') && (process.env.CLAUDE_PERMISSION_MODE || 'bypassPermissions') === 'bypassPermissions') {
+    console.error('FAIL — permFlag() should be --dangerously-skip-permissions under bypassPermissions');
+    process.exit(1);
+  }
 
   const tests = [
     ['start() → isAlive() true; stop() → isAlive() false', testStartIsAliveStop],
     ['ask() returns non-empty settled echo output', testAskEchoes],
     ['sendPrompt() on a dead session throws', testSendPromptDeadSession],
-    ['default claudeCmd wires --plugin-dir at the conductor plugin dir', testPluginDirWiredIntoClaudeCmd],
-    ['conductor plugin manifest + seed skills are present on disk', testConductorSkillsPresent],
-    ['permFlag() defaults to no bypass, decoupled from CLAUDE_PERMISSION_MODE', testPermFlagDefaultsSafe],
-    ['permFlag() honors an explicit CONDUCTOR_PERMISSION_MODE opt-in', testPermFlagExplicitOptIn],
-    ['a pending approval prompt never settles as a fake "answer"', testPendingApprovalPromptNeverSettles],
-    ['busyGraceMs defaults standalone, not tied to settleMs', testBusyGraceMsDefaultIsStandalone],
     ['(opt-in) live claude ask(2+2) → non-empty', testLiveClaudeAsk],
   ];
 
@@ -298,7 +141,7 @@ async function main() {
   }
 
   // Best-effort cleanup of any stray sessions this run created.
-  for (const suffix of ['lifecycle', 'ask', 'dead', 'stuck-approval']) {
+  for (const suffix of ['lifecycle', 'ask', 'dead']) {
     spawnSync('tmux', ['kill-session', '-t', `conductor-test-${process.pid}-${suffix}`], { stdio: 'ignore' });
   }
   spawnSync('tmux', ['kill-session', '-t', `conductor-live-${process.pid}`], { stdio: 'ignore' });

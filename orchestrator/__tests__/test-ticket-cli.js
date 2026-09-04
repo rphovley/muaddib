@@ -32,10 +32,6 @@ function fakeSource(name = 'linear', overrides = {}) {
       calls.push(['fetchTicket', id]);
       return { identifier: id, title: 'A ticket' };
     },
-    async fetchComments(id) {
-      calls.push(['fetchComments', id]);
-      return { own: [{ id: 'c1', body: 'hello' }], parent: [] };
-    },
     async postComment(id, body) {
       calls.push(['postComment', id, body]);
       return { commentId: 'cmt_123' };
@@ -48,9 +44,6 @@ function fakeSource(name = 'linear', overrides = {}) {
     async createSubIssue(parentId, title, description) {
       calls.push(['createSubIssue', parentId, title, description]);
       return { identifier: 'CHILD-1', url: 'https://example/CHILD-1' };
-    },
-    async addBlockingRelation(blockerId, blockedId) {
-      calls.push(['addBlockingRelation', blockerId, blockedId]);
     },
     ...overrides,
   };
@@ -78,18 +71,6 @@ async function testFetchNotFound() {
   assert.strictEqual(code, 1);
   assert.strictEqual(stdout.text, '');
   assert.ok(stderr.text.includes('no ticket found'), 'expected not-found message on stderr');
-}
-
-// ─── comments ────────────────────────────────────────────────────────────────
-
-async function testComments() {
-  const source = fakeSource();
-  const stdout = capture();
-  const code = await run({ argv: ['comments', 'QUO-507'], source, stdout });
-  assert.strictEqual(code, 0);
-  assert.deepStrictEqual(source.calls[0], ['fetchComments', 'QUO-507']);
-  const printed = JSON.parse(stdout.text);
-  assert.deepStrictEqual(printed, { own: [{ id: 'c1', body: 'hello' }], parent: [] });
 }
 
 // ─── mention ─────────────────────────────────────────────────────────────────
@@ -146,23 +127,6 @@ async function testCreateSubIssue() {
   assert.strictEqual(printed.identifier, 'CHILD-1');
 }
 
-// ─── add-blocking-relation (both ids on argv, no stdout) ─────────────────────
-
-async function testAddBlockingRelation() {
-  const source = fakeSource();
-  const stdout = capture();
-  const code = await run({
-    argv: ['add-blocking-relation', 'CHILD-1', 'CHILD-2'],
-    source,
-    // A stray stdin read would be a bug — this subcommand takes only argv.
-    readBody: async () => { throw new Error('add-blocking-relation must not read stdin'); },
-    stdout,
-  });
-  assert.strictEqual(code, 0);
-  assert.deepStrictEqual(source.calls[0], ['addBlockingRelation', 'CHILD-1', 'CHILD-2']);
-  assert.strictEqual(stdout.text, ''); // void → no stdout
-}
-
 // ─── raw: writes are silent no-op exit-0 ─────────────────────────────────────
 
 async function testRawWritesAreNoOps() {
@@ -171,7 +135,6 @@ async function testRawWritesAreNoOps() {
   const source = fakeSource('raw', {
     postComment: async () => { throw new Error('raw postComment should not be called'); },
     createSubIssue: async () => { throw new Error('raw createSubIssue should not be called'); },
-    addBlockingRelation: async () => { throw new Error('raw addBlockingRelation should not be called'); },
   });
   const bodyRead = () => { throw new Error('raw write should not read stdin'); };
 
@@ -184,11 +147,6 @@ async function testRawWritesAreNoOps() {
   const c2 = await run({ argv: ['create-sub-issue', 'p', 't'], source, readBody: bodyRead, stdout: out2 });
   assert.strictEqual(c2, 0);
   assert.strictEqual(out2.text, '');
-
-  const out3 = capture();
-  const c3 = await run({ argv: ['add-blocking-relation', 'b1', 'b2'], source, readBody: bodyRead, stdout: out3 });
-  assert.strictEqual(c3, 0);
-  assert.strictEqual(out3.text, '');
 
   // fetch and mention still work on raw as-is.
   assert.strictEqual(source.calls.length, 0);
@@ -242,14 +200,6 @@ async function testSubprocessRawEndToEnd() {
   assert.strictEqual(r1.status, 0, `post-comment raw exit: ${r1.status} / ${r1.stderr}`);
   assert.strictEqual(r1.stdout, '');
 
-  // add-blocking-relation on raw: silent, exit 0 (no stdin needed).
-  const rBlock = spawnSync(process.execPath, [CLI, 'add-blocking-relation', 'b1', 'b2'], {
-    encoding: 'utf8',
-    env: { ...process.env, TICKET_SOURCE: 'raw' },
-  });
-  assert.strictEqual(rBlock.status, 0, `add-blocking-relation raw exit: ${rBlock.status} / ${rBlock.stderr}`);
-  assert.strictEqual(rBlock.stdout, '');
-
   // mention on raw: prints normalized handle.
   const r2 = spawnSync(process.execPath, [CLI, 'mention', 'operator'], {
     encoding: 'utf8',
@@ -273,12 +223,10 @@ async function main() {
   const tests = [
     ['fetch → source.fetchTicket, prints JSON', testFetch],
     ['fetch not-found → stderr + exit 1 (no contextless proceed)', testFetchNotFound],
-    ['comments → source.fetchComments, prints JSON', testComments],
     ['mention → source.mentionUser, normalized, no newline', testMention],
     ['mention empty handle → empty output, exit 0', testMentionEmptyHandle],
     ['post-comment → source.postComment with stdin body, prints commentId', testPostComment],
     ['create-sub-issue → source.createSubIssue with stdin desc, prints JSON', testCreateSubIssue],
-    ['add-blocking-relation → source.addBlockingRelation(blocker, blocked), no stdout', testAddBlockingRelation],
     ['raw writes are silent no-op exit-0 (no method call, no stdin read)', testRawWritesAreNoOps],
     ['unknown subcommand → usage + exit 1', testUnknownSubcommand],
     ['readStdin rejects on a TTY (no redirect)', testReadStdinRejectsTTY],

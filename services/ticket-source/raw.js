@@ -57,13 +57,6 @@ const rawSource = {
     return { commentId: null };
   },
 
-  // No comment thread on a raw ticket (see fetch-ticket.js's raw branch) — there
-  // is nothing to read back, so both own and parent are empty. Shaped like the
-  // other backends ({ own, parent }) so read-back callers need no raw-specific branch.
-  async fetchComments() {
-    return { own: [], parent: [] };
-  },
-
   // Pure string helper — same shape regardless of backend, no reason to differ.
   mentionUser(handle) {
     const h = String(handle == null ? '' : handle).trim().replace(/^@+/, '');
@@ -88,12 +81,6 @@ const rawSource = {
   // to be declared in the free-form task text itself; there's no ticket system
   // here to hold it structurally.
   async addBlockingRelation() {},
-
-  // No external backend, so nothing to label and no dispatch daemon watching a
-  // raw ticket — a void no-op (like postComment / addBlockingRelation above).
-  // The sizing scheduler never reaches this for raw anyway (it no-ops the whole
-  // step on a raw source), but the interface stays complete.
-  async markReadyForDispatch() {},
 
   async registerWatch() {
     throw new Error('raw ticket source has no backend — registerWatch() is not supported');

@@ -1,6 +1,0 @@
-{
-  "name": "muaddib-conductor",
-  "description": "Conductor-owned skill set — decision skills loaded only by the host Conductor's claude session (via --plugin-dir), separate from the worker-baked claude/skills/*.",
-  "version": "0.1.0",
-  "author": { "name": "muaddib" }
-}

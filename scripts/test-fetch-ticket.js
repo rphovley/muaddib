@@ -307,56 +307,6 @@ await test('run(): own comment takes precedence over parent comment', async () =
   assert('parent plan not used', !planContent.includes('Work stream 1'));
 });
 
-await test('run(): ## Context comment on issue → context.md hydrated', async () => {
-  const repo = makeRepo();
-  const worker = 40;
-  const issue = {
-    ...BASE_ISSUE,
-    comments: {
-      nodes: [
-        { id: 'c1', body: 'Review looks good', user: { name: 'Alice' }, createdAt: '', updatedAt: '' },
-        { id: 'c2', body: '## Context\n\n### taskManager\ngathered context here', user: { name: 'Bot' }, createdAt: '', updatedAt: '' },
-      ],
-    },
-  };
-
-  await run(mockGql(issue), { worker, task: 'QUO-99', repo, ticketSource: 'linear' });
-
-  const contextPath = path.join(repo, '.muaddib', 'context.md');
-  assert('context.md exists', fs.existsSync(contextPath));
-  const content = fs.readFileSync(contextPath, 'utf8');
-  assert('context.md starts with ## Context', content.startsWith('## Context'));
-  assert('context.md has the gathered body', content.includes('gathered context here'));
-});
-
-await test('run(): ## Context on parent only → context.md hydrated from parent', async () => {
-  const repo = makeRepo();
-  const worker = 41;
-  const issue = {
-    ...BASE_ISSUE,
-    comments: { nodes: [] },
-    parent: {
-      id: 'parent-id',
-      identifier: 'QUO-50',
-      title: 'Parent',
-      url: 'https://linear.app/quotethat/issue/QUO-50',
-      comments: { nodes: [{ id: 'p1', body: '## Context\n\n### x\nparent context', user: { name: 'Bot' }, createdAt: '', updatedAt: '' }] },
-    },
-  };
-
-  await run(mockGql(issue), { worker, task: 'QUO-99', repo, ticketSource: 'linear' });
-
-  const content = fs.readFileSync(path.join(repo, '.muaddib', 'context.md'), 'utf8');
-  assert('context.md hydrated from parent', content.includes('parent context'));
-});
-
-await test('run(): no ## Context comment → no context.md', async () => {
-  const repo = makeRepo();
-  const worker = 42;
-  await run(mockGql(BASE_ISSUE), { worker, task: 'QUO-99', repo, ticketSource: 'linear' });
-  assert('no context.md written', !fs.existsSync(path.join(repo, '.muaddib', 'context.md')));
-});
-
 await test('run(): missing identifier throws', async () => {
   let threw = false;
   try {

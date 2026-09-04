@@ -98,30 +98,6 @@ async function testGithubRequiresOwnerRepo() {
   assert(hasErr(res, 'githubRepo'), 'should flag missing githubRepo');
 }
 
-async function testAutonomyLevelValidPasses() {
-  for (const level of ['L0', 'L1', 'L2', 'L3']) {
-    const m = validManifest();
-    m.autonomyLevel = level;
-    const res = validateManifest(m);
-    assert(res.ok, `autonomyLevel ${level} should pass, got: ${res.errors.join('; ')}`);
-  }
-}
-
-async function testAutonomyLevelDefaultsL0() {
-  const m = validManifest();
-  delete m.autonomyLevel; // absent → L0, which is valid
-  const res = validateManifest(m);
-  assert(res.ok, `absent autonomyLevel should default to L0 and pass, got: ${res.errors.join('; ')}`);
-}
-
-async function testAutonomyLevelBogusRejected() {
-  const m = validManifest();
-  m.autonomyLevel = 'L9';
-  const res = validateManifest(m);
-  assert(!res.ok, 'a bogus autonomyLevel should be rejected');
-  assert(hasErr(res, 'autonomyLevel'), `error should name autonomyLevel, got: ${res.errors.join('; ')}`);
-}
-
 async function testMissingWorkerPort() {
   const m = validManifest();
   delete m.workerPorts.db;
@@ -285,9 +261,6 @@ async function testFileMissing() {
   await run('absent ticketSource defaults to linear', testTicketSourceDefaultsLinear);
   await run('raw ticketSource rejected in manifest', testRawTicketSourceRejected);
   await run('github requires owner + repo', testGithubRequiresOwnerRepo);
-  await run('valid autonomyLevel passes', testAutonomyLevelValidPasses);
-  await run('absent autonomyLevel defaults to L0', testAutonomyLevelDefaultsL0);
-  await run('bogus autonomyLevel rejected', testAutonomyLevelBogusRejected);
   await run('missing workerPort fails', testMissingWorkerPort);
   await run('duplicate local ports fail', testDuplicateLocalPorts);
   await run('empty projects fails', testMissingProjects);

@@ -34,8 +34,6 @@ If `.muaddib/sketch/` contains an HTML prototype, a `sketch` step already ran in
 
 More commonly, `sketch` ran during an earlier **planning** run (`plan.json`, a different worker/container), so nothing is on disk here. A `## Sketch` prototype from that run lives in a ticket comment, which `fetch` does not return; if no prototype is on disk under `.muaddib/sketch/`, proceed from the plan and ticket description without it.
 
-If `.muaddib/context.md` exists, read it too — the `gather-context` step aggregates the project's declared sources of truth (task manager, decision log, process docs) into it during planning, so it carries prior decisions and constraints the plan assumes. It may be absent (no `contextSources` configured, or nothing gathered); proceed without it when so.
-
 Read `CLAUDE.md` (root and per-project for the affected area). Read neighboring files in the plan's touched directories to match existing patterns.
 
 ## Step 2 — Implement

@@ -27,7 +27,6 @@ const fs = require('fs');
 const path = require('path');
 const state = require('../orchestrator/state');
 const { getTicketSource } = require('../services/ticket-source');
-const { resolveContext } = require('../services/context-comments');
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -84,20 +83,6 @@ function extractPlanSection(commentBody) {
   const idx = commentBody.indexOf('## Plan');
   if (idx === -1) return null;
   return commentBody.slice(idx).trim();
-}
-
-// Hydrate .muaddib/context.md from an existing "## Context" comment (own→parent),
-// the read-back side of scripts/gather-context.js. Same shape as the plan.md
-// hydration above: a resumed / separate worker gets the aggregated context
-// on disk without re-gathering. Returns 'found' | 'not_found'.
-function hydrateContextFile(repo, ownComments, parentComments) {
-  const { markdown } = resolveContext(ownComments, parentComments);
-  if (!markdown) return 'not_found';
-  const contextPath = path.join(repo, '.muaddib', 'context.md');
-  fs.mkdirSync(path.dirname(contextPath), { recursive: true });
-  fs.writeFileSync(contextPath, markdown.endsWith('\n') ? markdown : markdown + '\n');
-  process.stderr.write(`[fetch-ticket] wrote .muaddib/context.md (${markdown.length} chars)\n`);
-  return 'found';
 }
 
 // ─── real HTTP graphql call ───────────────────────────────────────────────────
@@ -223,12 +208,6 @@ async function run(gql, opts = {}) {
 
     const ownComments = issue.comments?.nodes ?? [];
     const parentComments = issue.parent?.comments?.nodes ?? [];
-
-    // Hydrate .muaddib/context.md from an existing "## Context" comment (own→parent)
-    // alongside the plan.md hydration below, so a resumed/separate worker has the
-    // gathered context on disk without re-running gather-context.
-    hydrateContextFile(repo, ownComments, parentComments);
-
     const planComment = findPlanComment([...ownComments, ...parentComments]);
 
     let planStatus = 'not_found';
@@ -305,4 +284,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { run, extractIdentifier, findPlanComment, extractPlanSection, hydrateContextFile };
+module.exports = { run, extractIdentifier, findPlanComment, extractPlanSection };

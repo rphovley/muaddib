@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
-# Test suite for muaddib.sh's ticket-vs-task classification. Exercises the
+# Test suite for muaddib.sh's ticket-vs-task routing decision. Exercises the
 # --dry-run path, which classifies the argument (via fetch-ticket.js's
 # extractIdentifier, gated on the project's declared ticketSource) and prints
-# `source=<linear|github|raw>` + `task=<...>` before any spawn/attach call —
-# dry-run exits before muaddib.sh's post-classify behavior (a ticket lands the
-# operator in the Conductor session, raw/free-form in the worker's own), which
-# this suite doesn't exercise; see muaddib.sh's header comment for that split.
+# `source=<linear|github|raw>` + `task=<...>` before any docker/spawn call.
 #
 # Points muaddib.sh at a fixture manifest via MUADDIB_REPO (read-config.sh's
 # documented REPO_ROOT override — same seam test-read-config.sh uses), so no

@@ -46,7 +46,6 @@ it implements lives in [`.muaddib/onboarding.md`](.muaddib/onboarding.md).
 | `.muaddib/secrets.env.example` | Committed template for the secrets bundle (gitignored: `.muaddib/secrets.env`) |
 | `.muaddib/secrets.env` | Your filled-in secrets (gitignored). Copy from `secrets.env.example`. |
 | `.muaddib/hooks/on-worker-start.sh` | Project hook run by the worker entrypoint after env is loaded. Executable; receives the full worker env. |
-| `.muaddib/hooks/sizing.js` | The well-known sizing hook `orchestrator/sizing-signal.js#findSizingHook` discovers (`node sizing.js <ticketId>` → Sizing Signal JSON on stdout). muaddib's own is **active** — it sizes muaddib's tickets for real via a ConductorSession over the ticket + gathered context (~90s/ticket, once per ticket), so the `size-and-schedule.js` split path (muaddib#106/#107) runs against a genuine signal. It also doubles as the reference other projects copy to their own `.muaddib/hooks/sizing.js`; a project shipping no hook stays `{ configured: false }` (a first-class non-error state). |
 | `.muaddib/docker/docker-compose.worker.yml` | Project compose overlay — services/env the generic `docker-compose.worker.yml` doesn't carry (e.g. a DB sidecar). Layered in via an extra `-f` when present. |
 | `~/.muaddib/<project>/workers/.worker-N.env` | Per-worker ephemeral env file. Written by `spawn-worker.sh` **outside the repo tree** (it carries the subscription + GitHub tokens); regenerated every spawn, never edit by hand. |
 | `~/.muaddib/<project>/dispatch.json`, `dispatch-queue.json` | Dispatch daemon's dedup ledger + pending-spawn queue, kept outside the repo tree. In the dispatch container these persist via a host bind-mount (`MUADDIB_DISPATCH_DIR`). |
@@ -181,31 +180,6 @@ as an issue number. `muaddib.sh --raw` (and its thin alias `muaddib-task.sh`)
 skips detection and forces `raw`, for task text that could itself look like a
 ticket reference (e.g. free-form text containing `QUO-123`).
 
-## Autonomy level config
-
-How much the Conductor may act on its own — before escalating a decision to a
-human — is declared in `.muaddib/manifest.json`, not hard-coded:
-
-```json
-"autonomyLevel": "L0"
-```
-
-The four levels:
-
-- **`L0`** — report-only (the default when the key is absent, preserving
-  existing behavior): the Conductor never acts, it only reports.
-- **`L1`** — answer low-risk/informational requests directly; escalate anything
-  consequential.
-- **`L2`** — act on already-confirmed outcomes without re-asking.
-- **`L3`** — fully autonomous within the budget/concurrency caps in
-  `.muaddib/goals.md`.
-
-`read-config.sh` validates it and fails loud on anything else, exporting it as
-`MUADDIB_AUTONOMY_LEVEL`. Node consumers read the same value through
-`readAutonomyLevel(repoDir)` in `services/muaddib-config.js`, which applies the
-identical `L0` default and fail-loud contract. `VALID_AUTONOMY_LEVELS`
-(`services/validate-manifest.js`) is the source of truth for the enum.
-
 ## Context source config
 
 Beyond the ticket backend, a project can declare the *other* sources of truth
@@ -255,36 +229,6 @@ with a clear per-entry error — the same "must be a known backend" contract
 `ticketSource` enforces. (`requirementsAndIntent`/`linkFollow` is a separate
 concern; "Existing Behavior" — CLAUDE.md + `Explore` — deliberately stays out of
 this registry, since it's not an external system with swappable implementations.)
-
-### Context gathering (`## Context`)
-
-The `gather-context` step (`scripts/gather-context.js`) turns the declared
-`contextSources` into durable, discoverable context on the ticket. It runs after
-`fetch-ticket` and before `analyze-ticket` in the `feature`/`bug`/`plan`
-workflows (`feature-fast` deliberately skips planning, so it has no gather step).
-For each configured source it calls `gatherContext(ticketId, ticket)` — reusing
-the ticket object `fetch-ticket` already wrote to `/tmp/ticket-${WORKER_INDEX}.json`,
-so `taskManager` needs no refetch — aggregates the results, and:
-
-- posts them to the ticket under a searchable **`## Context`** header, mirroring
-  the `## Plan` / `## Sketch` convention. An aggregate that exceeds a backend's
-  comment size limit is split on source-section boundaries into
-  **`## Context (n/m)`** parts (`services/context-comments.js#splitIntoParts`);
-- writes the same markdown to **`.muaddib/context.md`** for same-run downstream
-  steps (`analyze-ticket`, `implement`, `implement-bug` all read it when present);
-- records `context_status` (`posted` | `empty` | `skipped`) to worker state.
-
-It is **idempotent**: a re-run or resumed worker whose ticket already carries a
-`## Context` comment does not re-post — it just hydrates `.muaddib/context.md`
-from the existing comment(s) and records `skipped`. Read-back collects every
-`## Context (n/m)` part by index and, when the current ticket has none, falls
-back to the **parent** ticket's `## Context`
-(`services/context-comments.js#resolveContext`) — the same own→parent precedence
-`fetch-ticket` uses for `## Plan`, and which it now also applies to hydrate
-`.muaddib/context.md`. (Copying a parent's context *slice* into each child at
-scheduling time is a later sub-issue; only the read-back parent fallback is built
-here.) Read-back goes through `TicketSource.fetchComments(id)` →
-`{ own, parent }`, since `fetchTicket()` returns no comments.
 
 ## Preview server config (`services/start-servers.js`, `dispatch-daemon.js`)
 
@@ -591,19 +535,8 @@ npm run muaddib https://github.com/owner/repo/issues/36          # or just: npm 
 npm run muaddib "fix the auth token expiry bug in the portal"
 ```
 
-Dispatch is always direct — running the command IS the decision to put a worker
-on the ticket, so `muaddib.sh` spawns it straight away with no judgment step.
-(An earlier version routed a resolved ticket through the [Conductor](#the-conductor)'s
-`dispatch-decision` skill first; removed once every real trigger turned out to
-already carry an explicit human "yes," leaving the skill nothing to decide.)
-For a **ticket reference**, the operator lands in the persistent Conductor
-session, not the worker's own — the fleet manager stays the thing you interact
-with; use `./muaddib/bin/attach.sh <n>` for the worker's own session instead.
-**Free-form task text** has no ticket for the fleet manager to track, so it
-dispatches straight to the worker and auto-attaches there, unchanged.
-
 To force raw dispatch when task text could itself look like a ticket reference,
-use `--raw` (or the thin alias `muaddib-task.sh`); raw dispatch is always direct:
+use `--raw` (or the thin alias `muaddib-task.sh`):
 
 ```bash
 npm run muaddib -- --raw "investigate QUO-123 regression"   # treat as task text, not ticket QUO-123
@@ -654,46 +587,6 @@ Run with no argument for a bare idle daemon (`npm run muaddib:conductor`, or
 `--bg` to detach); `./muaddib/conductor.sh --stop` tears it down. When a daemon
 is already up, a ticket/task is sent to the existing session rather than spawning
 a second one.
-
-#### Conductor skills (`conductor/`)
-
-The Conductor has its **own** skill set, separate from the Worker skills under
-`claude/skills/*`. The two never mix:
-
-| | `claude/skills/*` (Worker skills) | `conductor/skills/*` (Conductor skills) |
-|---|---|---|
-| Runs on | inside each **Worker container** | the **host** Conductor session |
-| Loaded by | `COPY … claude/skills/ → ~/.claude/skills/` baked into `Dockerfile.worker` | `--plugin-dir <repo>/conductor` on the Conductor's `claude` launch |
-| Scope | every `claude` in the worker image | the Conductor's session only — a human running plain `claude` in the repo root does **not** get them |
-
-`conductor/` is a minimal [Claude Code plugin](https://docs.claude.com/en/docs/claude-code/plugins):
-a `conductor/.claude-plugin/plugin.json` manifest plus each skill at
-`conductor/skills/<name>/SKILL.md` (same frontmatter shape as the Worker skills).
-`orchestrator/conductor-session.js` appends `--plugin-dir '<repo>/conductor'` to
-the `claude` command it launches (see `conductorPluginDir()`), so the skills load
-for the Conductor and **only** the Conductor — no copy or symlink staging step,
-no ambient leakage into other host `claude` runs. This is why the flag was chosen
-over a project-local `.claude/skills/` at the repo root, which any host `claude`
-started there would also pick up.
-
-Validate the plugin (no token or running session needed — used in CI-style checks):
-
-```bash
-claude plugin validate muaddib/conductor          # manifest + every SKILL.md
-claude plugin validate --strict muaddib/conductor  # warnings are errors
-```
-
-Seed skills:
-
-- **`triage`** — a blocked or awaiting-review worker is waiting on an answer.
-  Decide whether the Conductor answers directly (drafting the answer) or escalates
-  to the human, weighing the project's configured autonomy level. (The concrete
-  `autonomyLevel` input lands with muaddib#121; the skill references it
-  conceptually until then.)
-
-The skills are written **agent-agnostically** — "what to decide," free of
-Claude-Code-specific mechanics — so the decision prose stays portable even though
-the load mechanism is Claude Code's plugin system.
 
 ## MuaddibApp — menu bar status board
 

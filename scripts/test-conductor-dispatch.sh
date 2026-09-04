@@ -129,39 +129,6 @@ test_unknown_flag_errors() {
   fi
 }
 
-# ─── --watch: read-only mirror of an already-running session ────────────────
-
-test_watch_no_ticket_no_daemon_errors() {
-  # --watch implies "mirror what's already there" — with no daemon up there's
-  # nothing to mirror, and it must not fall back to starting a new one.
-  local tmp="$1"
-  if CONDUCTOR_PID_FILE="$(dead_pidfile "$tmp")" \
-     bash "$CONDUCTOR_SH" --dry-run --watch >/dev/null 2>&1; then
-    echo "expected non-zero exit for --watch with no ticket and no live daemon"; return 1
-  fi
-}
-
-test_watch_no_ticket_live_daemon() {
-  # --watch alone, daemon already up → watchonly (no ticket sent, no restart).
-  local tmp="$1"
-  assert_dispatch "$(alive_pidfile "$tmp")" "watchonly|" --watch
-}
-
-test_watch_with_ticket_still_reuses() {
-  # --watch alongside a ticket doesn't change the dispatch mode — it only gates
-  # what happens after (the read-only attach), which --dry-run never reaches.
-  local tmp="$1"
-  assert_dispatch "$(alive_pidfile "$tmp")" "reuse|QUO-507" --watch QUO-507
-}
-
-test_attach_and_watch_mutually_exclusive() {
-  local tmp="$1"
-  if CONDUCTOR_PID_FILE="$(alive_pidfile "$tmp")" \
-     bash "$CONDUCTOR_SH" --dry-run --attach --watch QUO-507 >/dev/null 2>&1; then
-    echo "expected non-zero exit for --attach + --watch together"; return 1
-  fi
-}
-
 # ─── run ─────────────────────────────────────────────────────────────────────
 
 cd "$REPO_ROOT"
@@ -176,10 +143,6 @@ run_test "ticket + live daemon → reuse"                  test_reuse_when_daemo
 run_test "--bg + ticket + live daemon → reuse"           test_reuse_wins_over_bg
 run_test "--stop → stop"                                 test_stop
 run_test "unknown leading flag → usage error"            test_unknown_flag_errors
-run_test "--watch, no ticket, no daemon → error"         test_watch_no_ticket_no_daemon_errors
-run_test "--watch, no ticket, live daemon → watchonly"   test_watch_no_ticket_live_daemon
-run_test "--watch + ticket + live daemon → reuse"        test_watch_with_ticket_still_reuses
-run_test "--attach + --watch together → error"           test_attach_and_watch_mutually_exclusive
 
 echo ""
 echo "$PASS/$((PASS + FAIL)) passed"

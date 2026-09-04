@@ -21,13 +21,6 @@
       ]
     },
     {
-      "id": "gather-context",
-      "type": "script",
-      "script": "scripts/gather-context.js",
-      "stateReads": ["ticket_identifier", "ticket_url"],
-      "stateWrites": ["context_status"]
-    },
-    {
       "id": "branch",
       "type": "script",
       "script": "scripts/branch.sh",
@@ -54,58 +47,14 @@
       "mockStateWrites": []
     },
     {
-      "id": "size-and-schedule-propose",
-      "type": "script",
-      "script": "scripts/size-and-schedule.js",
-      "args": ["--propose"],
-      "stateReads": ["ticket_identifier", "ticket_title"],
-      "stateWrites": ["recommend_split", "sub_issues_plan"]
-    },
-    {
-      "id": "sizing-review-loop",
-      "type": "loop",
-      "runIf": "state.recommend_split === 'true'",
-      "minIterations": 1,
-      "maxIterations": 200,
-      "exitCondition": "state.sizing_confirm === 'dispatch' || state.sizing_confirm === 'tickets_only'",
-      "steps": [
-        {
-          "id": "confirm-sizing",
-          "type": "claude-tui",
-          "skill": "confirm-sizing",
-          "awaitsReview": "review",
-          "stateReads": ["ticket_identifier", "ticket_url"],
-          "stateWrites": ["sizing_confirm"]
-        },
-        {
-          "id": "adjust-sizing",
-          "type": "claude-tui",
-          "skill": "adjust-sizing",
-          "runIf": "state.sizing_confirm === 'adjust'",
-          "stateReads": ["ticket_identifier", "ticket_url"]
-        }
-      ]
-    },
-    {
-      "id": "size-and-schedule-commit",
-      "type": "script",
-      "script": "scripts/size-and-schedule.js",
-      "args": ["--commit"],
-      "runIf": "state.sizing_confirm === 'dispatch' || state.sizing_confirm === 'tickets_only'",
-      "stateReads": ["ticket_identifier", "ticket_title", "sizing_confirm"],
-      "stateWrites": ["recommend_split", "sub_issues"]
-    },
-    {
       "id": "implement-bug",
       "type": "claude-tui",
       "skill": "implement-bug",
-      "runIf": "state.recommend_split !== 'true'",
       "stateReads": ["branch", "ticket_identifier"]
     },
     {
       "id": "implement-check-loop",
       "type": "loop",
-      "runIf": "state.recommend_split !== 'true'",
       "minIterations": 1,
       "maxIterations": 5,
       "exitCondition": "state.check_status === 'pass'",
@@ -129,7 +78,6 @@
       "id": "review",
       "type": "claude-tui",
       "skill": "review-fleet",
-      "runIf": "state.recommend_split !== 'true'",
       "stateReads": ["ticket_url", "ticket_identifier"],
       "stateWrites": ["review_status", "review_findings"]
     },
@@ -167,7 +115,6 @@
       "id": "wrapup",
       "type": "claude-tui",
       "skill": "commit-and-pr",
-      "runIf": "state.recommend_split !== 'true'",
       "stateReads": ["branch", "ticket_url", "api_tunnel_url", "portal_url", "homeowner_url"],
       "stateWrites": ["pr_number"]
     }
