@@ -610,12 +610,13 @@ async function runCommit(opts = {}) {
     // Signal the Conductor directly, on this worker's own events stream —
     // conductor-loop.js watches every worker's stream already (the same
     // subscribe() poll it uses for BLOCKED/AWAITING_REVIEW) and, on seeing this,
-    // runs /dispatch-decision on each child itself (with the same pre-gathered
-    // context muaddib.sh builds for a human-triggered dispatch), rather than
-    // leaving the new tickets to sit on the "auto" label alone waiting for
-    // whatever picks it up. This worker's job ends at this ticket being split —
-    // dispatching the children is the fleet's decision, not this worker's (see
-    // the runIf gates on implement/review/wrapup keyed off recommend_split).
+    // spawns each child directly itself — no judgment left to make, since the
+    // operator already confirmed "dispatch" in the sizing review loop that got
+    // us here — rather than leaving the new tickets to sit on the "auto" label
+    // alone waiting for whatever picks it up. This worker's job ends at this
+    // ticket being split — dispatching the children is the fleet's job, not
+    // this worker's (see the runIf gates on implement/review/wrapup keyed off
+    // recommend_split).
     const readyIds = children.map((c) => c.identifier).filter(Boolean);
     if (readyIds.length) {
       try {
