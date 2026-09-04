@@ -51,9 +51,11 @@ function formatWorkerReport(status, opts = {}) {
   const step = stepLabel(s.currentStep);
   const count = Number.isFinite(s.eventCount) ? s.eventCount : 0;
   const last = s.lastEventTs == null ? '—' : String(s.lastEventTs);
+  const ticket = s.ticketIdentifier == null ? 'no ticket' : String(s.ticketIdentifier);
 
   const cols = [
     label.padEnd(opts.labelWidth || label.length),
+    ticket.padEnd(opts.ticketWidth || ticket.length),
     state.padEnd(opts.stateWidth || state.length),
     step.padEnd(opts.stepWidth || step.length),
     `${count} event${count === 1 ? '' : 's'}`,
@@ -105,10 +107,11 @@ function formatFleetReport(state, opts = {}) {
   // as a table rather than a ragged list. Counts/timestamp/flags trail after the
   // aligned block and need no padding.
   const labelWidth = Math.max(...workers.map((w) => `worker ${w.worker}`.length));
+  const ticketWidth = Math.max(...workers.map((w) => (w.ticketIdentifier == null ? 'no ticket' : String(w.ticketIdentifier)).length));
   const stateWidth = Math.max(...workers.map((w) => (w.state == null ? '—' : String(w.state)).length));
   const stepWidth = Math.max(...workers.map((w) => stepLabel(w.currentStep).length));
 
-  const lines = workers.map((w) => formatWorkerReport(w, { labelWidth, stateWidth, stepWidth }));
+  const lines = workers.map((w) => formatWorkerReport(w, { labelWidth, ticketWidth, stateWidth, stepWidth }));
   return [...headerLines, ...lines].join('\n');
 }
 

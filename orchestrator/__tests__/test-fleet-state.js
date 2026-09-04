@@ -211,6 +211,54 @@ async function testFleetStateLists() {
   }
 }
 
+async function testTicketIdentifier() {
+  // ticketIdentifier is read from the worker's state file via an injectable
+  // stateGet, exactly like conductor-loop.js's own read of the same field — no
+  // real state file needed here, just a stub.
+  const W = BASE + 13;
+  reset(W);
+  emit(W, 'orchestrator', 'state_changed', { state: 'RUNNING' });
+
+  const assigned = workerStatus(W, {
+    stateGet: (w, key) => (w === W && key === 'ticket_identifier' ? 'QUO-507' : undefined),
+  });
+  assert(assigned.ticketIdentifier === 'QUO-507', `expected ticketIdentifier QUO-507, got ${assigned.ticketIdentifier}`);
+
+  const unassigned = workerStatus(W, { stateGet: () => undefined });
+  assert(unassigned.ticketIdentifier === null, `expected null when no ticket assigned, got ${unassigned.ticketIdentifier}`);
+
+  // A throwing stateGet (e.g. a corrupt state file) must not take the whole
+  // status derivation down with it.
+  const onThrow = workerStatus(W, {
+    stateGet: () => { throw new Error('boom'); },
+  });
+  assert(onThrow.ticketIdentifier === null, `a throwing stateGet should degrade to null, got ${onThrow.ticketIdentifier}`);
+  assert(onThrow.state === 'RUNNING', 'the events-derived fields must still be intact');
+}
+
+async function testFleetStateThreadsStateGet() {
+  // fleetState() must pass its opts (stateGet included) through to every
+  // worker it folds, not just call workerStatus() with no args.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-list-ticket-'));
+  const prev = process.env.AGENT_STATUS_DIR;
+  process.env.AGENT_STATUS_DIR = dir;
+  try {
+    emit(0, 'orchestrator', 'state_changed', { state: 'RUNNING' });
+    emit(2, 'orchestrator', 'state_changed', { state: 'RUNNING' });
+
+    const snap = fleetState({
+      stateGet: (w) => (w === 2 ? 'QUO-1' : undefined),
+    });
+    const w0 = snap.workers.find((w) => w.worker === 0);
+    const w2 = snap.workers.find((w) => w.worker === 2);
+    assert(w0.ticketIdentifier === null, `worker 0 should have no ticket, got ${w0.ticketIdentifier}`);
+    assert(w2.ticketIdentifier === 'QUO-1', `worker 2 should be on QUO-1, got ${w2.ticketIdentifier}`);
+  } finally {
+    process.env.AGENT_STATUS_DIR = prev;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function testInspectCli() {
   const W = BASE + 9;
   reset(W);
@@ -243,6 +291,39 @@ async function testInspectCli() {
   assert(bad.code === 1, `bad arg should exit 1, got ${bad.code}`);
 }
 
+async function testInspectCliTicketIdentifierFromRealStateFile() {
+  // End-to-end through the real (non-injected) state.js reader, not just the
+  // stateGet seam: a worker whose fetch-ticket step has already run has a real
+  // worker-N.state.json with ticket_identifier set — inspect-cli.js must surface
+  // it without any special-casing.
+  const W = BASE + 14;
+  reset(W);
+  emit(W, 'orchestrator', 'state_changed', { state: 'RUNNING' });
+
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-state-dir-'));
+  const env = { ...process.env, STATE_DIR: stateDir };
+  const { set } = require('../state');
+  const prevStateDir = process.env.STATE_DIR;
+  process.env.STATE_DIR = stateDir;
+  try {
+    set(W, 'ticket_identifier', 'QUO-507');
+  } finally {
+    process.env.STATE_DIR = prevStateDir;
+  }
+
+  const out = await new Promise((resolve, reject) => {
+    const p = spawn(process.execPath, [inspectCli, String(W)], { env });
+    let stdout = '';
+    p.stdout.on('data', (d) => { stdout += d; });
+    p.on('exit', (code) => resolve({ code, stdout }));
+    p.on('error', reject);
+  });
+  const parsed = JSON.parse(out.stdout);
+  assert(parsed.ticketIdentifier === 'QUO-507', `expected ticketIdentifier QUO-507 via real state file, got ${JSON.stringify(parsed)}`);
+
+  fs.rmSync(stateDir, { recursive: true, force: true });
+}
+
 async function main() {
   const tests = [
     ['derives live status — state, completed step, flags', testDerivesLiveStatus],
@@ -255,7 +336,10 @@ async function main() {
     ['failed clears on a passing retry, not latched', testFailedResetOnRetry],
     ['crashed step surfaces failed via runner failed event', testCrashedStepFailed],
     ['fleetState — enumerates worker files, sorted', testFleetStateLists],
+    ['ticketIdentifier — read via injectable stateGet, degrades to null', testTicketIdentifier],
+    ['fleetState threads stateGet through to every worker', testFleetStateThreadsStateGet],
     ['inspect-cli.js — JSON out for fleet and single worker', testInspectCli],
+    ['inspect-cli.js — ticketIdentifier via a real state file', testInspectCliTicketIdentifierFromRealStateFile],
   ];
 
   let passed = 0;

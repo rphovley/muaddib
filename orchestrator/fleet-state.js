@@ -11,11 +11,21 @@
 // very next invocation. It never emit()s or writes — reads only.
 
 const { readEvents, listWorkers } = require('./events');
+const stateStore = require('./state');
 
-// Derive one worker's live status from its event stream. A worker with no
-// events file yields the same empty-shaped object with eventCount 0, so callers
-// can treat "never emitted" uniformly rather than special-casing absence.
-function workerStatus(worker) {
+// Derive one worker's live status from its event stream, plus which ticket (if
+// any) it's holding — read from the worker's state file (fetch-ticket.sh/.js
+// write `ticket_identifier` there at run start; conductor-loop.js already reads
+// it the same way). Folding this in here means a single `inspect-cli.js` call
+// answers "what is every worker doing, and on which ticket" — the question the
+// dispatch-decision skill actually needs, without a second per-worker lookup
+// via state-cli.js for each slot.
+//
+// `stateGet` is injectable (defaults to state.js's real reader) so tests can
+// stub it without touching a real state file, matching the convention
+// conductor-loop.js already established for the same read.
+function workerStatus(worker, opts = {}) {
+  const stateGet = opts.stateGet || stateStore.get;
   const events = readEvents(worker);
 
   let state = null;              // latest state_changed.payload.state
@@ -100,6 +110,15 @@ function workerStatus(worker) {
 
   const lastEventTs = events.length ? (events[events.length - 1].ts || null) : null;
 
+  let ticketIdentifier = null;
+  try {
+    ticketIdentifier = stateGet(worker, 'ticket_identifier') || null;
+  } catch (_) {
+    // No state file / unreadable — a worker with no ticket assigned yet, or one
+    // whose state predates this field. Report null rather than throwing; the
+    // events-derived fields above are still meaningful on their own.
+  }
+
   return {
     worker: Number(worker),
     state,
@@ -109,13 +128,14 @@ function workerStatus(worker) {
     failed,
     eventCount: events.length,
     lastEventTs,
+    ticketIdentifier,
   };
 }
 
 // Whole-fleet snapshot: every worker with an events file, each folded through
 // workerStatus(). Recomputed on every call — generatedAt is fresh each time.
-function fleetState() {
-  const workers = listWorkers().map(workerStatus);
+function fleetState(opts = {}) {
+  const workers = listWorkers().map((w) => workerStatus(w, opts));
   return { generatedAt: new Date().toISOString(), workers };
 }
 

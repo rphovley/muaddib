@@ -32,6 +32,10 @@ function fakeSource(name = 'linear', overrides = {}) {
       calls.push(['fetchTicket', id]);
       return { identifier: id, title: 'A ticket' };
     },
+    async fetchComments(id) {
+      calls.push(['fetchComments', id]);
+      return { own: [{ id: 'c1', body: 'hello' }], parent: [] };
+    },
     async postComment(id, body) {
       calls.push(['postComment', id, body]);
       return { commentId: 'cmt_123' };
@@ -74,6 +78,18 @@ async function testFetchNotFound() {
   assert.strictEqual(code, 1);
   assert.strictEqual(stdout.text, '');
   assert.ok(stderr.text.includes('no ticket found'), 'expected not-found message on stderr');
+}
+
+// ─── comments ────────────────────────────────────────────────────────────────
+
+async function testComments() {
+  const source = fakeSource();
+  const stdout = capture();
+  const code = await run({ argv: ['comments', 'QUO-507'], source, stdout });
+  assert.strictEqual(code, 0);
+  assert.deepStrictEqual(source.calls[0], ['fetchComments', 'QUO-507']);
+  const printed = JSON.parse(stdout.text);
+  assert.deepStrictEqual(printed, { own: [{ id: 'c1', body: 'hello' }], parent: [] });
 }
 
 // ─── mention ─────────────────────────────────────────────────────────────────
@@ -257,6 +273,7 @@ async function main() {
   const tests = [
     ['fetch → source.fetchTicket, prints JSON', testFetch],
     ['fetch not-found → stderr + exit 1 (no contextless proceed)', testFetchNotFound],
+    ['comments → source.fetchComments, prints JSON', testComments],
     ['mention → source.mentionUser, normalized, no newline', testMention],
     ['mention empty handle → empty output, exit 0', testMentionEmptyHandle],
     ['post-comment → source.postComment with stdin body, prints commentId', testPostComment],

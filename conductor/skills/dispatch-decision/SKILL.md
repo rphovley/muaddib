@@ -11,6 +11,16 @@ is the caller's step.
 
 ## Inputs
 
+The prompt you're given already carries a **Pre-Dispatch Context** block
+(`scripts/gather-dispatch-context.js`, run deterministically before you were
+invoked): the ticket, its comment trail, whole-fleet worker state — including
+which ticket, if any, each worker already holds — and any related PRs/branches
+already on the remote for this ticket id. Read that first. **Do not re-fetch
+any of it** (no raw MCP ticket/comment lookups, no re-deriving fleet state by
+reading worker state files one at a time) unless something in it is genuinely
+missing, stale, or contradictory for the decision at hand — then go get exactly
+that one missing fact, not the whole picture again.
+
 - **The ticket.** Its identifier, title, description, and current state. Read it
   to judge readiness — is the problem stated clearly enough for a worker to act,
   or is it still a stub, a duplicate, or blocked on something unlanded?
@@ -18,10 +28,15 @@ is the caller's step.
   fleet operates under — concurrency ceiling, priorities, anything the project
   has declared off-limits or not-yet. A dispatch that would exceed the
   concurrency limit or push work the project has deprioritized is a defer, not a
-  spawn.
+  spawn. (Not part of the pre-gathered block — read `.muaddib/goals.md`
+  directly if it matters to this decision.)
 - **What is already in flight.** The workers currently running and the tickets
-  they hold. Do not dispatch a ticket that duplicates in-flight work or that a
-  running ticket will subsume.
+  they hold, and any existing PR/branch/comment history showing the ticket is
+  already being worked — interactively, by another worker, or via an unmerged
+  PR. Do not dispatch a ticket that duplicates in-flight work, that a running
+  ticket will subsume, or that's already mid-flight under an interactive
+  session (see the Fleet and Related PRs/branches sections of the pre-gathered
+  context).
 
 ## What to decide
 

@@ -132,12 +132,27 @@ if [ "$ROUTE" = "conductor" ]; then
     # daemon's cwd) and `1` as a slot *hint* — spawn-worker.sh auto-advances past
     # busy slots under its allocation lock, so any integer is safe. TASK is the
     # exact `/muaddib <ref>` the worker runs.
+    #
+    # Pre-gather the facts dispatch-decision needs (the ticket, its comments,
+    # whole-fleet worker state incl. which ticket each already holds, related
+    # PRs/branches) via scripts/gather-dispatch-context.js *before* the skill
+    # ever runs, instead of letting the model rediscover them itself on every
+    # wake-up through a chain of approval-gated Bash/MCP round trips. A failure
+    # here (network down, gh unauthenticated) degrades to a note rather than
+    # blocking dispatch — the skill still has its own tools as a fallback.
+    if ! PRECONTEXT="$(TICKET_SOURCE="$SOURCE" node "$DIR/scripts/gather-dispatch-context.js" "$IDENT" 2>&1)"; then
+        PRECONTEXT="(pre-dispatch context gathering failed: ${PRECONTEXT} — gather what you need yourself.)"
+    fi
     PROMPT="/dispatch-decision
 ticket: ${ARG}
 source=${SOURCE}
 
-Triage this ticket. If — and only if — the decision is to dispatch, provision the
-worker now by running exactly:
+${PRECONTEXT}
+
+Triage this ticket using the context above — it already covers the ticket, its
+comments, current fleet state, and related PRs/branches, so don't re-fetch any
+of that unless something above looks stale or incomplete. If — and only if —
+the decision is to dispatch, provision the worker now by running exactly:
   node \"$DIR/orchestrator/fleet-control-cli.js\" spawn 1 \"${TASK}\"
 On defer or skip, do not spawn — just record the decision and its rationale."
     echo "→ muaddib (${SOURCE}): ${ARG} — routed to the Conductor"
