@@ -10,6 +10,7 @@
 //
 // Usage:
 //   node ticket-cli.js fetch <id>                       -> prints the ticket JSON
+//   node ticket-cli.js comments <id>                    -> prints { own, parent } comment JSON
 //   node ticket-cli.js post-comment <id>                <  body.md   -> prints commentId
 //   node ticket-cli.js mention <handle>                 -> prints the @mention markup
 //   node ticket-cli.js create-sub-issue <parentId> <title>  <  desc.md  -> prints child JSON
@@ -31,7 +32,7 @@
 // on raw as-is.
 
 const USAGE =
-  'usage: ticket-cli.js fetch <id> | post-comment <id> (body on stdin) | ' +
+  'usage: ticket-cli.js fetch <id> | comments <id> | post-comment <id> (body on stdin) | ' +
   'mention <handle> | create-sub-issue <parentId> <title> (description on stdin) | ' +
   'add-blocking-relation <blockerId> <blockedId>\n';
 
@@ -86,6 +87,19 @@ async function run({ argv = [], source, readBody = readStdin, stdout = process.s
         return 1;
       }
       stdout.write(`${JSON.stringify(ticket)}\n`);
+      return 0;
+    }
+
+    case 'comments': {
+      const [id] = args;
+      // fetchComments() is already uniform across every backend ({ own, parent
+      // }, raw's own/parent both empty) — a thin passthrough, same shape as
+      // 'fetch'. Lets a caller (the Conductor, or a pre-dispatch context-gather
+      // script) get the comment trail through the same deterministic bridge it
+      // already uses for the ticket itself, instead of reaching for a raw MCP
+      // tool call.
+      const comments = await source.fetchComments(id);
+      stdout.write(`${JSON.stringify(comments)}\n`);
       return 0;
     }
 

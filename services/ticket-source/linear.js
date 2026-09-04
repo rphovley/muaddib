@@ -92,6 +92,7 @@ const FETCH_TICKET_QUERY = `
       description
       url
       state { name }
+      assignee { name }
       labels { nodes { name } }
     }
   }
