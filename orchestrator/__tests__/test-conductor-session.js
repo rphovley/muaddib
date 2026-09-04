@@ -149,7 +149,7 @@ function testConductorSkillsPresent() {
   if (!fs.existsSync(manifest)) {
     throw new Error(`missing conductor plugin manifest at ${manifest}`);
   }
-  for (const skill of ['triage', 'dispatch-decision']) {
+  for (const skill of ['triage']) {
     const md = path.join(dir, 'skills', skill, 'SKILL.md');
     if (!fs.existsSync(md)) {
       throw new Error(`missing conductor skill at ${md}`);

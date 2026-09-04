@@ -591,21 +591,13 @@ npm run muaddib https://github.com/owner/repo/issues/36          # or just: npm 
 npm run muaddib "fix the auth token expiry bug in the portal"
 ```
 
-By default a **ticket reference** dispatches *through the [Conductor](#the-conductor)*:
-`muaddib.sh` hands it to the persistent Conductor session, which triages it with
-its `dispatch-decision` skill and provisions a worker itself only if it decides to
-dispatch. Because the worker is spawned asynchronously by the Conductor, this path
-does **not** drop you into the worker; use `./muaddib/bin/attend.sh` to watch and
-`./muaddib/bin/attach.sh <n>` to attach. **Free-form task text** has no ticket to
-triage, so it always dispatches directly to a worker (and auto-attaches).
-
-To dispatch a ticket **directly** to a worker — bypassing the Conductor's triage,
-the pre-Conductor behavior (spawn `/muaddib <ref>` and auto-attach) — use
-`--direct`:
-
-```bash
-npm run muaddib -- --direct QUO-227      # skip triage; spawn a worker for QUO-227 now and attach
-```
+Dispatch is always direct — running the command IS the decision to put a worker
+on the ticket, so `muaddib.sh` spawns it straight away and auto-attaches you.
+(An earlier version routed a resolved ticket through the [Conductor](#the-conductor)'s
+`dispatch-decision` skill first; removed once every real trigger turned out to
+already carry an explicit human "yes," leaving the skill nothing to decide. The
+Conductor still runs independently, watching every worker for its own `/triage`
+job.)
 
 To force raw dispatch when task text could itself look like a ticket reference,
 use `--raw` (or the thin alias `muaddib-task.sh`); raw dispatch is always direct:
@@ -695,9 +687,6 @@ Seed skills:
   to the human, weighing the project's configured autonomy level. (The concrete
   `autonomyLevel` input lands with muaddib#121; the skill references it
   conceptually until then.)
-- **`dispatch-decision`** — given a ticket, decide whether to dispatch a worker
-  now, defer, or skip, weighing readiness, the project's goals/concurrency limit,
-  and what is already in flight.
 
 The skills are written **agent-agnostically** — "what to decide," free of
 Claude-Code-specific mechanics — so the decision prose stays portable even though

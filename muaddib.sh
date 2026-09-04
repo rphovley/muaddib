@@ -21,32 +21,29 @@
 #   npm run muaddib <linear-url-or-id | github-issue-url-or-number | "task text">
 #   ./muaddib.sh    <ticket-ref-or-task-text>
 #
-# By default a resolved ticket reference (linear/github) is dispatched *through
-# the Conductor*: `muaddib.sh` hands it to the persistent Conductor session
-# (`conductor.sh --bg`), which triages it via its `dispatch-decision` skill and
-# provisions a worker itself if it decides to dispatch. Raw / free-form text has
-# no ticket to triage, so it always dispatches directly to a worker (today's
-# `spawn-worker.sh` path), as does any run forced with `--direct`.
+# Dispatch is always direct — running this command IS the decision to put a
+# worker on it, so there is nothing left for a triage step to decide. (An
+# earlier version routed a resolved ticket through the Conductor's
+# `dispatch-decision` skill first; removed once every real trigger turned out
+# to already carry an explicit human "yes" — typing this command, or
+# confirming "dispatch" in a sizing review — leaving the skill nothing to
+# decide.) The Conductor still runs independently, watching every worker
+# (including the one this spawns) for its own `/triage` job — see conductor.sh.
 #
 # Flags (leading, before the argument):
 #   --raw       Skip detection; force raw dispatch. Use when a task's text could
 #               look like a ticket reference (e.g. free-form text containing
 #               `QUO-123`, which the linear path matches anywhere in the string)
 #               and you want to guarantee raw. `muaddib-task.sh` is a thin alias
-#               for `muaddib.sh --raw`. Raw dispatch is always direct.
-#   --direct    Skip the Conductor; dispatch a ticket directly to a worker (the
-#               pre-Conductor behavior — spawn `/muaddib <ref>` and auto-attach).
-#               Use to bypass triage for a ticket you've already decided on.
-#   --dry-run   Print the resolved dispatch (`source=<linear|github|raw>`, the
-#               exact TASK, and `route=<conductor|direct>`) and exit before any
-#               docker/spawn/conductor call. Also enabled via MUADDIB_DRY_RUN=1.
-#               Used by scripts/test-muaddib-dispatch.sh.
+#               for `muaddib.sh --raw`.
+#   --dry-run   Print the resolved dispatch (`source=<linear|github|raw>` and the
+#               exact TASK) and exit before any docker/spawn call. Also enabled
+#               via MUADDIB_DRY_RUN=1. Used by scripts/test-muaddib-dispatch.sh.
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 
 FORCE_RAW=0
-DIRECT=0
 DRY_RUN=0
 [ "${MUADDIB_DRY_RUN:-0}" = "1" ] && DRY_RUN=1
 
@@ -54,7 +51,6 @@ DRY_RUN=0
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --raw)     FORCE_RAW=1; shift ;;
-        --direct)  DIRECT=1;    shift ;;
         --dry-run) DRY_RUN=1;   shift ;;
         --)        shift; break ;;
         -*)        # A hyphen-leading token is a real unknown flag only before
@@ -99,67 +95,12 @@ else
     TASK="$ARG"
 fi
 
-# Route: a real ticket (non-empty IDENT) defaults through the Conductor; --direct
-# and every raw / forced-raw dispatch (nothing for dispatch-decision to triage)
-# go direct to a worker.
-if [ "$DIRECT" -eq 0 ] && [ -n "$IDENT" ]; then
-    ROUTE="conductor"
-else
-    ROUTE="direct"
-fi
-
 if [ "$DRY_RUN" -eq 1 ]; then
     printf 'source=%s\n' "$SOURCE"
     printf 'task=%s\n' "$TASK"
-    printf 'route=%s\n' "$ROUTE"
     exit 0
 fi
 
-if [ "$ROUTE" = "conductor" ]; then
-    # Ticket dispatch through the Conductor. Build a dispatch prompt that runs the
-    # Conductor's `dispatch-decision` skill on this ticket and — only if the
-    # decision is to dispatch — provisions a worker itself via the Fleet Control
-    # spawn bridge. `conductor.sh --bg` reuses a live daemon if one is up (sends
-    # the prompt and returns), else starts one detached with this as its initial
-    # prompt; `--attach` then waits for the (real, host-level) tmux session to
-    # come up and execs into it, so the operator lands in the actual interactive
-    # Conductor session instead of a bare "started, PID N" message with nothing
-    # visibly happening. The Conductor is NOT a worker — bin/attend.sh and
-    # bin/attach.sh are docker-exec-based and only know about numbered worker
-    # containers, so they don't apply here at all.
-    #
-    # The spawn command uses the absolute fleet-control-cli.js path (robust to the
-    # daemon's cwd) and `1` as a slot *hint* — spawn-worker.sh auto-advances past
-    # busy slots under its allocation lock, so any integer is safe. TASK is the
-    # exact `/muaddib <ref>` the worker runs.
-    #
-    # Pre-gather the facts dispatch-decision needs (the ticket, its comments,
-    # whole-fleet worker state incl. which ticket each already holds, related
-    # PRs/branches) via scripts/gather-dispatch-context.js *before* the skill
-    # ever runs, instead of letting the model rediscover them itself on every
-    # wake-up through a chain of approval-gated Bash/MCP round trips. A failure
-    # here (network down, gh unauthenticated) degrades to a note rather than
-    # blocking dispatch — the skill still has its own tools as a fallback.
-    if ! PRECONTEXT="$(TICKET_SOURCE="$SOURCE" node "$DIR/scripts/gather-dispatch-context.js" "$IDENT" 2>&1)"; then
-        PRECONTEXT="(pre-dispatch context gathering failed: ${PRECONTEXT} — gather what you need yourself.)"
-    fi
-    PROMPT="/dispatch-decision
-ticket: ${ARG}
-source=${SOURCE}
-
-${PRECONTEXT}
-
-Triage this ticket using the context above — it already covers the ticket, its
-comments, current fleet state, and related PRs/branches, so don't re-fetch any
-of that unless something above looks stale or incomplete. If — and only if —
-the decision is to dispatch, provision the worker now by running exactly:
-  node \"$DIR/orchestrator/fleet-control-cli.js\" spawn 1 \"${TASK}\"
-On defer or skip, do not spawn — just record the decision and its rationale."
-    echo "→ muaddib (${SOURCE}): ${ARG} — routed to the Conductor"
-    exec "$DIR/conductor.sh" --bg --attach "$PROMPT"
-fi
-
-# Direct route: dispatch straight to a worker (pre-Conductor behavior).
 echo "→ muaddib (${SOURCE}): ${ARG}"
 
 if [ "$SOURCE" = "raw" ]; then
