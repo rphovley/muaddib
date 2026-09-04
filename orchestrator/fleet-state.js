@@ -17,9 +17,8 @@ const stateStore = require('./state');
 // any) it's holding — read from the worker's state file (fetch-ticket.sh/.js
 // write `ticket_identifier` there at run start; conductor-loop.js already reads
 // it the same way). Folding this in here means a single `inspect-cli.js` call
-// answers "what is every worker doing, and on which ticket" — the question the
-// dispatch-decision skill actually needs, without a second per-worker lookup
-// via state-cli.js for each slot.
+// answers "what is every worker doing, and on which ticket" in one shot, rather
+// than a second per-worker lookup via state-cli.js for each slot.
 //
 // `stateGet` is injectable (defaults to state.js's real reader) so tests can
 // stub it without touching a real state file, matching the convention

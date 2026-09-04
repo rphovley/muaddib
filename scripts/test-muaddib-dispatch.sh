@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Test suite for muaddib.sh's ticket-vs-task routing decision. Exercises the
+# Test suite for muaddib.sh's ticket-vs-task classification. Exercises the
 # --dry-run path, which classifies the argument (via fetch-ticket.js's
 # extractIdentifier, gated on the project's declared ticketSource) and prints
-# `source=<linear|github|raw>` + `task=<...>` before any docker/spawn call.
+# `source=<linear|github|raw>` + `task=<...>` before any spawn call. Dispatch
+# is always direct — see muaddib.sh's header comment for why there is no
+# routing decision left to test here.
 #
 # Points muaddib.sh at a fixture manifest via MUADDIB_REPO (read-config.sh's
 # documented REPO_ROOT override — same seam test-read-config.sh uses), so no
@@ -57,27 +59,6 @@ dispatch() {
 assert_dispatch() {
   local repo="$1" expected="$2"; shift 2
   local got; got="$(dispatch "$repo" "$@")"
-  [ "$got" = "$expected" ] || { echo "args=[$*] expected '$expected', got '$got'"; return 1; }
-}
-
-# Like dispatch(), but also extracts the `route=<conductor|direct>` line — the
-# routing seam added when ticket dispatch began defaulting through the Conductor.
-# Prints "<source>|<task>|<route>", so a single assertion pins source/task
-# (unchanged from before) *and* route.
-dispatch3() {
-  local repo="$1"; shift
-  local out src task route
-  out="$(MUADDIB_REPO="$repo" bash "$MUADDIB_SH" --dry-run "$@" 2>/dev/null)" || return 1
-  src="$(printf '%s\n' "$out"   | sed -n 's/^source=//p')"
-  task="$(printf '%s\n' "$out"  | sed -n 's/^task=//p')"
-  route="$(printf '%s\n' "$out" | sed -n 's/^route=//p')"
-  printf '%s|%s|%s\n' "$src" "$task" "$route"
-}
-
-# Assert dispatch3(repo, args...) equals "<source>|<task>|<route>".
-assert_dispatch3() {
-  local repo="$1" expected="$2"; shift 2
-  local got; got="$(dispatch3 "$repo" "$@")"
   [ "$got" = "$expected" ] || { echo "args=[$*] expected '$expected', got '$got'"; return 1; }
 }
 
@@ -146,49 +127,6 @@ test_raw_flag_forces_raw_github() {
   assert_dispatch "$tmp" "raw|36" --raw "36"
 }
 
-# ─── routing: ticket defaults through the Conductor ──────────────────────────
-
-test_linear_ticket_routes_conductor() {
-  # A resolved linear ticket → route=conductor (source/task unchanged).
-  local tmp="$1"; write_manifest "$tmp" "$LINEAR_MANIFEST"
-  assert_dispatch3 "$tmp" "linear|/muaddib QUO-123|conductor" "QUO-123"
-}
-
-test_github_ticket_routes_conductor() {
-  # A resolved github ticket → route=conductor (source/task unchanged).
-  local tmp="$1"; write_manifest "$tmp" "$GITHUB_MANIFEST"
-  assert_dispatch3 "$tmp" "github|/muaddib 36|conductor" "36"
-}
-
-# ─── routing: --direct forces the direct (pre-Conductor) worker path ─────────
-
-test_direct_flag_routes_direct_linear() {
-  # --direct on a linear ticket → route=direct; source/task are the ticket's own.
-  local tmp="$1"; write_manifest "$tmp" "$LINEAR_MANIFEST"
-  assert_dispatch3 "$tmp" "linear|/muaddib QUO-123|direct" --direct "QUO-123"
-}
-
-test_direct_flag_routes_direct_github() {
-  local tmp="$1"; write_manifest "$tmp" "$GITHUB_MANIFEST"
-  assert_dispatch3 "$tmp" "github|/muaddib 36|direct" --direct "36"
-}
-
-# ─── routing: raw / forced-raw always dispatches direct ──────────────────────
-
-test_raw_free_form_routes_direct() {
-  # Free-form text (no ticket to triage) → raw dispatch, route=direct.
-  local tmp="$1"; write_manifest "$tmp" "$LINEAR_MANIFEST"
-  assert_dispatch3 "$tmp" \
-    "raw|fix the auth token expiry bug in the portal|direct" \
-    "fix the auth token expiry bug in the portal"
-}
-
-test_raw_flag_routes_direct() {
-  # --raw on a ticket-shaped arg forces raw dispatch → route=direct.
-  local tmp="$1"; write_manifest "$tmp" "$LINEAR_MANIFEST"
-  assert_dispatch3 "$tmp" "raw|QUO-123|direct" --raw "QUO-123"
-}
-
 # ─── usage-error-on-empty preserved ──────────────────────────────────────────
 
 test_empty_arg_errors() {
@@ -220,12 +158,6 @@ run_test "github sentence w/ number → raw"                  test_github_senten
 run_test "linear free-form sentence → raw"                  test_linear_sentence_is_raw
 run_test "--raw forces raw (linear ticket-shaped arg)"      test_raw_flag_forces_raw_linear
 run_test "--raw forces raw (github ticket-shaped arg)"      test_raw_flag_forces_raw_github
-run_test "linear ticket → route=conductor"                  test_linear_ticket_routes_conductor
-run_test "github ticket → route=conductor"                  test_github_ticket_routes_conductor
-run_test "--direct linear ticket → route=direct"            test_direct_flag_routes_direct_linear
-run_test "--direct github ticket → route=direct"            test_direct_flag_routes_direct_github
-run_test "raw free-form → route=direct"                     test_raw_free_form_routes_direct
-run_test "--raw ticket-shaped → route=direct"               test_raw_flag_routes_direct
 run_test "empty argument → usage error"                     test_empty_arg_errors
 run_test "--raw + empty argument → usage error"             test_raw_flag_empty_arg_errors
 
