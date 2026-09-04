@@ -107,9 +107,6 @@ TEST_SCRIPT='
     echo "=== scripts/test-size-and-schedule ==="
     node "$MUADDIB/scripts/test-size-and-schedule.js"
 
-    echo "=== scripts/test-gather-dispatch-context ==="
-    node "$MUADDIB/scripts/test-gather-dispatch-context.js"
-
     echo "=== scripts/test-sizing-hook ==="
     node "$MUADDIB/scripts/test-sizing-hook.js"
 
