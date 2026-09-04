@@ -24,6 +24,12 @@
 //             the worker's claude session; escalate → notify.sh alerts the human.
 //   audit   — either branch appends a Handoff Record to the Decision Log, the
 //             log's first real content.
+//
+// A second, separate trigger — a worker's sizing step emitting
+// tickets_ready_for_dispatch when its own operator-confirmed split needs its
+// children dispatched — skips decide entirely (the operator's earlier
+// "dispatch" choice in the sizing review loop already IS the decision) and
+// goes straight to a deterministic act: spawn each child, audit the outcome.
 
 const fs = require('fs');
 const path = require('path');
@@ -36,14 +42,7 @@ const state = require('./state');
 const { buildNotification } = require('./notify-format');
 const workerInput = require('./worker-input');
 const muaddibConfig = require('../services/muaddib-config');
-const { resolveMuaddibRoot } = require('./muaddib-root');
-const { getTicketSource } = require('../services/ticket-source');
-const gatherDispatchContext = require('../scripts/gather-dispatch-context');
-
-// Fleet root, for resolving the spawn command's fleet-control-cli.js path in
-// buildDispatchDecisionPrompt() — same resolution fleet-control.js already uses
-// (self-hosting vs. a consuming project's REPO/muaddib nesting).
-const FLEET_DIR = resolveMuaddibRoot(process.env.REPO_ROOT || path.join(__dirname, '..'));
+const fleetControl = require('./fleet-control');
 
 // The coarse states a worker enters when it has stopped and needs a decision —
 // the same vocabulary status.js writes and inspect-cli reports. Overridable via
@@ -170,48 +169,6 @@ function buildTriagePrompt(ctx = {}) {
   return lines.join('\n');
 }
 
-// ─── dispatch-decision prompt (split sub-tickets) ───────────────────────────
-
-// Build the prompt that runs /dispatch-decision on one ticket, in the exact
-// shape muaddib.sh's conductor-routing branch builds for a human-triggered
-// dispatch: the pre-gathered context block first, then the same triage/spawn
-// instructions. Reused here so a worker's own sizing step splitting a ticket
-// gets its children triaged and dispatched by the fleet manager itself — the
-// same judgment (readiness, capacity, what's already in flight) a human
-// running `npm run muaddib <ticket>` would get — instead of the children just
-// sitting on the "auto" label waiting for whatever else might pick it up.
-// `fleetDir` (default FLEET_DIR) is where the spawn command's fleet-control-cli.js
-// path is resolved from; overridable for tests.
-function buildDispatchDecisionPrompt(ticketId, contextMarkdown, opts = {}) {
-  const fleetDir = opts.fleetDir || FLEET_DIR;
-  const cliPath = path.join(fleetDir, 'orchestrator', 'fleet-control-cli.js');
-  return [
-    '/dispatch-decision',
-    `ticket: ${ticketId}`,
-    '',
-    contextMarkdown || '(no pre-dispatch context available — gather what you need yourself.)',
-    '',
-    "Triage this ticket using the context above — it already covers the ticket, its",
-    "comments, current fleet state, and related PRs/branches, so don't re-fetch any",
-    "of that unless something above looks stale or incomplete. If — and only if —",
-    'the decision is to dispatch, provision the worker now by running exactly:',
-    `  node "${cliPath}" spawn 1 "/muaddib ${ticketId}"`,
-    'On defer or skip, do not spawn — just record the decision and its rationale.',
-  ].join('\n');
-}
-
-// Reduce a /dispatch-decision reply to a compact { decision, rationale } pair
-// for the Decision Log — the actual act (spawning, or not) already happened
-// inside the model's own turn via its own tool calls; this is audit-trail only,
-// not something the caller branches on. Reuses the same Decision/Rationale
-// section parser /triage's replies already go through.
-function summarizeDispatchDecisionReply(text) {
-  return {
-    decision: extractSection(text, 'Decision') || '(no Decision section found)',
-    rationale: extractSection(text, 'Rationale') || null,
-  };
-}
-
 // One-line human-facing summary for the escalation notification. The Decision
 // Log carries the full record; this is the alert body a human reads first.
 function escalationMessage(ctx) {
@@ -242,9 +199,7 @@ function createConductorLoop(opts = {}) {
   const stateGet = opts.stateGet || state.get;
   const notify = opts.notify || defaultNotify;
   const log = opts.log || ((msg) => process.stdout.write(`[conductor-loop] ${msg}\n`));
-  const readMuaddibConfig = opts.readMuaddibConfig || muaddibConfig.readMuaddibConfig;
-  const resolveTicketSource = opts.getTicketSource || getTicketSource;
-  const gatherContext = opts.gatherDispatchContext || gatherDispatchContext.run;
+  const spawnWorker = opts.spawnWorker || fleetControl.spawn;
 
   // worker index -> subscription handle ({ kill }). One per watched worker.
   const subs = new Map();
@@ -382,72 +337,60 @@ function createConductorLoop(opts = {}) {
     }
   }
 
-  // Fan out /dispatch-decision to each ticket a worker's own sizing step just
-  // split off (scripts/size-and-schedule.js's runCommit, when the operator
-  // chose "create tickets and dispatch") — the same judgment and pre-gathered
-  // context a human-triggered `npm run muaddib <ticket>` gets, run here instead
-  // because the trigger was an event, not a human command. One child's
-  // context-gather/ask failure is logged and skipped, not fatal to the rest.
+  // Fan out to each ticket a worker's own sizing step just split off
+  // (scripts/size-and-schedule.js's runCommit, when the operator chose
+  // "create tickets and dispatch"). No judgment happens here: the operator
+  // already reviewed the split and explicitly picked "dispatch" in the sizing
+  // review loop — the same explicit human "go" that makes `npm run muaddib
+  // <ticket>` a direct dispatch, not a triage. So this just spawns each child,
+  // deterministically, the way muaddib.sh's own direct path does. One child's
+  // spawn failure is logged and skipped, not fatal to the rest.
   async function handleTicketsReadyForDispatch(worker, payload) {
     const children = Array.isArray(payload && payload.children) ? payload.children.filter(Boolean) : [];
     if (!children.length) return;
 
-    let config = {};
-    try {
-      config = readMuaddibConfig(repoDir) || {};
-    } catch (err) {
-      log(`readMuaddibConfig failed (worker ${worker} split): ${err.message} — using the default ticket source`);
-    }
-    const source = resolveTicketSource(config.ticketSource);
     const parentTicket = (payload && payload.parentTicket) || null;
-
     for (const childId of children) {
       // eslint-disable-next-line no-await-in-loop
-      await dispatchOneChild(worker, childId, parentTicket, source);
+      await dispatchOneChild(worker, childId, parentTicket);
     }
   }
 
-  async function dispatchOneChild(worker, childId, parentTicket, source) {
-    let contextMarkdown;
+  async function dispatchOneChild(worker, childId, parentTicket) {
+    // '1' is a slot *hint* only — spawn-worker.sh auto-advances past any busy
+    // slot under its allocation lock, so a fixed hint is safe even when
+    // dispatching several children back to back (muaddib.sh's own direct path
+    // does the same).
     try {
-      contextMarkdown = await gatherContext(childId, { source });
+      await spawnWorker('1', { task: `/muaddib ${childId}` });
     } catch (err) {
-      contextMarkdown = `## Pre-Dispatch Context: ${childId}\n\n(context gathering failed: ${err.message} — gather what you need yourself.)\n`;
-    }
-
-    const prompt = buildDispatchDecisionPrompt(childId, contextMarkdown);
-    let reply;
-    try {
-      reply = session.ask(prompt);
-    } catch (err) {
-      log(`dispatch-decision ask failed for ${childId} (split from worker ${worker}): ${err.message}`);
+      log(`spawn failed for ${childId} (split from worker ${worker}): ${err.message}`);
       try {
         appendDecision(repoDir, childId, {
           worker,
           ticket: childId,
           parentTicket,
           decision: 'error',
-          rationale: `dispatch-decision ask failed: ${err.message}`,
+          rationale: `spawn failed: ${err.message}`,
         });
       } catch (_) {}
       return;
     }
 
-    const summary = summarizeDispatchDecisionReply(reply);
     try {
       appendDecision(repoDir, childId, {
         worker,
         ticket: childId,
         parentTicket,
-        decision: summary.decision,
-        rationale: summary.rationale || `split from ${parentTicket || 'unknown parent'} on worker ${worker}`,
+        decision: 'dispatched',
+        rationale: `split from ${parentTicket || 'unknown parent'} on worker ${worker}`,
       });
     } catch (err) {
       log(`appendDecision failed for ${childId}: ${err.message}`);
     }
     log(
-      `dispatch-decision ran for ${childId} (split from worker ${worker}` +
-        `${parentTicket ? `, parent ${parentTicket}` : ''}): ${summary.decision}`,
+      `dispatched ${childId} (split from worker ${worker}` +
+        `${parentTicket ? `, parent ${parentTicket}` : ''})`,
     );
   }
 
@@ -544,7 +487,5 @@ module.exports = {
   createConductorLoop,
   parseTriageDecision,
   buildTriagePrompt,
-  buildDispatchDecisionPrompt,
-  summarizeDispatchDecisionReply,
   DEFAULT_TRIGGER_STATES,
 };
