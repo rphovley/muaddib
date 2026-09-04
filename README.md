@@ -449,20 +449,13 @@ line is read live from `.muaddib/goals.md` (via `readGoalThresholds`, using
 `REPO_DIR`/cwd), and `running: M` is the count of workers currently holding a
 concurrency slot — i.e. with an in-flight step. It is **surfaced, not enforced**:
 the report shows the caps and the live usage against them, but takes no
-spawn/teardown/enforcement decision from them (that's a later Conductor
-milestone). Fleet-wide spend (`$X used`) is deliberately not aggregated here —
-that's spend accounting past this surfacing layer. It's a pure rendering layer
-(`orchestrator/fleet-report.js`, the same formatter/data split as
-`orchestrator/notify-format.js`) over `fleetState()`, so the report inherits the
-**no-cache** and **no-side-effects** guarantees above unchanged: JSON stays the
-default, and the flag only changes how the live fold is printed. The Conductor
-daemon exposes the same report on request via `reportFleetState()`
-(`services/conductor-daemon.js`) — L0 *reports and decides nothing*: it drives no
-session, spawns nothing, and emits nothing.
-
-Deeper auto-invocation from the daemon's runtime loop (the Conductor deciding
-*when* to inspect or report) remains a later milestone; the report is callable by
-the session — and the daemon method — as-is today.
+spawn/teardown/enforcement decision from them. Fleet-wide spend (`$X used`) is
+deliberately not aggregated here — that's spend accounting past this surfacing
+layer. It's a pure rendering layer (`orchestrator/fleet-report.js`, the same
+formatter/data split as `orchestrator/notify-format.js`) over `fleetState()`, so
+the report inherits the **no-cache** and **no-side-effects** guarantees above
+unchanged: JSON stays the default, and the flag only changes how the live fold
+is printed.
 
 ## Prerequisites (one-time)
 
@@ -568,25 +561,6 @@ Lower-level controls (run from `muaddib/`):
 ./bin/attend.sh                              # fleet status board (bell on BLOCKED/FAILED)
 ./bin/teardown-worker.sh 1
 ```
-
-### The Conductor
-
-The **Conductor** is a long-running reasoning agent (the persistent `claude`
-session managed by `services/conductor-daemon.js`) — distinct from the fixed
-Worker lifecycle above. Hand it a ticket or a free-form task and it starts (or,
-if already running, **reuses**) its session and feeds the argument in as the
-initial prompt; a leading `/` runs a skill, exactly like `spawn-worker.sh`:
-
-```bash
-npm run muaddib:conductor QUO-507                       # start + feed QUO-507 as the initial prompt
-npm run muaddib:conductor "look into the flaky preview" # free-form task text
-npm run muaddib:conductor -- --bg QUO-507               # same, backgrounded (PID in .muaddib-conductor.pid)
-```
-
-Run with no argument for a bare idle daemon (`npm run muaddib:conductor`, or
-`--bg` to detach); `./muaddib/conductor.sh --stop` tears it down. When a daemon
-is already up, a ticket/task is sent to the existing session rather than spawning
-a second one.
 
 ## MuaddibApp — menu bar status board
 
