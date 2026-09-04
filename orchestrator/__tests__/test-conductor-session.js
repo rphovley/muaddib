@@ -43,6 +43,10 @@ function newFakeSession(suffix) {
     pollMs: 100,
     timeoutMs: 8000,
     readyTimeoutMs: 8000,
+    // busyGraceMs now defaults to a standalone 10s (real tool-call latency
+    // headroom), independent of settleMs — explicit small override here so
+    // the fake CLI's instant, spinner-less echo still settles fast.
+    busyGraceMs: 400,
   });
 }
 
@@ -213,6 +217,58 @@ function testPermFlagExplicitOptIn() {
   }
 }
 
+// A pending permission-approval prompt has no "esc to interrupt" spinner, so
+// without treating it as busy it reads as a genuinely finished, idle turn —
+// confirmed live: a sizing hook's unattended session hit a Linear MCP approval
+// prompt and readResponse() handed back the prompt's own UI text as if it were
+// the model's answer. This fake CLI never resolves the "prompt" it prints (no
+// further output after it), so a correct readResponse() must never settle on
+// it — it should time out instead of returning bogus "settled" text.
+async function testPendingApprovalPromptNeverSettles() {
+  const s = createConductorSession({
+    name: `conductor-test-${process.pid}-stuck-approval`,
+    claudeCmd: "bash -c 'while IFS= read -r line; do printf \"Do you want to proceed?\\n\"; done'",
+    settleMs: 200,
+    pollMs: 100,
+    timeoutMs: 1000,
+    readyTimeoutMs: 8000,
+    busyGraceMs: 200,
+  });
+  try {
+    s.start();
+    let threw = false;
+    try {
+      s.ask('run something risky');
+    } catch (err) {
+      threw = true;
+      if (!/no settled response/i.test(err.message)) {
+        throw new Error(`expected a settle-timeout error, got: ${err.message}`);
+      }
+    }
+    if (!threw) {
+      throw new Error('expected ask() to time out rather than return the pending-approval text as an answer');
+    }
+  } finally {
+    s.stop();
+  }
+}
+
+// busyGraceMs must have its own standalone default — NOT derived from
+// settleMs — since callers (like tests) often tune settleMs much smaller than
+// what real tool-call startup latency needs. Pure construction check, no tmux.
+function testBusyGraceMsDefaultIsStandalone() {
+  const s = createConductorSession({
+    name: `conductor-test-${process.pid}-busygrace`,
+    settleMs: 50,
+  });
+  if (s.busyGraceMs === 50) {
+    throw new Error('busyGraceMs must not silently inherit a small settleMs override');
+  }
+  if (s.busyGraceMs < 5000) {
+    throw new Error(`expected a generous standalone default (>=5000ms), got: ${s.busyGraceMs}`);
+  }
+}
+
 async function main() {
   ensureTmux();
 
@@ -224,6 +280,8 @@ async function main() {
     ['conductor plugin manifest + seed skills are present on disk', testConductorSkillsPresent],
     ['permFlag() defaults to no bypass, decoupled from CLAUDE_PERMISSION_MODE', testPermFlagDefaultsSafe],
     ['permFlag() honors an explicit CONDUCTOR_PERMISSION_MODE opt-in', testPermFlagExplicitOptIn],
+    ['a pending approval prompt never settles as a fake "answer"', testPendingApprovalPromptNeverSettles],
+    ['busyGraceMs defaults standalone, not tied to settleMs', testBusyGraceMsDefaultIsStandalone],
     ['(opt-in) live claude ask(2+2) → non-empty', testLiveClaudeAsk],
   ];
 
@@ -240,7 +298,7 @@ async function main() {
   }
 
   // Best-effort cleanup of any stray sessions this run created.
-  for (const suffix of ['lifecycle', 'ask', 'dead']) {
+  for (const suffix of ['lifecycle', 'ask', 'dead', 'stuck-approval']) {
     spawnSync('tmux', ['kill-session', '-t', `conductor-test-${process.pid}-${suffix}`], { stdio: 'ignore' });
   }
   spawnSync('tmux', ['kill-session', '-t', `conductor-live-${process.pid}`], { stdio: 'ignore' });

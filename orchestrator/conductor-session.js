@@ -68,7 +68,18 @@ function msleep(ms) {
 // Working-state markers claude's TUI renders while a turn is in flight. Their
 // absence (plus a stable pane) is how we know the response has finished without
 // asking the model anything.
-const WORKING_MARKERS = [/esc to interrupt/i];
+//
+// A pending permission-approval prompt belongs here too, even though the model
+// isn't actively generating: it shows no "esc to interrupt" spinner (nothing is
+// "in flight"), so without this it reads as a genuinely finished, idle turn.
+// readResponse() would then return the prompt's own UI text as if it were the
+// answer — confirmed live: a sizing hook's read-only Linear MCP call hit an
+// unattended approval prompt, and the "response" extracted from it was the
+// prompt text itself (once, literally the tool-use dialog; another time the
+// bare echoed prompt, caught by the busyGraceMs widening below). Treating the
+// prompt as busy instead makes the caller correctly time out — "stuck, no real
+// answer" — rather than silently handing back a bogus one.
+const WORKING_MARKERS = [/esc to interrupt/i, /Do you want to proceed\?/i];
 
 function paneIsIdle(pane) {
   return !WORKING_MARKERS.some((re) => re.test(pane));
@@ -91,10 +102,17 @@ class ConductorSession {
     // How long readResponse will wait for claude's working spinner to appear
     // before treating an idle+stable pane as a finished (instantaneous) turn.
     // Guards against settling on the bare echoed prompt before the turn starts.
+    // A real turn that calls a tool (MCP round-trip, cold server auth, etc.)
+    // can easily take several seconds before the spinner ever renders —
+    // confirmed live: a sizing hook's session settled on its own bare echoed
+    // prompt because the previous default (== settleMs, 1500ms) elapsed before
+    // the first Linear MCP call showed any sign of life. Standalone default
+    // (not tied to settleMs, which callers often tune much smaller for fast
+    // polling) — generous enough to survive real tool-call startup latency.
     this.busyGraceMs = intOpt(
       opts.busyGraceMs,
       process.env.CONDUCTOR_BUSY_GRACE_MS,
-      this.settleMs,
+      10000,
     );
     // How long start() waits for the input box to come up.
     this.readyTimeoutMs = intOpt(
