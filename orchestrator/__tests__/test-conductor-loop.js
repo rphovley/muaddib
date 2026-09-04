@@ -25,6 +25,11 @@
 //                                     up workers that appear later
 // testParseTriageDecision*          — the pure parser across shapes
 // testBuildTriagePrompt             — the pure prompt builder carries the context
+// testSplitFanOut*                  — a worker's own sizing split (operator
+//                                     already confirmed "dispatch") fans out to a
+//                                     direct spawn per child, no model involved
+// testHandleEventRoutesSplitEvent*  — the split event bypasses the BLOCKED/etc.
+//                                     trigger-state latch entirely
 
 const {
   createConductorLoop,
@@ -83,6 +88,7 @@ function makeLoop(overrides = {}) {
     },
     stateGet: (worker, key) => (stateData[worker] || {})[key],
     log: () => {},
+    spawnWorker: overrides.spawnWorker,
   });
 
   return {
@@ -366,6 +372,78 @@ async function testBuildTriagePrompt() {
   }
 }
 
+// ─── split fan-out: handleTicketsReadyForDispatch ──────────────────────────
+// scripts/size-and-schedule.js emits `tickets_ready_for_dispatch` on a worker's
+// own stream when the operator confirmed "create tickets and dispatch" in the
+// sizing review loop — that confirmation already IS the decision, so this path
+// spawns each child directly (no model, no /dispatch-decision). These tests
+// drive it directly (the exposed test seam) since it's async and the
+// deliver()-via-subscribe path is fire-and-forget.
+
+async function testSplitFanOutDispatchesOnePerChild() {
+  const spawnCalls = [];
+  const h = makeLoop({
+    spawnWorker: async (worker, opts) => { spawnCalls.push({ worker, opts }); },
+  });
+
+  await h.loop.handleTicketsReadyForDispatch(7, { parentTicket: 'QUO-500', children: ['QUO-501', 'QUO-502'] });
+
+  if (spawnCalls.length !== 2) throw new Error(`expected 2 spawn calls, got ${spawnCalls.length}`);
+  if (spawnCalls[0].opts.task !== '/muaddib QUO-501' || spawnCalls[1].opts.task !== '/muaddib QUO-502') {
+    throw new Error(`wrong spawn tasks: ${JSON.stringify(spawnCalls)}`);
+  }
+  if (h.spies.asks.length !== 0) throw new Error('split dispatch must never consult the model');
+
+  if (h.spies.decisions.length !== 2) throw new Error(`expected 2 Decision Log entries, got ${h.spies.decisions.length}`);
+  const [d1, d2] = h.spies.decisions;
+  if (d1.scope !== 'QUO-501' || d2.scope !== 'QUO-502') throw new Error(`wrong scopes: ${JSON.stringify(h.spies.decisions)}`);
+  if (d1.fields.worker !== 7) throw new Error('worker not recorded');
+  if (d1.fields.parentTicket !== 'QUO-500') throw new Error('parentTicket not recorded');
+  if (d1.fields.decision !== 'dispatched') throw new Error(`expected recorded decision "dispatched", got ${d1.fields.decision}`);
+}
+
+async function testSplitFanOutEmptyChildrenIsNoop() {
+  const spawnCalls = [];
+  const h = makeLoop({ spawnWorker: async (worker, opts) => { spawnCalls.push({ worker, opts }); } });
+  await h.loop.handleTicketsReadyForDispatch(7, { parentTicket: 'QUO-500', children: [] });
+  if (spawnCalls.length !== 0) throw new Error('empty children must not spawn');
+  if (h.spies.decisions.length !== 0) throw new Error('empty children must not write a Decision Log entry');
+}
+
+async function testSplitFanOutSpawnFailureLogsErrorRecordAndContinues() {
+  let calls = 0;
+  const spawnCalls = [];
+  const h = makeLoop({
+    spawnWorker: async (worker, opts) => {
+      calls += 1;
+      spawnCalls.push({ worker, opts });
+      if (calls === 1) throw new Error('worker slot allocation timed out');
+    },
+  });
+
+  await h.loop.handleTicketsReadyForDispatch(1, { children: ['QUO-A', 'QUO-B'] });
+
+  if (spawnCalls.length !== 2) throw new Error(`expected both children to be attempted, got ${spawnCalls.length} spawns`);
+  if (h.spies.decisions.length !== 2) throw new Error(`expected 2 Decision Log entries (one error, one dispatched), got ${h.spies.decisions.length}`);
+  if (h.spies.decisions[0].fields.decision !== 'error') throw new Error(`first child should record an error, got ${h.spies.decisions[0].fields.decision}`);
+  if (!h.spies.decisions[0].fields.rationale.includes('worker slot allocation timed out')) {
+    throw new Error('error rationale should carry the failure message');
+  }
+  if (h.spies.decisions[1].fields.decision !== 'dispatched') throw new Error('second child must still be dispatched normally');
+}
+
+async function testHandleEventRoutesSplitEventWithoutTouchingStateLatch() {
+  const spawnCalls = [];
+  const h = makeLoop({ states: { 9: 'RUNNING' }, spawnWorker: async (worker, opts) => { spawnCalls.push({ worker, opts }); } });
+  h.loop.start();
+  h.deliver(9, { event: 'tickets_ready_for_dispatch', payload: { children: ['QUO-1'] } });
+  // Fire-and-forget from handleEvent — give the microtask queue a turn so the
+  // async fan-out (and its .catch) has run before we assert nothing crashed.
+  await new Promise((resolve) => setImmediate(resolve));
+  if (h.loop.isHandled(9)) throw new Error('the split event must not engage the BLOCKED/etc. trigger-state latch');
+  if (spawnCalls.length !== 1) throw new Error(`expected the split to still dispatch via the real event path, got ${spawnCalls.length} spawns`);
+}
+
 async function testDefaultTriggerStatesShape() {
   for (const s of ['BLOCKED', 'AWAITING_REVIEW', 'WAITING_FOR_INPUT']) {
     if (!DEFAULT_TRIGGER_STATES.includes(s)) throw new Error(`DEFAULT_TRIGGER_STATES missing ${s}`);
@@ -401,6 +479,10 @@ async function main() {
     ['parseTriageDecision: garbage → escalate', testParseTriageDecisionGarbageEscalates],
     ['parseTriageDecision: both verbs → escalate', testParseTriageDecisionBothVerbsEscalates],
     ['buildTriagePrompt carries the context', testBuildTriagePrompt],
+    ['split fan-out: one direct spawn per child, no model, audited', testSplitFanOutDispatchesOnePerChild],
+    ['split fan-out: empty children is a no-op', testSplitFanOutEmptyChildrenIsNoop],
+    ['split fan-out: a spawn failure logs an error record and continues', testSplitFanOutSpawnFailureLogsErrorRecordAndContinues],
+    ['handleEvent routes the split event without touching the state latch', testHandleEventRoutesSplitEventWithoutTouchingStateLatch],
     ['DEFAULT_TRIGGER_STATES shape', testDefaultTriggerStatesShape],
     ['createConductorLoop requires a session', testSessionRequired],
   ];

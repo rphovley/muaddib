@@ -24,6 +24,12 @@
 //             the worker's claude session; escalate → notify.sh alerts the human.
 //   audit   — either branch appends a Handoff Record to the Decision Log, the
 //             log's first real content.
+//
+// A second, separate trigger — a worker's sizing step emitting
+// tickets_ready_for_dispatch when its own operator-confirmed split needs its
+// children dispatched — skips decide entirely (the operator's earlier
+// "dispatch" choice in the sizing review loop already IS the decision) and
+// goes straight to a deterministic act: spawn each child, audit the outcome.
 
 const fs = require('fs');
 const path = require('path');
@@ -36,6 +42,7 @@ const state = require('./state');
 const { buildNotification } = require('./notify-format');
 const workerInput = require('./worker-input');
 const muaddibConfig = require('../services/muaddib-config');
+const fleetControl = require('./fleet-control');
 
 // The coarse states a worker enters when it has stopped and needs a decision —
 // the same vocabulary status.js writes and inspect-cli reports. Overridable via
@@ -192,6 +199,7 @@ function createConductorLoop(opts = {}) {
   const stateGet = opts.stateGet || state.get;
   const notify = opts.notify || defaultNotify;
   const log = opts.log || ((msg) => process.stdout.write(`[conductor-loop] ${msg}\n`));
+  const spawnWorker = opts.spawnWorker || fleetControl.spawn;
 
   // worker index -> subscription handle ({ kill }). One per watched worker.
   const subs = new Map();
@@ -329,9 +337,77 @@ function createConductorLoop(opts = {}) {
     }
   }
 
+  // Fan out to each ticket a worker's own sizing step just split off
+  // (scripts/size-and-schedule.js's runCommit, when the operator chose
+  // "create tickets and dispatch"). No judgment happens here: the operator
+  // already reviewed the split and explicitly picked "dispatch" in the sizing
+  // review loop — the same explicit human "go" that makes `npm run muaddib
+  // <ticket>` a direct dispatch, not a triage. So this just spawns each child,
+  // deterministically, the way muaddib.sh's own direct path does. One child's
+  // spawn failure is logged and skipped, not fatal to the rest.
+  async function handleTicketsReadyForDispatch(worker, payload) {
+    const children = Array.isArray(payload && payload.children) ? payload.children.filter(Boolean) : [];
+    if (!children.length) return;
+
+    const parentTicket = (payload && payload.parentTicket) || null;
+    for (const childId of children) {
+      // eslint-disable-next-line no-await-in-loop
+      await dispatchOneChild(worker, childId, parentTicket);
+    }
+  }
+
+  async function dispatchOneChild(worker, childId, parentTicket) {
+    // '1' is a slot *hint* only — spawn-worker.sh auto-advances past any busy
+    // slot under its allocation lock, so a fixed hint is safe even when
+    // dispatching several children back to back (muaddib.sh's own direct path
+    // does the same).
+    try {
+      await spawnWorker('1', { task: `/muaddib ${childId}` });
+    } catch (err) {
+      log(`spawn failed for ${childId} (split from worker ${worker}): ${err.message}`);
+      try {
+        appendDecision(repoDir, childId, {
+          worker,
+          ticket: childId,
+          parentTicket,
+          decision: 'error',
+          rationale: `spawn failed: ${err.message}`,
+        });
+      } catch (_) {}
+      return;
+    }
+
+    try {
+      appendDecision(repoDir, childId, {
+        worker,
+        ticket: childId,
+        parentTicket,
+        decision: 'dispatched',
+        rationale: `split from ${parentTicket || 'unknown parent'} on worker ${worker}`,
+      });
+    } catch (err) {
+      log(`appendDecision failed for ${childId}: ${err.message}`);
+    }
+    log(
+      `dispatched ${childId} (split from worker ${worker}` +
+        `${parentTicket ? `, parent ${parentTicket}` : ''})`,
+    );
+  }
+
   // Per-worker event handler: capture question hints, recompute the coarse state
   // via the shared fold, and edge-detect entry into a trigger state.
   function handleEvent(worker, ev) {
+    // A one-shot fan-out event, not a persistent worker state — handled
+    // independently of the trigger-state latch below (it doesn't touch
+    // `handled`/`questionHints`, and never re-fires for the same event since
+    // it isn't re-read from a recomputed coarse state).
+    if (ev && ev.event === 'tickets_ready_for_dispatch') {
+      handleTicketsReadyForDispatch(worker, ev.payload).catch((err) => {
+        log(`handleTicketsReadyForDispatch failed for worker ${worker}: ${err.message}`);
+      });
+      return;
+    }
+
     const payload = (ev && ev.payload) || {};
     const capturedHint = !!(ev && ev.event === 'notify' && payload.msg);
     if (capturedHint) {
@@ -399,6 +475,7 @@ function createConductorLoop(opts = {}) {
     stop,
     rescan,
     handleEvent, // used internally by subscribe; also the test drive-point
+    handleTicketsReadyForDispatch, // test drive-point for the split-fan-out path directly
     // Introspection seams for tests.
     isHandled: (worker) => handled.has(worker),
     watchedWorkers: () => [...subs.keys()],
