@@ -5,7 +5,7 @@ description: Fleet planning step. Reads a Linear ticket and the codebase, genera
 
 # Analyze Ticket
 
-Planning step in the feature workflow. Runs only when no `## Plan` comment exists on the ticket.
+Planning step in the feature workflow. Runs only when no `## Plan` comment exists on the ticket — including after `confirm-plan` clears a stale one because the operator chose to replace it.
 
 `$ARGUMENTS` is the Linear ticket identifier (e.g. `QUO-325`).
 `STATE_TICKET_URL` is the full Linear URL.

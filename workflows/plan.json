@@ -10,6 +10,15 @@
       "stateWrites": ["ticket_identifier", "ticket_url", "ticket_title", "plan_status"]
     },
     {
+      "id": "confirm-plan",
+      "type": "claude-tui",
+      "skill": "confirm-plan",
+      "awaitsReview": "question",
+      "runIf": "state.plan_status === 'found'",
+      "stateReads": ["ticket_identifier", "ticket_url"],
+      "stateWrites": ["plan_status"]
+    },
+    {
       "id": "analyze-ticket",
       "type": "claude-tui",
       "skill": "analyze-ticket",
