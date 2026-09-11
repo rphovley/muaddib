@@ -1,0 +1,49 @@
+# muaddib dispatch — herdr local plugin
+#
+# Pure convenience layer over the existing dispatch entry points: each action
+# only shells out to `dispatch-action.sh`, which in turn calls muaddib's own
+# `muaddib.sh` / `muaddib-plan.sh` / `muaddib-fast.sh`. No dispatch logic lives
+# here or in the wrapper — nothing in the core dispatch path changes, and on a
+# host without herdr these files just sit unused (zero impact).
+#
+# Field names below are the ones confirmed to exist in the herdr 0.8.0 binary
+# (name, version, platforms, pane, action[id/title], min_herdr_version). The
+# exact TOML *nesting* is NOT verified against the binary — treat this manifest
+# as best-effort until the operator runs `herdr plugin link` + a live pass on a
+# real host. See README.md ("Verifying on a real host") for the unverified bits.
+#
+# The action `command`s reference the wrapper via ${PLUGIN_DIR} rather than a
+# bare relative path, so a dispatch works regardless of the CWD herdr runs an
+# action from. The exact plugin-dir variable name is one of the best-effort bits
+# to confirm on the first `herdr plugin link` pass (see README.md).
+
+name = "muaddib-dispatch"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+
+# herdr is a native macOS binary; the plugin only makes sense there.
+platforms = ["darwin"]
+
+# The plugin-owned pane the wrapper opens for a dispatch (via
+# `herdr plugin pane open`). width/height are only meaningful for a popup
+# placement per the 0.8.0 schema, so they're left off for the default pane.
+[pane]
+title = "muaddib dispatch"
+
+# Default dispatch → `muaddib.sh <ticket>` (auto-detects ticket vs. task).
+[[action]]
+id = "muaddib-dispatch"
+title = "Dispatch muaddib worker"
+command = "bash ${PLUGIN_DIR}/dispatch-action.sh default"
+
+# Plan-only dispatch → `muaddib-plan.sh <ticket>`.
+[[action]]
+id = "muaddib-dispatch-plan"
+title = "Dispatch muaddib worker (plan only)"
+command = "bash ${PLUGIN_DIR}/dispatch-action.sh plan"
+
+# Fast dispatch (no planning/review phases) → `muaddib-fast.sh <ticket>`.
+[[action]]
+id = "muaddib-dispatch-fast"
+title = "Dispatch muaddib worker (fast)"
+command = "bash ${PLUGIN_DIR}/dispatch-action.sh fast"

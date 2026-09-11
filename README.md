@@ -595,6 +595,24 @@ A `cpu` icon appears in the menu bar. Click it to open the fleet panel:
 The app reads the same `muaddib/status/worker-N.state` files as `attend.sh`
 and discovers containers via `docker ps` (Docker Desktop must be running).
 
+## Dispatch from inside herdr
+
+If you drive workers from herdr rather than a bare
+terminal, there's an **optional** local plugin under `muaddib/herdr-plugin/`
+that kicks off a dispatch (`npm run muaddib` / `:plan` / `:fast`) without
+alt-tabbing out to another window. It's pure convenience over the same
+mechanism — each action only shells out to the existing entry points, nothing
+in the core dispatch path changes — and it's inert until you explicitly link
+it, so a host without herdr is unaffected.
+
+```bash
+herdr plugin link ./muaddib/herdr-plugin --enabled
+herdr plugin action invoke muaddib-dispatch      # or :plan / :fast variants
+```
+
+See `muaddib/herdr-plugin/README.md` for the actions, install notes, and the
+manifest bits to confirm on your host during the first `herdr plugin link`.
+
 ## ⚠ Two things to verify by hand before scaling past N=1
 
 1. **Concurrency on one subscription.** Undocumented whether one Max plan runs
