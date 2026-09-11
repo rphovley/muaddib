@@ -97,6 +97,19 @@ fi
 
 SESSION="w${WORKER_INDEX}"
 
+# Materialize the inner-tmux prefix binding fresh on every boot, before any tmux
+# server starts. ~/.tmux.conf sources this file (source-file -q), so both the
+# task-mode and interactive `new-session` calls below inherit the rebind. Writing
+# it fresh (`>`, never append) guarantees a manifest change or restart never leaves
+# a stale binding behind. See read-config.sh's MUADDIB_TMUX_PREFIX (default "C-w")
+# for why: herdr's outer pane also uses C-b, so the nested session needs a
+# non-colliding prefix.
+cat > /home/worker/.tmux-prefix.conf <<EOF
+set -g prefix ${MUADDIB_TMUX_PREFIX}
+unbind C-b
+bind ${MUADDIB_TMUX_PREFIX} send-prefix
+EOF
+
 if [ -n "${TASK:-}" ]; then
     # Task mode: hand off to the orchestrator. Create a bare tmux session for
     # job windows, then exec the orchestrator as the container's main process.

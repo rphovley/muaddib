@@ -80,6 +80,10 @@ basename "$(git rev-parse --show-toplevel 2>/dev/null || echo "$TARGET")"   # pr
   `githubOwner`/`githubRepo` from it. Otherwise propose `linear` (a Linear workspace
   isn't detectable from the repo, so this one you must ask). Never write `raw` — it's
   a dispatch-time override, not a manifest value.
+- **tmuxPrefix** — optional. The inner tmux prefix key (tmux key notation, e.g.
+  `"C-w"`), rebound so it doesn't collide with herdr's outer `C-b` pane prefix.
+  Defaults to `"C-w"` when absent, so you can omit it unless the operator wants a
+  different key.
 - **`workerPorts.{api,db,sketch}` + `dispatchPort`** — there's no baked default.
   Scan the host for a free, non-colliding range:
 
