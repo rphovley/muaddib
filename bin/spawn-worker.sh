@@ -377,6 +377,21 @@ if herdr_available; then
             '(.result.workspaces // [])[] | select(.label==$want) | .workspace_id' 2>/dev/null \
         | head -1)"
 
+    # herdr's left-hand "agents" sidebar renders the TAB LABEL (not the pane's
+    # report-metadata --title), so fold the ticket identifier into the label to
+    # give each worker some context there. The ticket is the last whitespace-
+    # separated token of TASK (e.g. TASK="/muaddib muaddib#151"); only accept it
+    # when it looks like a real ticket id — GitHub-style "<repo>#<number>" or
+    # Linear-style "<UPPER>-<number>" — so free-text/interactive spawns fall back
+    # to the bare "w${WORKER}". Cap the token length so a pathological TASK can't
+    # produce an unwieldy label.
+    TAB_LABEL="w${WORKER}"
+    TICKET="${TASK##* }"
+    TICKET="${TICKET:0:40}"
+    if [[ "$TICKET" =~ ^[^[:space:]]+#[0-9]+$ || "$TICKET" =~ ^[A-Z]+-[0-9]+$ ]]; then
+        TAB_LABEL="w${WORKER} ${TICKET}"
+    fi
+
     # No existing workspace for this project — create one. Creating a workspace
     # also creates one starter tab/pane (herdr's own behavior, not ours); reuse
     # THAT pane for worker 1 instead of leaving it blank and opening a second tab
@@ -387,11 +402,11 @@ if herdr_available; then
         WORKSPACE_ID="$(printf '%s' "$WS_JSON" | jq -r '.result.workspace.workspace_id // empty' 2>/dev/null)"
         PANE_ID="$(printf '%s' "$WS_JSON" | jq -r '.result.root_pane.pane_id // empty' 2>/dev/null)"
         STARTER_TAB_ID="$(printf '%s' "$WS_JSON" | jq -r '.result.tab.tab_id // empty' 2>/dev/null)"
-        [ -n "$STARTER_TAB_ID" ] && herdr_exec tab rename "$STARTER_TAB_ID" "w${WORKER}" >/dev/null 2>&1 || true
+        [ -n "$STARTER_TAB_ID" ] && herdr_exec tab rename "$STARTER_TAB_ID" "$TAB_LABEL" >/dev/null 2>&1 || true
     fi
 
     if [ -n "$WORKSPACE_ID" ] && [ -z "$PANE_ID" ]; then
-        TAB_JSON="$(herdr_exec tab create --workspace "$WORKSPACE_ID" --label "w${WORKER}" --no-focus 2>/dev/null || true)"
+        TAB_JSON="$(herdr_exec tab create --workspace "$WORKSPACE_ID" --label "$TAB_LABEL" --no-focus 2>/dev/null || true)"
         PANE_ID="$(printf '%s' "$TAB_JSON" | jq -r '.result.root_pane.pane_id // empty' 2>/dev/null || true)"
     fi
 
