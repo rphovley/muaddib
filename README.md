@@ -612,14 +612,20 @@ herdr plugin action invoke muaddib-dispatch      # or :plan / :fast variants
 
 You link it **once** and it's available host-wide: `herdr plugin link`
 registers the actions with your herdr install (one per machine), so they show up
-in herdr's action UI from any pane regardless of the repo you're in. Each link
-is bound to the muaddib checkout you point it at, though — the action always
-dispatches into that checkout — so if you run several checkouts, link the one you
-want to drive (or link each under a distinct plugin `name`).
+in herdr's action UI from any pane regardless of the repo you're in. The wrapper
+then resolves *which* checkout to dispatch into at run time — the pane you
+invoked it from, or a project registry file — so one linked plugin drives
+several checkouts (e.g. `quotethat` and another project) without relinking:
 
-See `muaddib/herdr-plugin/README.md` for the actions, install notes, the
-project-vs-global scope in full, and the manifest bits to confirm on your host
-during the first `herdr plugin link`.
+```bash
+# ~/.config/muaddib/herdr-projects — one 'shortname  /abs/path' per line
+quotethat   /Users/you/src/quotethat
+otherproj   /Users/you/src/otherproj
+```
+
+See `muaddib/herdr-plugin/README.md` for the actions, install notes, the full
+project-resolution order ("Driving several projects at once"), and the manifest
+bits to confirm on your host during the first `herdr plugin link`.
 
 ## ⚠ Two things to verify by hand before scaling past N=1
 

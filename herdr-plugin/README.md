@@ -17,7 +17,7 @@ philosophy.
 | File | Purpose |
 |------|---------|
 | `herdr-plugin.toml` | Plugin manifest declaring the three dispatch actions. |
-| `dispatch-action.sh` | Thin wrapper an action runs: prompts for a ticket ID, then calls the existing entry point in a plugin-owned pane. No dispatch logic. |
+| `dispatch-action.sh` | Thin wrapper an action runs: resolves which checkout to target (pane CWD → registry → linked checkout), prompts for a ticket ID, then calls that checkout's existing entry point in a plugin-owned pane. No dispatch logic. |
 
 ## Actions
 
@@ -53,29 +53,57 @@ herdr plugin action invoke muaddib-dispatch-fast
 `--enabled` (or use `--disabled`) if you'd rather link it inactive and enable
 it later from herdr.
 
-## Scope — global to herdr, bound to one checkout
+## Scope — global to herdr, resolves the checkout at run time
 
-Both halves of the answer matter, because they pull in opposite directions:
+`herdr plugin link` registers the plugin with the **herdr host** (there's one
+herdr per machine), so once linked the three actions show up in herdr's action
+UI from **any** pane, no matter which repo that pane is sitting in. You link it
+**once**, not per project.
 
-- **Availability is global to your herdr install.** `herdr plugin link`
-  registers the plugin with the herdr host (there's one herdr per machine), so
-  once linked the three actions show up in herdr's action UI from **any** pane,
-  no matter which repo that pane happens to be sitting in. You don't re-link per
-  project, and you don't have to be "inside" muaddib to invoke a dispatch.
-- **But each link is bound to the one muaddib checkout you pointed it at.** The
-  wrapper resolves the checkout root *relative to its own location*
-  (`MUADDIB_DIR="$PLUGIN_DIR/.."` in `dispatch-action.sh`), so an action always
-  dispatches a worker into the checkout whose `herdr-plugin/` you linked —
-  regardless of your current pane's directory. The path you pass to
-  `herdr plugin link ./muaddib/herdr-plugin` is what decides that, permanently,
-  for that link.
+Which muaddib checkout a dispatch targets is then decided at **run time**, so a
+single linked plugin can drive several checkouts at once — see
+["Driving several projects at once"](#driving-several-projects-at-once) below.
+The simplest setup (link the plugin from inside one checkout, drive only that
+one) needs none of that machinery: with no registry and no pane hint, the
+wrapper falls back to the checkout it's linked inside.
 
-So: install it **once**, host-wide, and it's available everywhere in herdr — but
-it drives **one** muaddib checkout. If you keep several muaddib checkouts and
-want to dispatch into a specific one, link that checkout's `herdr-plugin/` (and,
-if you want more than one live at a time, give each a distinct `name` in its
-`herdr-plugin.toml` so their action ids don't collide). To repoint an existing
-link at a different checkout, unlink and re-link from the new path.
+## Driving several projects at once
+
+Because herdr registers the plugin host-globally, you don't want to relink every
+time you switch between, say, `quotethat` and another project. `dispatch-action.sh`
+therefore resolves the target checkout at dispatch time, in this priority order:
+
+1. **`$MUADDIB_DIR`** — an explicit override, if you set it. Escape hatch / used
+   by the tests.
+2. **herdr's active-pane directory** (`$HERDR_PANE_CWD`, then `$HERDR_CWD`) — the
+   wrapper walks up from it to the nearest muaddib checkout (a dir with an
+   executable `muaddib.sh`). So a dispatch just targets the repo of the pane you
+   invoked it from — no prompt, no config. *The env-var names are best-effort
+   against herdr 0.8.0; confirm them on your host (see "Verifying on a real
+   host"). When they aren't provided, this step is silently skipped and the
+   registry below takes over.*
+3. **A project registry** — a plain-text file, default
+   `${XDG_CONFIG_HOME:-~/.config}/muaddib/herdr-projects` (override with
+   `$MUADDIB_HERDR_REGISTRY`), one entry per line:
+
+   ```
+   # shortname            absolute path to the checkout
+   quotethat              /Users/you/src/quotethat
+   otherproj              /Users/you/src/otherproj
+   ```
+
+   Blank lines and `#` comments are ignored. **One** entry is used silently;
+   **several** make the wrapper print a numbered picker — choose by number or by
+   shortname, then it prompts for the ticket as usual. Adding a project is a
+   one-line edit; no re-link.
+4. **Legacy fallback** — the checkout this plugin is physically linked inside
+   (`<checkout>/herdr-plugin/`). This is the original single-project behavior and
+   what you get when you set up neither a pane hint nor a registry.
+
+So, concretely, to drive several projects: either rely on the pane hint (nothing
+to configure, if your herdr passes pane CWD), or drop a couple of lines in the
+registry file and pick from the menu at dispatch time. You never link/unlink to
+switch projects.
 
 ## Verifying on a real host
 

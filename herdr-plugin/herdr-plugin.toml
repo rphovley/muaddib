@@ -16,6 +16,11 @@
 # bare relative path, so a dispatch works regardless of the CWD herdr runs an
 # action from. The exact plugin-dir variable name is one of the best-effort bits
 # to confirm on the first `herdr plugin link` pass (see README.md).
+#
+# The wrapper resolves WHICH muaddib checkout to dispatch into at run time (herdr
+# pane CWD → project registry → the checkout it's linked inside), so this single
+# host-global plugin can drive several checkouts without relinking. See README.md
+# ("Driving several projects at once"). Nothing about that lives in this manifest.
 
 name = "muaddib-dispatch"
 version = "0.1.0"
