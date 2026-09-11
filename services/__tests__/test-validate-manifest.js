@@ -171,6 +171,44 @@ async function testCollisionIgnoresSelf() {
   assert(warnings.length === 0, 'a manifest must not collide with its own account entry');
 }
 
+async function testTmuxPrefixAbsentOk() {
+  const m = validManifest(); // validManifest() omits tmuxPrefix
+  assert(m.tmuxPrefix === undefined, 'baseline manifest should omit tmuxPrefix');
+  const res = validateManifest(m);
+  assert(res.ok, `absent tmuxPrefix should pass (defaults to "C-w" downstream), got: ${res.errors.join('; ')}`);
+}
+
+async function testTmuxPrefixValid() {
+  const m = validManifest();
+  m.tmuxPrefix = 'C-a';
+  const res = validateManifest(m);
+  assert(res.ok, `a valid tmuxPrefix should pass, got: ${res.errors.join('; ')}`);
+}
+
+async function testTmuxPrefixEmptyFails() {
+  const m = validManifest();
+  m.tmuxPrefix = '';
+  const res = validateManifest(m);
+  assert(!res.ok, 'empty tmuxPrefix should fail');
+  assert(hasErr(res, 'tmuxPrefix'), `should flag tmuxPrefix, got: ${res.errors.join('; ')}`);
+}
+
+async function testTmuxPrefixWhitespaceFails() {
+  const m = validManifest();
+  m.tmuxPrefix = 'C a';
+  const res = validateManifest(m);
+  assert(!res.ok, 'tmuxPrefix containing whitespace should fail');
+  assert(hasErr(res, 'tmuxPrefix'), `should flag tmuxPrefix, got: ${res.errors.join('; ')}`);
+}
+
+async function testTmuxPrefixNonStringFails() {
+  const m = validManifest();
+  m.tmuxPrefix = 5;
+  const res = validateManifest(m);
+  assert(!res.ok, 'non-string tmuxPrefix should fail');
+  assert(hasErr(res, 'tmuxPrefix'), `should flag tmuxPrefix, got: ${res.errors.join('; ')}`);
+}
+
 async function testContextSourcesValid() {
   const m = validManifest();
   m.contextSources = [
@@ -269,6 +307,11 @@ async function testFileMissing() {
   await run('missing dispatchPort warns', testDispatchPortMissingWarns);
   await run('bad retryThreshold warns', testRetryThresholdWarns);
   await run('cross-project port collision warns', testPortCollisionAcrossProjects);
+  await run('absent tmuxPrefix is fine', testTmuxPrefixAbsentOk);
+  await run('valid tmuxPrefix passes', testTmuxPrefixValid);
+  await run('empty tmuxPrefix fails', testTmuxPrefixEmptyFails);
+  await run('whitespace tmuxPrefix fails', testTmuxPrefixWhitespaceFails);
+  await run('non-string tmuxPrefix fails', testTmuxPrefixNonStringFails);
   await run('collision check ignores self', testCollisionIgnoresSelf);
   await run('valid contextSources passes', testContextSourcesValid);
   await run('absent contextSources is fine', testContextSourcesAbsentOk);
