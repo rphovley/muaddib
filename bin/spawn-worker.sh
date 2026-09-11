@@ -373,8 +373,8 @@ docker exec "${WORKER_CID}" tmux select-window -t "w${WORKER}:{end}" 2>/dev/null
 if herdr_available; then
     HERDR_LABEL="${MUADDIB_HERDR_LABEL:-$MUADDIB_PROJECT_NAME}"
     WORKSPACE_ID="$(herdr_exec workspace list 2>/dev/null \
-        | jq -r --arg label "$HERDR_LABEL" \
-            '(.result.workspaces // [])[] | select(.label==$label) | .workspace_id' 2>/dev/null \
+        | jq -r --arg want "$HERDR_LABEL" \
+            '(.result.workspaces // [])[] | select(.label==$want) | .workspace_id' 2>/dev/null \
         | head -1)"
 
     # No existing workspace for this project — create one. Creating a workspace
