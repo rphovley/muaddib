@@ -29,6 +29,36 @@ export HOST_FLEET_DIR="$FLEET_DIR"
 # root-created by Docker with the wrong ownership.
 mkdir -p "$MUADDIB_ACCOUNT_DIR"
 
+# ─── herdr bridge (optional) ────────────────────────────────────────────────────
+# herdr is a host-only macOS binary/socket — the dispatch container can't call
+# it directly (see bin/herdr-bridge.sh for why). If herdr is installed on this
+# host, run its bridge alongside the daemon so daemon-spawned workers still get
+# a herdr pane, same as interactive dispatch already does. A no-op host without
+# herdr sees no change: the bridge dir is never created, and spawn-worker.sh's
+# herdr_available check (bin/herdr-exec.sh) fails closed exactly as before.
+HERDR_BRIDGE_DIR="$MUADDIB_ACCOUNT_DIR/herdr-bridge"
+HERDR_BRIDGE_PID_FILE="$MUADDIB_ACCOUNT_DIR/herdr-bridge.pid"
+
+start_herdr_bridge() {
+    command -v herdr &>/dev/null || return 0
+    # Already running (e.g. a previous --bg that was never --stop'd) — don't
+    # spawn a second poller onto the same directory.
+    if [ -f "$HERDR_BRIDGE_PID_FILE" ] && kill -0 "$(cat "$HERDR_BRIDGE_PID_FILE")" 2>/dev/null; then
+        return 0
+    fi
+    mkdir -p "$HERDR_BRIDGE_DIR"
+    "$FLEET_DIR/bin/herdr-bridge.sh" "$HERDR_BRIDGE_DIR" \
+        >"$MUADDIB_ACCOUNT_DIR/herdr-bridge.log" 2>&1 &
+    disown $!
+    echo $! >"$HERDR_BRIDGE_PID_FILE"
+}
+
+stop_herdr_bridge() {
+    [ -f "$HERDR_BRIDGE_PID_FILE" ] || return 0
+    kill "$(cat "$HERDR_BRIDGE_PID_FILE")" 2>/dev/null || true
+    rm -f "$HERDR_BRIDGE_PID_FILE"
+}
+
 # ─── secrets for non-interactive startup ───────────────────────────────────────
 # ~/.zshrc exports these only for *interactive* shells, so a daemon started at
 # reboot / launchd / cron inherits neither — the docker-compose interpolation
@@ -47,14 +77,18 @@ muaddib_load_env_file "$FLEET_DIR/.muaddib/secrets.env"
 
 case "${1:-}" in
   --bg)
+    start_herdr_bridge
     docker compose -p "$PROJECT" -f "$COMPOSE_FILE" up -d --build
     echo "→ dispatch-daemon started (logs: docker compose -p ${PROJECT} -f ${COMPOSE_FILE} logs -f)"
     ;;
   --stop)
     docker compose -p "$PROJECT" -f "$COMPOSE_FILE" down
+    stop_herdr_bridge
     echo "→ dispatch-daemon stopped"
     ;;
   "")
+    start_herdr_bridge
+    trap stop_herdr_bridge EXIT
     docker compose -p "$PROJECT" -f "$COMPOSE_FILE" up --build
     ;;
   *)
