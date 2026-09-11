@@ -4,15 +4,19 @@
 #
 # herdr itself is a host-only macOS binary and isn't present in the worker
 # container, so these tests exercise the wrapper (dispatch-action.sh) against a
-# *stub* muaddib checkout and a *stub* `herdr` on PATH — verifying the pure
-# call-through behavior without spawning a real worker or needing herdr:
-#   - mode → correct existing entry point (default/plan/fast)
+# *stub* muaddib checkout — verifying the pure call-through behavior without
+# spawning a real worker or needing herdr:
+#   - mode → correct existing entry point (default/plan/fast), run directly —
+#     dispatch-action.sh only ever runs AS a herdr `[[panes]]` entrypoint (a
+#     real interactive pane herdr already opened for it), so unlike the
+#     pre-verification version of this plugin it never shells back out to
+#     `herdr` itself. See herdr-plugin.toml's header comment for how that was
+#     confirmed against a real herdr 0.9.0 install.
 #   - the ticket ID is prompted for and forwarded verbatim (whitespace trimmed)
-#   - dispatch goes through `herdr plugin pane open ... -- <entry> <ticket>`
-#   - graceful fallback to a direct dispatch when herdr isn't on PATH
 #   - unknown mode / empty input are rejected
-#   - the target checkout is resolved at run time: herdr pane CWD → registry
-#     picker → the checkout the plugin is linked inside (multi-project support)
+#   - the target checkout is resolved at run time: herdr's plugin invocation
+#     context ($HERDR_PLUGIN_CONTEXT_JSON) → registry picker → the checkout
+#     the plugin is linked inside (multi-project support)
 # Plus a couple of static checks on the manifest. Self-contained — no container.
 set -uo pipefail
 
@@ -76,66 +80,41 @@ make_neutral_plugin() {
   chmod +x "$dir/dispatch-action.sh"
 }
 
-# A stub `herdr` that records its argv (one per line) to $HERDR_LOG. Placed
-# first on PATH so the wrapper's `command -v herdr` finds it.
-make_stub_herdr() {
-  local bindir="$1"
-  mkdir -p "$bindir"
-  cat >"$bindir/herdr" <<'EOF'
-#!/usr/bin/env bash
-printf '%s\n' "$@" >>"$HERDR_LOG"
-EOF
-  chmod +x "$bindir/herdr"
-}
-
 # Run the fixture wrapper for legacy (inside-checkout) resolution, feeding
 # $ticket on stdin. Isolate resolution from the *developer's* real environment:
-# point the registry at a nonexistent file and clear the pane-CWD / override
-# vars, so resolution deterministically falls through to the plugin's own
-# checkout ("../"). Caller-provided PATH / HERDR_LOG are preserved by `env`.
+# point the registry at a nonexistent file and clear the plugin-context /
+# override vars, so resolution deterministically falls through to the
+# plugin's own checkout ("../"). Caller-provided PATH is preserved by `env`.
 run_wrapper() {
   local root="$1" mode="$2" ticket="$3"
   printf '%s\n' "$ticket" | \
     env MUADDIB_HERDR_REGISTRY="$root/no-such-registry" \
-        HERDR_PANE_CWD='' HERDR_CWD='' MUADDIB_DIR='' \
+        HERDR_PLUGIN_CONTEXT_JSON='' MUADDIB_DIR='' \
         bash "$root/herdr-plugin/dispatch-action.sh" "$mode"
 }
 
 # ─── tests ───────────────────────────────────────────────────────────────────
 
-# With a stub herdr present, each mode dispatches through
-# `herdr plugin pane open ... -- <entry> <ticket>` and picks the right entry.
-test_mode_routing_via_herdr() {
+# dispatch-action.sh only ever runs AS a herdr pane entrypoint (herdr already
+# opened the interactive pane for it — see herdr-plugin.toml), so it never
+# shells back out to `herdr` itself. Each mode dispatches straight to its
+# entry point, so we see the stub entry's own DISPATCH line — and the right
+# entry per mode.
+test_direct_dispatch_all_modes() {
   local tmp="$1"
   make_fixture "$tmp"
-  make_stub_herdr "$tmp/bin"
-  export HERDR_LOG="$tmp/herdr.log"
-
-  local mode entry pair
+  local out mode entry pair
   for pair in "default:muaddib.sh" "plan:muaddib-plan.sh" "fast:muaddib-fast.sh"; do
     mode="${pair%%:*}"; entry="${pair##*:}"
-    : >"$HERDR_LOG"
-    PATH="$tmp/bin:$PATH" run_wrapper "$tmp" "$mode" "QUO-9"
-
-    grep -qx "plugin" "$HERDR_LOG"  || { echo "mode=$mode: expected 'plugin' subcommand"; return 1; }
-    grep -qx "pane"   "$HERDR_LOG"  || { echo "mode=$mode: expected 'pane'";   return 1; }
-    grep -qx "open"   "$HERDR_LOG"  || { echo "mode=$mode: expected 'open'";   return 1; }
-    grep -qx "$tmp/$entry" "$HERDR_LOG" || {
-      echo "mode=$mode: expected entry $tmp/$entry in argv"; sed 's/^/      /' "$HERDR_LOG"; return 1; }
-    grep -qx "QUO-9" "$HERDR_LOG" || { echo "mode=$mode: ticket not forwarded"; return 1; }
+    out=$(PATH="/usr/bin:/bin" run_wrapper "$tmp" "$mode" "QUO-9")
+    if [ "$mode" = "default" ]; then
+      echo "$out" | grep -q "DISPATCH ${entry%.sh} $tmp -- QUO-9$" || {
+        echo "mode=$mode: expected direct dispatch of $entry with QUO-9; got:"; echo "$out"; return 1; }
+    else
+      echo "$out" | grep -q "DISPATCH ${entry%.sh} $tmp QUO-9$" || {
+        echo "mode=$mode: expected direct dispatch of $entry with QUO-9; got:"; echo "$out"; return 1; }
+    fi
   done
-}
-
-# Without herdr on PATH the wrapper falls back to running the entry directly,
-# so we see the stub entry's own DISPATCH line — and the right entry per mode.
-test_fallback_direct_dispatch() {
-  local tmp="$1"
-  make_fixture "$tmp"
-  local out
-  # Minimal PATH with no herdr; /usr/bin:/bin cover env/bash/dirname/etc.
-  out=$(PATH="/usr/bin:/bin" run_wrapper "$tmp" "plan" "QUO-42")
-  echo "$out" | grep -q "DISPATCH muaddib-plan $tmp QUO-42" || {
-    echo "expected direct dispatch of muaddib-plan with QUO-42; got:"; echo "$out"; return 1; }
 }
 
 # Surrounding whitespace on the entered ticket is trimmed before dispatch.
@@ -168,7 +147,7 @@ test_unknown_mode_rejected() {
   make_fixture "$tmp"
   local out rc
   out=$(printf 'QUO-1\n' | env MUADDIB_HERDR_REGISTRY="$tmp/none" \
-          HERDR_PANE_CWD='' HERDR_CWD='' MUADDIB_DIR='' \
+          HERDR_PLUGIN_CONTEXT_JSON='' MUADDIB_DIR='' \
           bash "$tmp/herdr-plugin/dispatch-action.sh" "bogus" 2>&1); rc=$?
   [ "$rc" -eq 2 ] || { echo "expected exit 2 for unknown mode, got $rc"; return 1; }
   echo "$out" | grep -qi "unknown mode" || { echo "expected 'unknown mode' message; got:"; echo "$out"; return 1; }
@@ -184,7 +163,7 @@ test_pane_cwd_resolution() {
   mkdir -p "$tmp/projA/deep/sub"
   local out
   out=$(printf 'QUO-3\n' | env MUADDIB_HERDR_REGISTRY="$tmp/none" \
-          HERDR_PANE_CWD="$tmp/projA/deep/sub" HERDR_CWD='' MUADDIB_DIR='' \
+          HERDR_PLUGIN_CONTEXT_JSON="{\"focused_pane_cwd\":\"$tmp/projA/deep/sub\"}" MUADDIB_DIR='' \
           PATH="/usr/bin:/bin" bash "$tmp/plugin/dispatch-action.sh" default)
   echo "$out" | grep -q "DISPATCH muaddib $tmp/projA -- QUO-3$" || {
     echo "expected pane-CWD to resolve the enclosing checkout projA; got:"; echo "$out"; return 1; }
@@ -200,7 +179,7 @@ test_registry_single_entry() {
   printf '# my projects\nprojA   %s\n' "$tmp/projA" > "$reg"
   local out
   out=$(printf 'QUO-8\n' | env MUADDIB_HERDR_REGISTRY="$reg" \
-          HERDR_PANE_CWD='' HERDR_CWD='' MUADDIB_DIR='' \
+          HERDR_PLUGIN_CONTEXT_JSON='' MUADDIB_DIR='' \
           PATH="/usr/bin:/bin" bash "$tmp/plugin/dispatch-action.sh" plan)
   echo "$out" | grep -q "DISPATCH muaddib-plan $tmp/projA QUO-8$" || {
     echo "expected single registry entry projA (no prompt); got:"; echo "$out"; return 1; }
@@ -219,14 +198,14 @@ test_registry_prompt_selects() {
   local out
   # By number: '2' → projB (second entry). First stdin line is the pick.
   out=$(printf '2\nQUO-11\n' | env MUADDIB_HERDR_REGISTRY="$reg" \
-          HERDR_PANE_CWD='' HERDR_CWD='' MUADDIB_DIR='' \
+          HERDR_PLUGIN_CONTEXT_JSON='' MUADDIB_DIR='' \
           PATH="/usr/bin:/bin" bash "$tmp/plugin/dispatch-action.sh" default 2>/dev/null)
   echo "$out" | grep -q "DISPATCH muaddib $tmp/projB -- QUO-11$" || {
     echo "expected numeric pick '2' → projB; got:"; echo "$out"; return 1; }
 
   # By name: 'projA' → projA.
   out=$(printf 'projA\nQUO-12\n' | env MUADDIB_HERDR_REGISTRY="$reg" \
-          HERDR_PANE_CWD='' HERDR_CWD='' MUADDIB_DIR='' \
+          HERDR_PLUGIN_CONTEXT_JSON='' MUADDIB_DIR='' \
           PATH="/usr/bin:/bin" bash "$tmp/plugin/dispatch-action.sh" default 2>/dev/null)
   echo "$out" | grep -q "DISPATCH muaddib $tmp/projA -- QUO-12$" || {
     echo "expected name pick 'projA' → projA; got:"; echo "$out"; return 1; }
@@ -239,7 +218,7 @@ test_unresolvable_errors() {
   make_neutral_plugin "$tmp/plugin"
   local out rc
   out=$(printf 'QUO-1\n' | env MUADDIB_HERDR_REGISTRY="$tmp/none" \
-          HERDR_PANE_CWD='' HERDR_CWD='' MUADDIB_DIR='' \
+          HERDR_PLUGIN_CONTEXT_JSON='' MUADDIB_DIR='' \
           PATH="/usr/bin:/bin" bash "$tmp/plugin/dispatch-action.sh" default 2>&1); rc=$?
   [ "$rc" -ne 0 ] || { echo "expected non-zero exit when no checkout resolvable, got 0"; return 1; }
   echo "$out" | grep -qi "couldn't determine which muaddib checkout" || {
@@ -258,7 +237,7 @@ test_explicit_override_wins() {
   printf 'projB %s\n' "$tmp/projB" > "$reg"
   local out
   out=$(printf 'QUO-4\n' | env MUADDIB_HERDR_REGISTRY="$reg" \
-          HERDR_PANE_CWD='' HERDR_CWD='' MUADDIB_DIR="$tmp/projA" \
+          HERDR_PLUGIN_CONTEXT_JSON='' MUADDIB_DIR="$tmp/projA" \
           PATH="/usr/bin:/bin" bash "$tmp/plugin/dispatch-action.sh" fast)
   echo "$out" | grep -q "DISPATCH muaddib-fast $tmp/projA QUO-4$" || {
     echo "expected MUADDIB_DIR override → projA; got:"; echo "$out"; return 1; }
@@ -329,18 +308,25 @@ test_register_roundtrips_into_dispatch() {
   MUADDIB_HERDR_REGISTRY="$reg" bash "$REGISTER" projA "$tmp/projA" >/dev/null
   local out
   out=$(printf 'QUO-77\n' | env MUADDIB_HERDR_REGISTRY="$reg" \
-          HERDR_PANE_CWD='' HERDR_CWD='' MUADDIB_DIR='' \
+          HERDR_PLUGIN_CONTEXT_JSON='' MUADDIB_DIR='' \
           PATH="/usr/bin:/bin" bash "$tmp/plugin/dispatch-action.sh" plan)
   echo "$out" | grep -q "DISPATCH muaddib-plan $tmp/projA QUO-77$" || {
     echo "registered entry didn't drive a dispatch; got:"; echo "$out"; return 1; }
 }
 
-# Static: the manifest declares all three action ids and points at the wrapper.
-test_manifest_declares_actions() {
+# Static: the manifest declares a [[panes]] entrypoint AND an [[actions]]
+# entry for all three dispatch modes, and every action opens its matching
+# pane entrypoint by id (verified schema — see herdr-plugin.toml's header
+# comment: `[[actions]]`/`[[panes]]` are plural, `action invoke` has no TTY so
+# only a pane entrypoint can run dispatch-action.sh's interactive prompt).
+test_manifest_declares_actions_and_panes() {
+  grep -q '^\[\[actions\]\]' "$MANIFEST" || { echo "manifest missing [[actions]] table"; return 1; }
+  grep -q '^\[\[panes\]\]'   "$MANIFEST" || { echo "manifest missing [[panes]] table"; return 1; }
   local id
   for id in muaddib-dispatch muaddib-dispatch-plan muaddib-dispatch-fast; do
-    grep -q "\"$id\"" "$MANIFEST" || grep -q "id = \"$id\"" "$MANIFEST" || {
-      echo "manifest missing action id: $id"; return 1; }
+    grep -q "id = \"$id\"" "$MANIFEST" || { echo "manifest missing id: $id"; return 1; }
+    grep -q "\-\-entrypoint $id" "$MANIFEST" || {
+      echo "no action opens pane entrypoint '$id'"; return 1; }
   done
   grep -q "dispatch-action.sh" "$MANIFEST" || { echo "manifest doesn't reference dispatch-action.sh"; return 1; }
 }
@@ -352,12 +338,11 @@ test_wrapper_executable() {
 
 # ─── run ─────────────────────────────────────────────────────────────────────
 echo "herdr-plugin dispatch wrapper tests:"
-run_test "mode routing via herdr pane open" test_mode_routing_via_herdr
-run_test "fallback direct dispatch (no herdr)" test_fallback_direct_dispatch
+run_test "direct dispatch, all modes" test_direct_dispatch_all_modes
 run_test "ticket whitespace trimmed" test_ticket_whitespace_trimmed
 run_test "empty ticket rejected" test_empty_ticket_rejected
 run_test "unknown mode rejected" test_unknown_mode_rejected
-run_test "pane CWD resolves enclosing checkout" test_pane_cwd_resolution
+run_test "plugin context resolves enclosing checkout" test_pane_cwd_resolution
 run_test "registry single entry (no prompt)" test_registry_single_entry
 run_test "registry picker selects by number and name" test_registry_prompt_selects
 run_test "unresolvable checkout errors with guidance" test_unresolvable_errors
@@ -367,7 +352,7 @@ run_test "register updates in place, preserves others" test_register_updates_and
 run_test "register rejects a non-checkout dir" test_register_rejects_non_checkout
 run_test "register defaults to its own checkout" test_register_defaults_to_own_checkout
 run_test "register → dispatch round trip" test_register_roundtrips_into_dispatch
-run_test "manifest declares all actions" test_manifest_declares_actions
+run_test "manifest declares actions + panes" test_manifest_declares_actions_and_panes
 run_test "wrapper is executable" test_wrapper_executable
 
 echo ""

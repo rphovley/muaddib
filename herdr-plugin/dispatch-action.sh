@@ -1,18 +1,26 @@
 #!/usr/bin/env bash
-# herdr action wrapper — dispatch a muaddib worker from inside herdr.
+# herdr pane entrypoint — dispatch a muaddib worker from inside herdr.
 #
-# This is a thin call-through, nothing more. herdr actions have no native
-# input-prompt flow, so this script prompts the operator for a ticket ID (or
-# free-form task text) itself, then invokes muaddib's *existing* dispatch entry
-# point. It contains NO dispatch logic — it only picks which checkout + entry
-# script to run and hands off. The core dispatch path (bin/spawn-worker.sh,
-# muaddib.sh, the dispatch daemon) is untouched.
+# This is a thin call-through, nothing more. It prompts the operator for a
+# ticket ID (or free-form task text) itself, then invokes muaddib's *existing*
+# dispatch entry point. It contains NO dispatch logic — it only picks which
+# checkout + entry script to run and hands off. The core dispatch path
+# (bin/spawn-worker.sh, muaddib.sh, the dispatch daemon) is untouched.
 #
 #   bash dispatch-action.sh [default|plan|fast]
 #
-# Invoked by herdr via the actions declared in herdr-plugin.toml. Safe to run
-# by hand too (e.g. to test the wrapper without herdr) — when `herdr` isn't on
-# PATH it falls back to running the dispatch directly in the current terminal.
+# Invoked by herdr as a `[[panes]]` entrypoint declared in herdr-plugin.toml —
+# herdr opens a real interactive pane running this script directly (via
+# `herdr plugin pane open --entrypoint ...`), so the `read` prompt below has a
+# real TTY. It does NOT run as an `[[actions]]` command: `herdr plugin action
+# invoke` executes a command as a background, non-interactive job (stdout/
+# stderr/exit_code captured to a log, no TTY) and can never satisfy this
+# prompt — verified against a real herdr 0.9.0 install. herdr-plugin.toml's
+# `[[actions]]` entries exist only so the dispatch modes are discoverable
+# through herdr's own action list; each one's command just opens the matching
+# `[[panes]]` entrypoint below, where this script actually runs.
+#
+# Safe to run by hand too (e.g. to test the wrapper without herdr).
 #
 # WHICH CHECKOUT does a dispatch target? herdr registers a plugin host-globally
 # (one herdr per machine), so a single linked copy of this plugin must be able
@@ -20,10 +28,14 @@
 # at RUN TIME, in this priority order — see README.md ("Driving several projects
 # at once"):
 #   1. $MUADDIB_DIR, if the caller set it explicitly (escape hatch / tests).
-#   2. herdr's active-pane CWD ($HERDR_PANE_CWD / $HERDR_CWD): walk up to the
+#   2. herdr's plugin invocation context ($HERDR_PLUGIN_CONTEXT_JSON): walk up
+#      from the focused pane's CWD (falling back to the workspace CWD) to the
 #      nearest muaddib checkout, so a dispatch targets the repo of the pane you
-#      invoked it from. (The env-var names are best-effort against herdr 0.8.0 —
-#      confirm on your host; when they're absent this step is simply skipped.)
+#      invoked it from. herdr injects this context as ONE JSON env var, not as
+#      separate $HERDR_PANE_CWD/$HERDR_CWD vars — verified against a real herdr
+#      0.9.0 install (`herdr plugin action invoke`'s own JSON response, and the
+#      launched process's env, both carry `focused_pane_cwd`/`workspace_cwd`
+#      under this key). Requires `jq`; skipped (falls through) without it.
 #   3. A project registry ($MUADDIB_HERDR_REGISTRY, default
 #      ${XDG_CONFIG_HOME:-~/.config}/muaddib/herdr-projects): one usable entry
 #      is used silently, several prompt a project picker.
@@ -34,7 +46,10 @@ set -euo pipefail
 MODE="${1:-default}"
 
 # Resolve this plugin dir robustly, regardless of herdr's action CWD. Same
-# spirit as bin/read-config.sh: never assume the caller's working dir.
+# spirit as bin/read-config.sh: never assume the caller's working dir. herdr
+# also injects $HERDR_PLUGIN_ROOT (and sets the process CWD to it), but that's
+# only present when herdr itself launched this script — resolving it ourselves
+# keeps by-hand runs working too.
 PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Registry location — overridable for tests / power users.
@@ -103,12 +118,18 @@ resolve_muaddib_dir() {
     # 1. Explicit override.
     [ -n "${MUADDIB_DIR:-}" ] && { printf '%s\n' "$MUADDIB_DIR"; return 0; }
 
-    # 2. herdr active-pane CWD → nearest checkout above it.
-    local cwd root
-    for cwd in "${HERDR_PANE_CWD:-}" "${HERDR_CWD:-}"; do
-        [ -n "$cwd" ] || continue
-        root="$(find_muaddib_root "$cwd")" && { printf '%s\n' "$root"; return 0; }
-    done
+    # 2. herdr's plugin invocation context → nearest checkout above the
+    # focused pane's CWD (falling back to the workspace CWD). Delivered as one
+    # JSON blob, not separate env vars — see header comment.
+    if [ -n "${HERDR_PLUGIN_CONTEXT_JSON:-}" ] && command -v jq >/dev/null 2>&1; then
+        local cwd root
+        for cwd in \
+            "$(printf '%s' "$HERDR_PLUGIN_CONTEXT_JSON" | jq -r '.focused_pane_cwd // empty' 2>/dev/null || true)" \
+            "$(printf '%s' "$HERDR_PLUGIN_CONTEXT_JSON" | jq -r '.workspace_cwd // empty' 2>/dev/null || true)"; do
+            [ -n "$cwd" ] || continue
+            root="$(find_muaddib_root "$cwd")" && { printf '%s\n' "$root"; return 0; }
+        done
+    fi
 
     # 3. Registry: one entry is unambiguous; several prompt a picker.
     load_registry
@@ -128,7 +149,7 @@ if ! MUADDIB_DIR="$(resolve_muaddib_dir)"; then
         echo "    • register your checkouts in $REGISTRY"
         echo "      (one 'shortname  /abs/path/to/checkout' per line), or"
         echo "    • link this plugin from inside a checkout's herdr-plugin/, or"
-        echo "    • set MUADDIB_DIR (or let herdr pass HERDR_PANE_CWD)."
+        echo "    • set MUADDIB_DIR."
     } >&2
     exit 1
 fi
@@ -136,7 +157,7 @@ fi
 # ─── dispatch ────────────────────────────────────────────────────────────────
 
 # Map mode → the existing entry script (invoked by absolute path so it works
-# from any CWD) and a human label for the pane / prompt.
+# from any CWD) and a human label for the prompt.
 case "$MODE" in
     default) ENTRY="$MUADDIB_DIR/muaddib.sh";       LABEL="muaddib" ;;
     plan)    ENTRY="$MUADDIB_DIR/muaddib-plan.sh";  LABEL="muaddib:plan" ;;
@@ -170,13 +191,6 @@ if [ -z "$TICKET" ]; then
     exit 1
 fi
 
-# Open a plugin-owned pane (the sanctioned primitive for a plugin's own pane —
-# NOT the generic `pane run` bin/herdr-exec.sh uses) running the dispatch. This
-# keeps the operator's current pane unblocked while the worker session lives in
-# the new pane. Falls back to a direct in-terminal dispatch when herdr isn't
-# available, so the wrapper still works when run by hand and stays zero-impact
-# on a host without herdr.
-#
 # default mode goes through muaddib.sh's flag parser, which rejects a leading
 # '-'/'--' token as an unknown flag. Insert a literal '--' guard so free-form
 # task text starting with a hyphen is treated as the argument, not a flag (the
@@ -188,12 +202,6 @@ else
     ENTRY_ARGS=("$TICKET")
 fi
 
-# NOTE: the exact flags for `herdr plugin pane open` are NOT verified against
-# the 0.8.0 binary (only the subcommand's existence is). The operator should
-# confirm/adjust these during the live `herdr plugin link` pass — see README.md.
-if command -v herdr >/dev/null 2>&1; then
-    exec herdr plugin pane open --title "${LABEL} ${TICKET}" -- "$ENTRY" "${ENTRY_ARGS[@]}"
-else
-    echo "→ herdr not found on PATH — dispatching directly in this terminal." >&2
-    exec "$ENTRY" "${ENTRY_ARGS[@]}"
-fi
+# Run in place — this script already IS the content of the pane herdr opened
+# for it (see header comment), so there's no separate pane to open here.
+exec "$ENTRY" "${ENTRY_ARGS[@]}"

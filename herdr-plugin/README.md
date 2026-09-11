@@ -16,21 +16,35 @@ philosophy.
 
 | File | Purpose |
 |------|---------|
-| `herdr-plugin.toml` | Plugin manifest declaring the three dispatch actions. |
-| `dispatch-action.sh` | Thin wrapper an action runs: resolves which checkout to target (pane CWD → registry → linked checkout), prompts for a ticket ID, then calls that checkout's existing entry point in a plugin-owned pane. No dispatch logic. |
+| `herdr-plugin.toml` | Plugin manifest declaring three `[[actions]]` (discoverable through herdr's own action list) and three matching `[[panes]]` entrypoints (the actual interactive dispatch). |
+| `dispatch-action.sh` | Runs *inside* a pane entrypoint herdr already opened: resolves which checkout to target (herdr's pane context → registry → linked checkout), prompts for a ticket ID, then execs that checkout's existing entry point in place. No dispatch logic of its own, and no herdr calls of its own. |
 
-## Actions
+Every field/flag/env-var name below is verified against a real herdr 0.9.0
+install (`herdr plugin link` / `action invoke` / `pane open`, plus reading the
+launched process's actual environment) — not guessed. See
+`herdr-plugin.toml`'s header comment for the specific things that turned out
+different from the first draft of this plugin (wrong table names, wrong
+`platforms` value, a template token that doesn't exist, etc.).
 
-| Action id | Title | Runs |
-|-----------|-------|------|
+## Why an action AND a pane, per dispatch mode
+
+`herdr plugin action invoke` runs an action's `command` as a **background,
+non-interactive job** — stdout/stderr/exit code captured to a log, no TTY. It
+can never satisfy `dispatch-action.sh`'s interactive ticket prompt. An
+interactive, promptable terminal instead requires a `[[panes]]` **entrypoint**,
+opened with `herdr plugin pane open --plugin <id> --entrypoint <id>`.
+
+So each dispatch mode is declared twice:
+- an `[[actions]]` entry — discoverable/invokable through herdr's own action
+  list, whose `command` just opens the matching pane entrypoint;
+- a `[[panes]]` entrypoint — where `dispatch-action.sh` actually runs, with a
+  real TTY for its prompt.
+
+| id | Title | Opens |
+|----|-------|-------|
 | `muaddib-dispatch` | Dispatch muaddib worker | `muaddib.sh <ticket>` (auto-detects ticket vs. task) |
 | `muaddib-dispatch-plan` | Dispatch muaddib worker (plan only) | `muaddib-plan.sh <ticket>` |
 | `muaddib-dispatch-fast` | Dispatch muaddib worker (fast) | `muaddib-fast.sh <ticket>` |
-
-Because herdr actions have no native input-prompt, the wrapper prompts for the
-ticket reference (or, for the default action, free-form task text) itself, then
-dispatches into a **plugin-owned pane** (`herdr plugin pane open`) so your
-current pane stays unblocked.
 
 ## Install (once)
 
@@ -40,18 +54,42 @@ From a host that has herdr installed:
 # Register this directory as a local plugin (adjust the path to your checkout).
 herdr plugin link ./muaddib/herdr-plugin --enabled
 
-# Confirm the actions registered:
-herdr plugin action list
+# Confirm it registered both the actions and the pane entrypoints:
+herdr plugin list
 
-# Invoke one (or use herdr's action UI):
+# Invoke one (or find it in herdr's own action list):
 herdr plugin action invoke muaddib-dispatch
 herdr plugin action invoke muaddib-dispatch-plan
 herdr plugin action invoke muaddib-dispatch-fast
 ```
 
+Each opens a real interactive pane prompting for a ticket — confirmed by
+reading the pane's contents right after invoking (`herdr pane read <id>
+--source visible`) during verification.
+
 `herdr plugin link` is the dev/install path — no GitHub install needed. Drop
 `--enabled` (or use `--disabled`) if you'd rather link it inactive and enable
 it later from herdr.
+
+## Binding a keystroke (genuine one-keystroke dispatch)
+
+herdr's own action list still costs a browse/click. For true one-keystroke
+dispatch, bind a key directly to opening the pane entrypoint in your own
+`~/.config/herdr/config.toml`:
+
+```toml
+[[keys.command]]
+key = "prefix+alt+d"
+type = "pane"
+command = "herdr plugin pane open --plugin muaddib-dispatch --entrypoint muaddib-dispatch"
+```
+
+`type = "pane"` opens a temporary pane for the command and closes it when the
+command exits — the same shape `dispatch-action.sh` already runs in. Swap the
+`--entrypoint` value for `muaddib-dispatch-plan` / `muaddib-dispatch-fast` for
+a separate binding per mode, or `type = "popup"` for a modal instead of a
+regular pane. See herdr's `--default-config` output (`[keys]` /
+`[[keys.command]]`) for the full key-binding syntax.
 
 ## Scope — global to herdr, resolves the checkout at run time
 
@@ -75,13 +113,14 @@ therefore resolves the target checkout at dispatch time, in this priority order:
 
 1. **`$MUADDIB_DIR`** — an explicit override, if you set it. Escape hatch / used
    by the tests.
-2. **herdr's active-pane directory** (`$HERDR_PANE_CWD`, then `$HERDR_CWD`) — the
-   wrapper walks up from it to the nearest muaddib checkout (a dir with an
-   executable `muaddib.sh`). So a dispatch just targets the repo of the pane you
-   invoked it from — no prompt, no config. *The env-var names are best-effort
-   against herdr 0.8.0; confirm them on your host (see "Verifying on a real
-   host"). When they aren't provided, this step is silently skipped and the
-   registry below takes over.*
+2. **herdr's plugin invocation context** (`$HERDR_PLUGIN_CONTEXT_JSON` — one
+   JSON blob herdr injects into the launched process's env, carrying
+   `focused_pane_cwd`/`workspace_cwd` among other fields) — the wrapper walks
+   up from the focused pane's CWD to the nearest muaddib checkout (a dir with
+   an executable `muaddib.sh`). So a dispatch just targets the repo of the
+   pane you invoked it from — no prompt, no config. When the variable is
+   absent or `jq` isn't installed, this step is silently skipped and the
+   registry below takes over.
 3. **A project registry** — a plain-text file, default
    `${XDG_CONFIG_HOME:-~/.config}/muaddib/herdr-projects` (override with
    `$MUADDIB_HERDR_REGISTRY`), one entry per line:
@@ -160,33 +199,26 @@ link it **once** and register the checkouts:
 3. That's it. Invoke `muaddib-dispatch` from herdr and pick the project; new
    projects you onboard later register themselves via `muaddib-onboard.sh`.
 
-If your herdr passes the active pane's directory to actions (see "Verifying on a
-real host"), you can skip step 2 entirely for day-to-day use — a dispatch just
-targets whatever project the pane is in. The registry is the portable fallback
-that works even when it doesn't.
+You can skip step 2 entirely for day-to-day use — a dispatch just targets
+whatever project the pane is in. The registry is the portable fallback for
+when the pane you invoked from isn't inside any checkout (e.g. invoked from
+herdr's own action list rather than from within a pane sitting in a project).
 
-## Verifying on a real host
+## Verified against a real host
 
-herdr is a host-only macOS binary and isn't present in the muaddib worker
-container, so parts of this manifest are **best-effort** and should be
-confirmed during your first `herdr plugin link` pass:
+Earlier drafts of this plugin were written without access to a real herdr
+install and got several things wrong (wrong table names, an invalid
+`platforms` value, a template token that doesn't exist, an unsupported
+`pane open` invocation shape, and — the biggest one — routing the interactive
+ticket prompt through `action invoke`, which runs headless with no TTY and can
+never receive it). Everything in this manifest and `dispatch-action.sh` has
+since been re-verified end-to-end against a real herdr 0.9.0 install:
+`herdr plugin link` accepts the manifest, `herdr plugin action invoke
+muaddib-dispatch` opens a real pane, and reading that pane's contents
+(`herdr pane read <id> --source visible`) shows the actual ticket prompt.
 
-- The **exact TOML nesting** of the manifest. The field *names* used here
-  (`name`, `version`, `platforms`, `pane`, `action` with `id`/`title`,
-  `min_herdr_version`) are confirmed to exist in the herdr 0.8.0 binary, but
-  the nesting/structure and the per-action `command` field are not verified.
-- Whether `contexts` / `startup` are **required** (they exist in the schema but
-  aren't declared here).
-- The exact flags for **`herdr plugin pane open`** in `dispatch-action.sh` —
-  only the subcommand's existence is verified, not its argument shape.
-- The **plugin-dir variable** (`${PLUGIN_DIR}`) the action `command`s use to
-  locate `dispatch-action.sh` independently of herdr's action CWD — the exact
-  variable name herdr substitutes is not verified.
-
-If `herdr plugin link` rejects the manifest, adjust the nesting/flags to match
-what your herdr version reports and re-link. The wrapper falls back to a direct
-in-terminal dispatch when `herdr` isn't on PATH, so you can smoke-test it
-standalone first:
+You can still smoke-test the wrapper standalone, independent of herdr, the same
+way the test suite does:
 
 ```bash
 echo "QUO-227" | bash ./muaddib/herdr-plugin/dispatch-action.sh default

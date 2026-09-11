@@ -623,9 +623,13 @@ quotethat   /Users/you/src/quotethat
 otherproj   /Users/you/src/otherproj
 ```
 
-See `muaddib/herdr-plugin/README.md` for the actions, install notes, the full
-project-resolution order ("Driving several projects at once"), and the manifest
-bits to confirm on your host during the first `herdr plugin link`.
+Each invocation opens a real interactive pane prompting for the ticket —
+verified end-to-end against a real herdr install, not just a stub. For genuine
+one-keystroke dispatch (no browsing herdr's action list first), bind a key
+directly to the pane entrypoint in your own herdr config — see
+`muaddib/herdr-plugin/README.md` ("Binding a keystroke") for the exact
+`[[keys.command]]` snippet, the full project-resolution order ("Driving
+several projects at once"), and how this was verified.
 
 ## ⚠ Two things to verify by hand before scaling past N=1
 
