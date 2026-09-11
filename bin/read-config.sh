@@ -11,6 +11,21 @@ REPO_ROOT="${REPO_ROOT:-$(cd "$_MUADDIB_BIN_DIR/../.." && pwd)}"
 export REPO_ROOT
 _MUADDIB_CONFIG="$REPO_ROOT/.muaddib/manifest.json"
 
+# Path from REPO_ROOT down to this muaddib checkout itself — "muaddib" when
+# used as a submodule of a larger project (REPO_ROOT is the superproject one
+# level up), "." when muaddib IS the project (self-hosting: REPO_ROOT and this
+# checkout are the same directory). The dispatch daemon's own compose file
+# needs this to mount/build/cd into the right place in both layouts — it can't
+# just hardcode ".." the way the rest of read-config.sh's REPO_ROOT-relative
+# paths (MUADDIB_COMPOSE_OVERLAY etc.) already safely do.
+_MUADDIB_DIR="$(cd "$_MUADDIB_BIN_DIR/.." && pwd)"
+if [ "$_MUADDIB_DIR" = "$REPO_ROOT" ]; then
+    MUADDIB_SUBDIR="."
+else
+    MUADDIB_SUBDIR="${_MUADDIB_DIR#"$REPO_ROOT"/}"
+fi
+export MUADDIB_SUBDIR
+
 # Project-supplied compose overlay: adds project-specific services/env (e.g. a
 # DB sidecar) to docker-compose.worker.yml without editing the generic base
 # file. See README "Project compose overlay".

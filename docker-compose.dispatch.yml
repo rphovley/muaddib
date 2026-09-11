@@ -10,16 +10,23 @@
 #   CLAUDE_CODE_OAUTH_TOKEN  (claude setup-token)
 #   GITHUB_TOKEN             (repo-scoped PAT for opening PRs)
 # Dispatch-specific config goes in .muaddib/secrets.env (see .muaddib/secrets.env.example).
+#
+# REPO_ROOT / MUADDIB_SUBDIR come from bin/read-config.sh (sourced by
+# dispatch.sh before it invokes `docker compose`), not hardcoded here — muaddib
+# is used two ways: as a git submodule one level under a larger project
+# (REPO_ROOT = that project, MUADDIB_SUBDIR = "muaddib"), or standalone,
+# dispatching on its own GitHub issues (REPO_ROOT = this checkout itself,
+# MUADDIB_SUBDIR = "."). A literal ".." only ever works for the first case.
 
 services:
   dispatch:
     build:
-      context: ..
-      dockerfile: muaddib/Dockerfile.dispatch
+      context: ${REPO_ROOT:?run via dispatch.sh — it sets REPO_ROOT automatically}
+      dockerfile: ${MUADDIB_SUBDIR:?run via dispatch.sh — it sets MUADDIB_SUBDIR automatically}/Dockerfile.dispatch
     image: ${MUADDIB_DISPATCH_IMAGE:?run via dispatch.sh — it sets MUADDIB_DISPATCH_IMAGE automatically}
     restart: unless-stopped
     env_file:
-      - ../.muaddib/secrets.env
+      - ${REPO_ROOT}/.muaddib/secrets.env
     environment:
       REPO_ROOT: /repo
       # Dispatch dedup ledger + queue. The container runs as root (HOME=/root)
@@ -65,7 +72,7 @@ services:
       # Repo bind-mount: daemon and spawn-worker.sh read workflows, scripts, etc.
       # Status-file writes land on the host via this mount. (Per-worker .env files
       # now go to /dispatch-state — see MUADDIB_ACCOUNT_DIR above.)
-      - ..:/repo
+      - ${REPO_ROOT}:/repo
       # Host Docker socket: daemon calls `docker ps`; spawn-worker.sh calls
       # `docker compose up` to launch worker containers on the host daemon.
       - /var/run/docker.sock:/var/run/docker.sock
@@ -74,4 +81,4 @@ services:
       # container recreation. dispatch.sh mkdir -p's the source first so it isn't
       # root-created with wrong ownership.
       - ${MUADDIB_ACCOUNT_DIR:?run via dispatch.sh — it sets MUADDIB_ACCOUNT_DIR automatically}:/dispatch-state
-    working_dir: /repo/muaddib
+    working_dir: ${MUADDIB_CONTAINER_DIR:?run via dispatch.sh — it sets MUADDIB_CONTAINER_DIR automatically}

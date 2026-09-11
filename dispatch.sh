@@ -22,6 +22,17 @@ export DISPATCH_PORT
 # host rather than against the container's bind-mount path.
 export HOST_FLEET_DIR="$FLEET_DIR"
 
+# Where the dispatch container should cd into after REPO_ROOT is mounted at
+# /repo — /repo/muaddib as a submodule (MUADDIB_SUBDIR="muaddib"), or plain
+# /repo when muaddib is the project itself (MUADDIB_SUBDIR="."). Computed here
+# rather than string-concatenated in the compose file so a "." subdir can't
+# leave a stray "/repo/." working_dir behind.
+if [ "$MUADDIB_SUBDIR" = "." ]; then
+    export MUADDIB_CONTAINER_DIR="/repo"
+else
+    export MUADDIB_CONTAINER_DIR="/repo/$MUADDIB_SUBDIR"
+fi
+
 # Account-level per-project dir (MUADDIB_ACCOUNT_DIR from read-config.sh, honoring
 # any override) — bind-mounted into the dispatch container as /dispatch-state (see
 # docker-compose.dispatch.yml) to persist the dedup ledger. Create it here as the
