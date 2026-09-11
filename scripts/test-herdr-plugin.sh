@@ -20,6 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 WRAPPER="$REPO_ROOT/herdr-plugin/dispatch-action.sh"
 MANIFEST="$REPO_ROOT/herdr-plugin/herdr-plugin.toml"
+REGISTER="$REPO_ROOT/bin/herdr-register.sh"
 
 PASS=0; FAIL=0
 
@@ -263,6 +264,77 @@ test_explicit_override_wins() {
     echo "expected MUADDIB_DIR override → projA; got:"; echo "$out"; return 1; }
 }
 
+# bin/herdr-register.sh writes a fresh entry into a new registry file.
+test_register_adds_entry() {
+  local tmp="$1"
+  make_entries "$tmp/projA"
+  local reg="$tmp/registry"
+  MUADDIB_HERDR_REGISTRY="$reg" bash "$REGISTER" projA "$tmp/projA" >/dev/null || {
+    echo "register exited non-zero"; return 1; }
+  [ "$(awk '$1=="projA"{print $2}' "$reg")" = "$tmp/projA" ] || {
+    echo "projA not registered at $tmp/projA:"; cat "$reg"; return 1; }
+}
+
+# Re-registering a shortname updates that one entry in place (no duplicate) and
+# leaves other entries and comments untouched.
+test_register_updates_and_preserves() {
+  local tmp="$1"
+  make_entries "$tmp/projA"; make_entries "$tmp/projA2"; make_entries "$tmp/projB"
+  local reg="$tmp/registry"
+  printf '# my projects\nprojB\t%s\n' "$tmp/projB" > "$reg"
+  MUADDIB_HERDR_REGISTRY="$reg" bash "$REGISTER" projA "$tmp/projA"  >/dev/null
+  MUADDIB_HERDR_REGISTRY="$reg" bash "$REGISTER" projA "$tmp/projA2" >/dev/null  # update
+  [ "$(awk '$1=="projA"' "$reg" | wc -l | tr -d ' ')" = "1" ] || {
+    echo "projA duplicated instead of updated:"; cat "$reg"; return 1; }
+  [ "$(awk '$1=="projA"{print $2}' "$reg")" = "$tmp/projA2" ] || {
+    echo "projA not updated to projA2:"; cat "$reg"; return 1; }
+  [ "$(awk '$1=="projB"{print $2}' "$reg")" = "$tmp/projB" ] || {
+    echo "projB entry was lost:"; cat "$reg"; return 1; }
+  grep -qx "# my projects" "$reg" || { echo "comment line lost:"; cat "$reg"; return 1; }
+}
+
+# A dir that isn't a muaddib checkout (no muaddib.sh) is rejected, and nothing is
+# written to the registry.
+test_register_rejects_non_checkout() {
+  local tmp="$1"
+  mkdir -p "$tmp/notcheckout"
+  local reg="$tmp/registry" rc
+  MUADDIB_HERDR_REGISTRY="$reg" bash "$REGISTER" bad "$tmp/notcheckout" >/dev/null 2>&1; rc=$?
+  [ "$rc" -ne 0 ] || { echo "expected non-zero for non-checkout dir"; return 1; }
+  [ -s "$reg" ] && { echo "registry must not gain an entry on rejection:"; cat "$reg"; return 1; }
+  return 0
+}
+
+# With no dir argument, the checkout defaults to the one the helper is invoked
+# from (bin/..), so `./bin/herdr-register.sh name` works from inside a checkout.
+test_register_defaults_to_own_checkout() {
+  local tmp="$1"
+  make_entries "$tmp"                    # $tmp is now a checkout (has muaddib.sh)
+  mkdir -p "$tmp/bin"
+  cp "$REGISTER" "$tmp/bin/herdr-register.sh"; chmod +x "$tmp/bin/herdr-register.sh"
+  local reg="$tmp/registry"
+  MUADDIB_HERDR_REGISTRY="$reg" bash "$tmp/bin/herdr-register.sh" selfproj >/dev/null || {
+    echo "register exited non-zero"; return 1; }
+  [ "$(awk '$1=="selfproj"{print $2}' "$reg")" = "$tmp" ] || {
+    echo "expected default checkout $tmp:"; cat "$reg"; return 1; }
+}
+
+# A registry populated by the helper is consumed correctly by the dispatch
+# wrapper — the round trip the two scripts are meant to share.
+test_register_roundtrips_into_dispatch() {
+  local tmp="$1"
+  make_neutral_plugin "$tmp/plugin"
+  make_entries "$tmp/projA"
+  local reg="$tmp/registry"
+  MUADDIB_HERDR_REGISTRY="$reg" bash "$REGISTER" projA "$tmp/projA" >/dev/null
+  local out
+  out=$(printf 'QUO-77\n' | env MUADDIB_HERDR_REGISTRY="$reg" \
+          HERDR_PANE_CWD='' HERDR_CWD='' MUADDIB_DIR='' \
+          PATH="/usr/bin:/bin" bash "$tmp/plugin/dispatch-action.sh" plan)
+  echo "$out" | grep -q "DISPATCH muaddib-plan $tmp/projA QUO-77$" || {
+    echo "registered entry didn't drive a dispatch; got:"; echo "$out"; return 1; }
+}
+
 # Static: the manifest declares all three action ids and points at the wrapper.
 test_manifest_declares_actions() {
   local id
@@ -290,6 +362,11 @@ run_test "registry single entry (no prompt)" test_registry_single_entry
 run_test "registry picker selects by number and name" test_registry_prompt_selects
 run_test "unresolvable checkout errors with guidance" test_unresolvable_errors
 run_test "explicit MUADDIB_DIR override wins" test_explicit_override_wins
+run_test "register adds a new entry" test_register_adds_entry
+run_test "register updates in place, preserves others" test_register_updates_and_preserves
+run_test "register rejects a non-checkout dir" test_register_rejects_non_checkout
+run_test "register defaults to its own checkout" test_register_defaults_to_own_checkout
+run_test "register → dispatch round trip" test_register_roundtrips_into_dispatch
 run_test "manifest declares all actions" test_manifest_declares_actions
 run_test "wrapper is executable" test_wrapper_executable
 

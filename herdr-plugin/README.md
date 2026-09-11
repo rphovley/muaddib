@@ -95,7 +95,19 @@ therefore resolves the target checkout at dispatch time, in this priority order:
    Blank lines and `#` comments are ignored. **One** entry is used silently;
    **several** make the wrapper print a numbered picker — choose by number or by
    shortname, then it prompts for the ticket as usual. Adding a project is a
-   one-line edit; no re-link.
+   one-line edit; no re-link. Rather than hand-edit, use the helper (idempotent,
+   validates the path, keeps comments/other entries):
+
+   ```bash
+   # from inside a checkout — dir defaults to that checkout
+   ./bin/herdr-register.sh quotethat
+   # or point it anywhere
+   ./bin/herdr-register.sh otherproj /Users/you/src/otherproj
+   ```
+
+   `muaddib-onboard.sh` runs this for you when you onboard a new project (only if
+   herdr is on your PATH or you already have a registry — it won't create config
+   otherwise).
 4. **Legacy fallback** — the checkout this plugin is physically linked inside
    (`<checkout>/herdr-plugin/`). This is the original single-project behavior and
    what you get when you set up neither a pane hint nor a registry.
@@ -104,6 +116,54 @@ So, concretely, to drive several projects: either rely on the pane hint (nothing
 to configure, if your herdr passes pane CWD), or drop a couple of lines in the
 registry file and pick from the menu at dispatch time. You never link/unlink to
 switch projects.
+
+### Setting it up across projects you already have
+
+If you already have muaddib checked out in several projects on this machine
+(`quotethat`, another repo, …), you don't install the plugin per project — you
+link it **once** and register the checkouts:
+
+1. **Link the plugin once**, from any one of your checkouts (it's host-global
+   from then on):
+
+   ```bash
+   herdr plugin link ./muaddib/herdr-plugin --enabled
+   ```
+
+2. **Register each existing checkout** so the picker (and single-project silent
+   resolution) knows about them. From inside each checkout:
+
+   ```bash
+   ./bin/herdr-register.sh quotethat        # dir defaults to this checkout
+   ```
+
+   Or register them all in one sweep from wherever your projects live — this
+   finds every muaddib checkout and registers it under its parent repo's name:
+
+   ```bash
+   find ~/src -maxdepth 4 -name muaddib.sh -type f 2>/dev/null | while read -r m; do
+     dir="$(cd "$(dirname "$m")" && pwd)"
+     # Prefer the project's declared name. The manifest lives at the repo root —
+     # the checkout itself (self-hosted) or its parent (muaddib as a submodule).
+     name=""
+     for mf in "$dir/.muaddib/manifest.json" "$(dirname "$dir")/.muaddib/manifest.json"; do
+       [ -f "$mf" ] && name="$(jq -r '.projectName // empty' "$mf")" && [ -n "$name" ] && break
+     done
+     [ -n "$name" ] || name="$(basename "$dir")"   # fall back to the dir name
+     "$dir/bin/herdr-register.sh" "$name" "$dir"
+   done
+   ```
+
+   (Adjust `~/src` and the name rule to taste — the registry is just a text file
+   you can also edit by hand.)
+
+3. That's it. Invoke `muaddib-dispatch` from herdr and pick the project; new
+   projects you onboard later register themselves via `muaddib-onboard.sh`.
+
+If your herdr passes the active pane's directory to actions (see "Verifying on a
+real host"), you can skip step 2 entirely for day-to-day use — a dispatch just
+targets whatever project the pane is in. The registry is the portable fallback
+that works even when it doesn't.
 
 ## Verifying on a real host
 
