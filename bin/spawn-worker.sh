@@ -282,15 +282,28 @@ rm -f "$HERDR_PANE_FILE"
         _state=$(_parse_state "$_ev_line")
         [ -z "$_state" ] && continue
 
+        _notify_body="" _notify_mac_sound="" _notify_herdr_sound=""
         case "$_state" in
-            WAITING_FOR_INPUT) osascript -e "display notification \"Questions posted to Linear — needs your answers\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
-            BLOCKED)           osascript -e "display notification \"Waiting for your input\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
-            FEEDBACK)         osascript -e "display notification \"Preview live — waiting for feedback\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
-            FEEDBACK_WORKING) osascript -e "display notification \"Addressing PR feedback\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
-            AWAITING_REVIEW)   osascript -e "display notification \"A workflow step needs your input\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
-            DONE_FINAL)        osascript -e "display notification \"PR merged — preview torn down ✓\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
-            FAILED)            osascript -e "display notification \"Worker ${WORKER} failed — check muaddib/status/ logs, then teardown-worker.sh ${WORKER}\" with title \"muaddib: worker-${WORKER}\" sound name \"Basso\"" 2>/dev/null || true ;;
+            WAITING_FOR_INPUT) _notify_body="Questions posted to Linear — needs your answers" ; _notify_mac_sound="Glass" ; _notify_herdr_sound="request" ;;
+            BLOCKED)           _notify_body="Waiting for your input" ; _notify_mac_sound="Glass" ; _notify_herdr_sound="request" ;;
+            FEEDBACK)          _notify_body="Preview live — waiting for feedback" ; _notify_mac_sound="Glass" ; _notify_herdr_sound="request" ;;
+            FEEDBACK_WORKING)  _notify_body="Addressing PR feedback" ; _notify_mac_sound="Glass" ; _notify_herdr_sound="request" ;;
+            AWAITING_REVIEW)   _notify_body="A workflow step needs your input" ; _notify_mac_sound="Glass" ; _notify_herdr_sound="request" ;;
+            DONE_FINAL)        _notify_body="PR merged — preview torn down ✓" ; _notify_mac_sound="Glass" ; _notify_herdr_sound="done" ;;
+            FAILED)            _notify_body="Worker ${WORKER} failed — check muaddib/status/ logs, then teardown-worker.sh ${WORKER}" ; _notify_mac_sound="Basso" ; _notify_herdr_sound="request" ;;
         esac
+        if [ -n "$_notify_body" ]; then
+            # Native macOS banner — works from an interactive host dispatch
+            # regardless of whether herdr (or any terminal) is in view. A no-op
+            # (osascript isn't on PATH) when this watcher runs inside the
+            # dispatch container, same as before.
+            osascript -e "display notification \"${_notify_body}\" with title \"muaddib: worker-${WORKER}\" sound name \"${_notify_mac_sound}\"" 2>/dev/null || true
+            # herdr's own notification — the one path that also reaches a
+            # daemon-spawned worker, since osascript can't run in that
+            # container at all (see herdr_available in bin/herdr-exec.sh).
+            herdr_available && herdr_exec notification show "muaddib: worker-${WORKER}" \
+                --body "$_notify_body" --sound "$_notify_herdr_sound" >/dev/null 2>&1 || true
+        fi
 
         # Push the orchestrator's own (authoritative — not pane-text guesswork)
         # state to herdr, if a pane exists for this worker. herdr's report-agent
