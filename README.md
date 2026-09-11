@@ -610,8 +610,16 @@ herdr plugin link ./muaddib/herdr-plugin --enabled
 herdr plugin action invoke muaddib-dispatch      # or :plan / :fast variants
 ```
 
-See `muaddib/herdr-plugin/README.md` for the actions, install notes, and the
-manifest bits to confirm on your host during the first `herdr plugin link`.
+You link it **once** and it's available host-wide: `herdr plugin link`
+registers the actions with your herdr install (one per machine), so they show up
+in herdr's action UI from any pane regardless of the repo you're in. Each link
+is bound to the muaddib checkout you point it at, though — the action always
+dispatches into that checkout — so if you run several checkouts, link the one you
+want to drive (or link each under a distinct plugin `name`).
+
+See `muaddib/herdr-plugin/README.md` for the actions, install notes, the
+project-vs-global scope in full, and the manifest bits to confirm on your host
+during the first `herdr plugin link`.
 
 ## ⚠ Two things to verify by hand before scaling past N=1
 

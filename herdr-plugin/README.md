@@ -53,6 +53,30 @@ herdr plugin action invoke muaddib-dispatch-fast
 `--enabled` (or use `--disabled`) if you'd rather link it inactive and enable
 it later from herdr.
 
+## Scope — global to herdr, bound to one checkout
+
+Both halves of the answer matter, because they pull in opposite directions:
+
+- **Availability is global to your herdr install.** `herdr plugin link`
+  registers the plugin with the herdr host (there's one herdr per machine), so
+  once linked the three actions show up in herdr's action UI from **any** pane,
+  no matter which repo that pane happens to be sitting in. You don't re-link per
+  project, and you don't have to be "inside" muaddib to invoke a dispatch.
+- **But each link is bound to the one muaddib checkout you pointed it at.** The
+  wrapper resolves the checkout root *relative to its own location*
+  (`MUADDIB_DIR="$PLUGIN_DIR/.."` in `dispatch-action.sh`), so an action always
+  dispatches a worker into the checkout whose `herdr-plugin/` you linked —
+  regardless of your current pane's directory. The path you pass to
+  `herdr plugin link ./muaddib/herdr-plugin` is what decides that, permanently,
+  for that link.
+
+So: install it **once**, host-wide, and it's available everywhere in herdr — but
+it drives **one** muaddib checkout. If you keep several muaddib checkouts and
+want to dispatch into a specific one, link that checkout's `herdr-plugin/` (and,
+if you want more than one live at a time, give each a distinct `name` in its
+`herdr-plugin.toml` so their action ids don't collide). To repoint an existing
+link at a different checkout, unlink and re-link from the new path.
+
 ## Verifying on a real host
 
 herdr is a host-only macOS binary and isn't present in the muaddib worker
