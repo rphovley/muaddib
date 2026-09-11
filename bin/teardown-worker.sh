@@ -3,6 +3,7 @@
 set -euo pipefail
 FLEET_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "$FLEET_DIR/bin/read-config.sh"
+source "$FLEET_DIR/bin/herdr-exec.sh"
 WORKER="${1:?usage: teardown-worker.sh <worker-number>}"
 PROJECT="${MUADDIB_PROJECT_NAME}-w${WORKER}"
 
@@ -58,6 +59,13 @@ docker compose -p "$PROJECT" "${MUADDIB_COMPOSE_FILES[@]}" down -v
 # Remove env file (always).
 rm -f "$WORKER_ENV_FILE"
 
+# Close the worker's herdr pane, if spawn-worker.sh created one — a dead
+# tmux-attach command sitting in a pane after the container is gone isn't useful.
+HERDR_PANE="$(cat "$STATUS_DIR/worker-${WORKER}.herdr-pane" 2>/dev/null || true)"
+if [ -n "$HERDR_PANE" ] && herdr_available; then
+    herdr_exec pane close "$HERDR_PANE" >/dev/null 2>&1 || true
+fi
+
 if [ "$CURRENT_STATE" = "FAILED" ]; then
     TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
     DEST="$STATUS_DIR/failed/worker-${WORKER}-${TIMESTAMP}"
@@ -65,6 +73,7 @@ if [ "$CURRENT_STATE" = "FAILED" ]; then
     for f in \
         "worker-${WORKER}.state" \
         "worker-${WORKER}.events" \
+        "worker-${WORKER}.herdr-pane" \
         "worker-${WORKER}-branch.log" \
         "worker-${WORKER}-fetch-ticket.log" \
         "worker-${WORKER}-servers.log" \
@@ -78,6 +87,7 @@ if [ "$CURRENT_STATE" = "FAILED" ]; then
 else
     rm -f "$STATUS_DIR/worker-${WORKER}.state" \
         "$STATUS_DIR/worker-${WORKER}.events" \
+        "$STATUS_DIR/worker-${WORKER}.herdr-pane" \
         "$STATUS_DIR/worker-${WORKER}-branch.log" \
         "$STATUS_DIR/worker-${WORKER}-fetch-ticket.log" \
         "$STATUS_DIR/worker-${WORKER}-servers.log" \

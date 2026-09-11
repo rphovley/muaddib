@@ -471,16 +471,18 @@ async function trySpawn(entry) {
     stderr += d.toString();
   });
 
-  // If spawn-worker.sh exits non-zero at any point, the container never started
-  // successfully — unmark so the next webhook event can retry.
-  proc.once("exit", (code) => {
-    if (code !== 0 && code !== null) {
-      unmarkDispatched(entry.ticketId);
-      log(
-        `${entry.ticketId}: spawn-worker.sh failed (exit ${code}) — unmarked, will retry on next event` +
-          (stderr.trim() ? `\n${stderr.trim()}` : ""),
-      );
-    }
+  // If spawn-worker.sh exits non-zero OR is killed by a signal, the container
+  // never started successfully — unmark so the next webhook event can retry.
+  // A signal-killed process reports code:null (Node convention), which the old
+  // `code !== 0 && code !== null` check let through silently, leaving the
+  // ticket permanently stuck "dispatched" with no worker ever created.
+  proc.once("exit", (code, signal) => {
+    if (code === 0) return;
+    unmarkDispatched(entry.ticketId);
+    log(
+      `${entry.ticketId}: spawn-worker.sh failed (exit ${code}${signal ? `, signal ${signal}` : ""}) — unmarked, will retry on next event` +
+        (stderr.trim() ? `\n${stderr.trim()}` : ""),
+    );
   });
 
   proc.unref();

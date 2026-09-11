@@ -14,6 +14,7 @@ FLEET_DIR="$(cd "$BIN_DIR/.." && pwd)"
 source "$FLEET_DIR/bin/read-config.sh"
 source "$FLEET_DIR/bin/image-needs-rebuild.sh"
 source "$FLEET_DIR/bin/worker-alloc.sh"
+source "$FLEET_DIR/bin/herdr-exec.sh"
 cd "$FLEET_DIR"
 
 # When spawn-worker.sh is called from inside the dispatch Docker container
@@ -251,6 +252,13 @@ echo "✓ Worker ${WORKER} up and READY."
 # Events-file watcher: tails the JSONL event bus written by the orchestrator
 # inside the container.
 EVENTS_FILE="$FLEET_DIR/status/worker-${WORKER}.events"
+# Written by the herdr integration below, once (and if) it creates a pane for
+# this worker — the watcher starts before that block runs, so it re-reads this
+# file per-event rather than capturing a pane id up front. Absent/empty simply
+# means herdr isn't in play for this worker; reporting is skipped, nothing else
+# in the watcher depends on it.
+HERDR_PANE_FILE="$FLEET_DIR/status/worker-${WORKER}.herdr-pane"
+rm -f "$HERDR_PANE_FILE"
 (
     # Wait up to 60 s for the events file to appear (created at first orchestrator emit).
     for _i in $(seq 1 60); do
@@ -274,15 +282,47 @@ EVENTS_FILE="$FLEET_DIR/status/worker-${WORKER}.events"
         _state=$(_parse_state "$_ev_line")
         [ -z "$_state" ] && continue
 
+        _notify_body="" _notify_mac_sound="" _notify_herdr_sound=""
         case "$_state" in
-            WAITING_FOR_INPUT) osascript -e "display notification \"Questions posted to Linear — needs your answers\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
-            BLOCKED)           osascript -e "display notification \"Waiting for your input\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
-            FEEDBACK)         osascript -e "display notification \"Preview live — waiting for feedback\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
-            FEEDBACK_WORKING) osascript -e "display notification \"Addressing PR feedback\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
-            AWAITING_REVIEW)   osascript -e "display notification \"A workflow step needs your input\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
-            DONE_FINAL)        osascript -e "display notification \"PR merged — preview torn down ✓\" with title \"muaddib: worker-${WORKER}\" sound name \"Glass\"" 2>/dev/null || true ;;
-            FAILED)            osascript -e "display notification \"Worker ${WORKER} failed — check muaddib/status/ logs, then teardown-worker.sh ${WORKER}\" with title \"muaddib: worker-${WORKER}\" sound name \"Basso\"" 2>/dev/null || true ;;
+            WAITING_FOR_INPUT) _notify_body="Questions posted to Linear — needs your answers" ; _notify_mac_sound="Glass" ; _notify_herdr_sound="request" ;;
+            BLOCKED)           _notify_body="Waiting for your input" ; _notify_mac_sound="Glass" ; _notify_herdr_sound="request" ;;
+            FEEDBACK)          _notify_body="Preview live — waiting for feedback" ; _notify_mac_sound="Glass" ; _notify_herdr_sound="request" ;;
+            FEEDBACK_WORKING)  _notify_body="Addressing PR feedback" ; _notify_mac_sound="Glass" ; _notify_herdr_sound="request" ;;
+            AWAITING_REVIEW)   _notify_body="A workflow step needs your input" ; _notify_mac_sound="Glass" ; _notify_herdr_sound="request" ;;
+            DONE_FINAL)        _notify_body="PR merged — preview torn down ✓" ; _notify_mac_sound="Glass" ; _notify_herdr_sound="done" ;;
+            FAILED)            _notify_body="Worker ${WORKER} failed — check muaddib/status/ logs, then teardown-worker.sh ${WORKER}" ; _notify_mac_sound="Basso" ; _notify_herdr_sound="request" ;;
         esac
+        if [ -n "$_notify_body" ]; then
+            # Native macOS banner — works from an interactive host dispatch
+            # regardless of whether herdr (or any terminal) is in view. A no-op
+            # (osascript isn't on PATH) when this watcher runs inside the
+            # dispatch container, same as before.
+            osascript -e "display notification \"${_notify_body}\" with title \"muaddib: worker-${WORKER}\" sound name \"${_notify_mac_sound}\"" 2>/dev/null || true
+            # herdr's own notification — the one path that also reaches a
+            # daemon-spawned worker, since osascript can't run in that
+            # container at all (see herdr_available in bin/herdr-exec.sh).
+            herdr_available && herdr_exec notification show "muaddib: worker-${WORKER}" \
+                --body "$_notify_body" --sound "$_notify_herdr_sound" >/dev/null 2>&1 || true
+        fi
+
+        # Push the orchestrator's own (authoritative — not pane-text guesswork)
+        # state to herdr, if a pane exists for this worker. herdr's report-agent
+        # only accepts idle|working|blocked|unknown, so orchestrator states that
+        # mean "needs a human" collapse to blocked; states that mean "still going"
+        # collapse to working; finished/idle states collapse to idle. FAILED maps
+        # to blocked too — it needs a human, same as an approval/question would.
+        _herdr_pane="$(cat "$HERDR_PANE_FILE" 2>/dev/null || true)"
+        if [ -n "$_herdr_pane" ] && herdr_available; then
+            case "$_state" in
+                RUNNING|FEEDBACK_WORKING)                       _herdr_state=working ;;
+                WAITING_FOR_INPUT|BLOCKED|FEEDBACK|AWAITING_REVIEW|FAILED) _herdr_state=blocked ;;
+                READY|DONE|DONE_FINAL)                          _herdr_state=idle ;;
+                *)                                               _herdr_state="" ;;
+            esac
+            [ -n "$_herdr_state" ] && herdr_exec pane report-agent "$_herdr_pane" \
+                --source muaddib-worker --agent claude --state "$_herdr_state" \
+                --message "$_state" >/dev/null 2>&1 || true
+        fi
 
         case "$_state" in
             DONE|DONE_FINAL)
@@ -300,6 +340,87 @@ EVENTS_FILE="$FLEET_DIR/status/worker-${WORKER}.events"
 ) &
 disown $!
 
+# Switch to the most recently created window (current job) before attaching, so
+# whoever looks at this session lands on the Claude session, not the base shell.
+docker exec "${WORKER_CID}" tmux select-window -t "w${WORKER}:{end}" 2>/dev/null || true
+
+# Herdr integration (optional): if herdr is available, land the worker's
+# session in its own herdr tab instead of blocking this terminal — dispatch
+# stays free for the next command. The target workspace is resolved by LABEL
+# (defaulting to the project name — override with MUADDIB_HERDR_LABEL), never a
+# stored ID: herdr workspace IDs are assigned per server session and are not
+# expected to survive a herdr restart, so pinning one in a dotfile would
+# silently go stale. Looked up fresh on every dispatch, created on first use if
+# it doesn't exist yet — no setup step. Falls straight through to the
+# direct-attach path below on any failure (herdr not running, unexpected
+# response shape, etc.), so an unavailable herdr never changes existing
+# behavior.
+#
+# "Available" (herdr_available, bin/herdr-exec.sh) means either the real
+# binary is on PATH (host/interactive dispatch) or the host-side bridge
+# directory is mounted in (dispatch-daemon container — see herdr-bridge.sh for
+# why the container can't just call the binary itself). herdr_exec picks
+# whichever applies transparently.
+#
+# Deliberately NOT gated on MUADIB_NO_ATTACH: that flag exists so a programmatic
+# caller (fleet-control.js, the dispatch daemon) never gets wedged by the
+# blocking direct `tmux attach` further below — see fleet-control.js's spawn().
+# herdr pane creation is async either way (`pane run` fires the command into a
+# separate pane and returns immediately), so it never blocks the caller and
+# should run for daemon-spawned workers too, not just interactive dispatch —
+# that's what gives every in-flight worker a herdr pane without anyone having to
+# attach first.
+if herdr_available; then
+    HERDR_LABEL="${MUADDIB_HERDR_LABEL:-$MUADDIB_PROJECT_NAME}"
+    WORKSPACE_ID="$(herdr_exec workspace list 2>/dev/null \
+        | jq -r --arg want "$HERDR_LABEL" \
+            '(.result.workspaces // [])[] | select(.label==$want) | .workspace_id' 2>/dev/null \
+        | head -1)"
+
+    # No existing workspace for this project — create one. Creating a workspace
+    # also creates one starter tab/pane (herdr's own behavior, not ours); reuse
+    # THAT pane for worker 1 instead of leaving it blank and opening a second tab
+    # via `tab create` below.
+    PANE_ID=""
+    if [ -z "$WORKSPACE_ID" ]; then
+        WS_JSON="$(herdr_exec workspace create --label "$HERDR_LABEL" --no-focus 2>/dev/null || true)"
+        WORKSPACE_ID="$(printf '%s' "$WS_JSON" | jq -r '.result.workspace.workspace_id // empty' 2>/dev/null)"
+        PANE_ID="$(printf '%s' "$WS_JSON" | jq -r '.result.root_pane.pane_id // empty' 2>/dev/null)"
+        STARTER_TAB_ID="$(printf '%s' "$WS_JSON" | jq -r '.result.tab.tab_id // empty' 2>/dev/null)"
+        [ -n "$STARTER_TAB_ID" ] && herdr_exec tab rename "$STARTER_TAB_ID" "w${WORKER}" >/dev/null 2>&1 || true
+    fi
+
+    if [ -n "$WORKSPACE_ID" ] && [ -z "$PANE_ID" ]; then
+        TAB_JSON="$(herdr_exec tab create --workspace "$WORKSPACE_ID" --label "w${WORKER}" --no-focus 2>/dev/null || true)"
+        PANE_ID="$(printf '%s' "$TAB_JSON" | jq -r '.result.root_pane.pane_id // empty' 2>/dev/null || true)"
+    fi
+
+    if [ -n "$PANE_ID" ] \
+        && herdr_exec pane run "$PANE_ID" "docker exec -it ${WORKER_CID} tmux attach -t w${WORKER}" >/dev/null 2>&1; then
+        herdr_exec pane report-metadata "$PANE_ID" --source muaddib-worker --title "w${WORKER}: ${TASK:0:60}" >/dev/null 2>&1 || true
+        # Seed an initial state directly — don't rely on the events watcher to
+        # observe this. By the time this line runs, the worker has already passed
+        # its own READY/RUNNING check (that's what let spawn-worker.sh get this
+        # far), so that transition is already sitting in EVENTS_FILE. The watcher
+        # below tails with `-n 0` (deliberately skips backlog, so a re-attach
+        # doesn't replay old events) and starts AFTER this point, so it can never
+        # observe an event that landed before it attached — the very first
+        # state_changed transition is always in that backlog. Without this seed, a
+        # worker that finishes cleanly without ever hitting a later distinct state
+        # (WAITING_FOR_INPUT/BLOCKED/FEEDBACK/DONE/FAILED) would sit at herdr's
+        # default "unknown" agent_status for its entire run.
+        herdr_exec pane report-agent "$PANE_ID" --source muaddib-worker --agent claude --state working --message RUNNING >/dev/null 2>&1 || true
+        # Let the events-file watcher (already running in the background, started
+        # above) find this pane so it can push state via `herdr pane report-agent`.
+        printf '%s' "$PANE_ID" >"$HERDR_PANE_FILE"
+        echo "  Worker ${WORKER} attached in herdr (workspace \"${HERDR_LABEL}\", pane ${PANE_ID})."
+        echo "  Re-attach: ./bin/attach.sh ${WORKER}  ·  Monitor: ./bin/attend.sh  ·  Stop: ./bin/teardown-worker.sh ${WORKER}"
+        echo "  Sketch (UI/UX prototyping): when the agent opens one, view it at http://localhost:${SKETCH_PORT}"
+        exit 0
+    fi
+    echo "  (herdr unavailable or tab creation failed — falling back to direct attach)" >&2
+fi
+
 # Drop straight into the agent's interactive session when we have a terminal.
 # Ctrl-b then d detaches and leaves the worker running. Opt out with
 # MUADIB_NO_ATTACH=1 (e.g. when fire-and-forging several workers from a script).
@@ -307,9 +428,6 @@ if [ "${MUADIB_NO_ATTACH:-0}" != "1" ] && [ -t 0 ] && [ -t 1 ]; then
     echo "  Attaching — Ctrl-b then d to detach (worker keeps running)."
     echo "  Re-attach: ./bin/attach.sh ${WORKER}  ·  Monitor: ./bin/attend.sh  ·  Stop: ./bin/teardown-worker.sh ${WORKER}"
     echo "  Sketch (UI/UX prototyping): when the agent opens one, view it at http://localhost:${SKETCH_PORT}"
-    # Switch to the most recently created window (current job) before attaching,
-    # so the user lands on the Claude session rather than the base shell window.
-    docker exec "${WORKER_CID}" tmux select-window -t "w${WORKER}:{end}" 2>/dev/null || true
     docker exec -it "${WORKER_CID}" tmux attach -t "w${WORKER}" || true
     # Restore terminal state — tmux may not have sent its cleanup sequences if the
     # container was killed before the PTY flushed (leaves mouse tracking active).

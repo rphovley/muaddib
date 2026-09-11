@@ -33,6 +33,14 @@ services:
       # so per-worker env files would land inside the ephemeral container — invisible
       # to the host teardown scripts. /dispatch-state is bind-mounted from the host.
       MUADDIB_ACCOUNT_DIR: /dispatch-state
+      # herdr integration (see bin/herdr-exec.sh + bin/herdr-bridge.sh): herdr
+      # is a host-only macOS binary/socket, unreachable from this Linux
+      # container. spawn-worker.sh falls back to dropping request files here
+      # when `herdr` isn't on its PATH; dispatch.sh starts herdr-bridge.sh on
+      # the host to service them. Harmless if the host has no herdr — the
+      # directory just never gets created and the fallback in herdr-exec.sh's
+      # herdr_available check fails closed, same as today.
+      MUADDIB_HERDR_BRIDGE_DIR: /dispatch-state/herdr-bridge
       # HOST_FLEET_DIR: real path of muaddib/ on the host machine.
       # When spawn-worker.sh calls `docker compose` from inside this container,
       # Docker resolves volume mounts against the HOST filesystem, not the
