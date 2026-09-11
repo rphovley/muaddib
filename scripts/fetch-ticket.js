@@ -48,9 +48,15 @@ function extractIdentifier(task, sourceKind = 'linear') {
     // GitHub issue URL as the whole argument: https://github.com/owner/repo/issues/36
     const urlMatch = stripped.match(/^https?:\/\/\S*\/issues\/(\d+)(?:[/?#]\S*)?$/);
     if (urlMatch) return urlMatch[1];
-    // Else a bare "36" or "#36" — github.js's issueNumber() tolerates '#'/'repo#',
-    // so a bare number token is all the generic backend needs.
-    const bareMatch = stripped.match(/^#?(\d+)$/);
+    // Else a bare "36", "#36", or "repo#36" — the last is what the dispatch
+    // daemon's own ticketId (services/ticket-source/github.js's `identifier:
+    // repo#number`) looks like, e.g. self-hosted dispatch passing TASK as
+    // "/muaddib muaddib#144". github.js's issueNumber() tolerates all three
+    // shapes for its OWN callers, but that only helps once something has
+    // already handed it an identifier — this is the extraction step that
+    // produces one in the first place, so it needs the same tolerance itself,
+    // not just a bare number/# case.
+    const bareMatch = stripped.match(/^(?:[^#\s]*#)?(\d+)$/);
     if (bareMatch) return bareMatch[1];
     return null;
   }

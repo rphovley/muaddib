@@ -144,6 +144,13 @@ assert(
   extractIdentifier('#36', 'github') === '36'
 );
 assert(
+  // services/ticket-source/github.js's `identifier: repo#number` shape — what
+  // the dispatch daemon's own ticketId (and self-hosted dispatch's TASK
+  // string) looks like, e.g. "muaddib#144".
+  "github: strips a 'repo#' prefix",
+  extractIdentifier('muaddib#144', 'github') === '144'
+);
+assert(
   'github: returns null for a Linear-shaped id',
   extractIdentifier('QUO-7', 'github') === null
 );
@@ -157,6 +164,12 @@ assert(
 assert(
   "github: finds a '#'-prefixed number after a /muaddib prefix",
   extractIdentifier('/muaddib #36', 'github') === '36'
+);
+assert(
+  // The exact shape self-hosted dispatch sends: dispatch-daemon.js spawns
+  // spawn-worker.sh with TASK = "/muaddib muaddib#144".
+  "github: finds a 'repo#'-prefixed number after a /muaddib prefix",
+  extractIdentifier('/muaddib muaddib#144', 'github') === '144'
 );
 assert(
   // The whole point of stripping the prefix instead of scanning past it: a
