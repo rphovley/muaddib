@@ -101,7 +101,7 @@ SESSION="w${WORKER_INDEX}"
 # server starts. ~/.tmux.conf sources this file (source-file -q), so both the
 # task-mode and interactive `new-session` calls below inherit the rebind. Writing
 # it fresh (`>`, never append) guarantees a manifest change or restart never leaves
-# a stale binding behind. See read-config.sh's MUADDIB_TMUX_PREFIX (default "C-a")
+# a stale binding behind. See read-config.sh's MUADDIB_TMUX_PREFIX (default "C-w")
 # for why: herdr's outer pane also uses C-b, so the nested session needs a
 # non-colliding prefix.
 cat > /home/worker/.tmux-prefix.conf <<EOF

@@ -175,7 +175,7 @@ async function testTmuxPrefixAbsentOk() {
   const m = validManifest(); // validManifest() omits tmuxPrefix
   assert(m.tmuxPrefix === undefined, 'baseline manifest should omit tmuxPrefix');
   const res = validateManifest(m);
-  assert(res.ok, `absent tmuxPrefix should pass (defaults to "C-a" downstream), got: ${res.errors.join('; ')}`);
+  assert(res.ok, `absent tmuxPrefix should pass (defaults to "C-w" downstream), got: ${res.errors.join('; ')}`);
 }
 
 async function testTmuxPrefixValid() {

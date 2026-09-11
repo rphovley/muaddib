@@ -191,10 +191,10 @@ pane and never reaches the nested session, breaking tmux window/pane navigation.
 (tmux key notation) to resolve the collision per-project:
 
 ```json
-"tmuxPrefix": "C-a"
+"tmuxPrefix": "C-w"
 ```
 
-It defaults to `"C-a"` when the key is absent, so existing manifests get a
+It defaults to `"C-w"` when the key is absent, so existing manifests get a
 non-colliding prefix with zero config. `read-config.sh` exports it as
 `MUADDIB_TMUX_PREFIX`; `worker-entrypoint.sh` materializes the actual binding into
 `~/.tmux-prefix.conf` (rewritten fresh on every boot) before the tmux server
@@ -561,8 +561,8 @@ npm run muaddib -- --raw "investigate QUO-123 regression"   # treat as task text
 
 The agent runs in a detached **tmux session inside the container**. `npm run
 muaddib` attaches you to it automatically once it's ready, so you can watch it work
-and answer `/grill-me`. **`C-a d`** detaches and leaves the worker running (the
-inner prefix defaults to `C-a` — see [Inner tmux prefix](#inner-tmux-prefix)).
+and answer `/grill-me`. **`C-w d`** detaches and leaves the worker running (the
+inner prefix defaults to `C-w` — see [Inner tmux prefix](#inner-tmux-prefix)).
 
 - Re-attach (or attach a different worker): `npm run muaddib:attach 1` (or `./muaddib/bin/attach.sh 1`)
 - Monitor all workers at a glance: `./muaddib/bin/attend.sh` — bells when one is `BLOCKED` or `FAILED`
@@ -570,7 +570,7 @@ inner prefix defaults to `C-a` — see [Inner tmux prefix](#inner-tmux-prefix)).
 - Fire-and-forget (don't auto-attach): `MUADIB_NO_ATTACH=1 npm run muaddib <ticket>`
 
 `bin/attend.sh` is only a status board — the actual back-and-forth happens in the
-attached session. Typical fleet flow: spawn a worker (auto-attach, glance, `C-a
+attached session. Typical fleet flow: spawn a worker (auto-attach, glance, `C-w
 d`), spawn the next, keep `bin/attend.sh` open in another pane, and `bin/attach.sh <n>`
 whichever it flags.
 
