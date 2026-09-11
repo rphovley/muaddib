@@ -96,6 +96,16 @@ export MUADDIB_PORT_API MUADDIB_PORT_DB MUADDIB_PORT_SKETCH
 MUADDIB_MODEL="$(jq -r '.model // empty' "$_MUADDIB_CONFIG")"
 export MUADDIB_MODEL
 
+# Inner tmux prefix key. Operators increasingly attach through herdr, which wraps
+# each worker's tmux session in its own host-side pane; herdr and tmux both default
+# to the `C-b` prefix, so `C-b` is swallowed by herdr's outer pane and never reaches
+# the nested tmux session. Let each project rebind the inner prefix here. Default
+# "C-a" (jq's `//`) so a missing field still yields a non-colliding prefix — existing
+# manifests get the fix with zero config. worker-entrypoint.sh materializes the
+# actual tmux binding from this before any tmux server starts.
+MUADDIB_TMUX_PREFIX="$(jq -r '.tmuxPrefix // "C-a"' "$_MUADDIB_CONFIG")"
+export MUADDIB_TMUX_PREFIX
+
 # Ticket backend selection. Committed in the manifest so a project *declares* its
 # backend instead of relying on an ad-hoc TICKET_SOURCE env var (which still wins
 # as an override where it's forwarded — see spawn-worker.sh). Default "linear"

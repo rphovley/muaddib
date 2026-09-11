@@ -180,6 +180,27 @@ as an issue number. `muaddib.sh --raw` (and its thin alias `muaddib-task.sh`)
 skips detection and forces `raw`, for task text that could itself look like a
 ticket reference (e.g. free-form text containing `QUO-123`).
 
+## Inner tmux prefix
+
+Each worker runs Claude Code inside tmux. Operators increasingly attach through
+herdr, which wraps a worker's tmux session in its own host-side pane — and herdr
+and tmux both default to the `C-b` prefix, so `C-b` is swallowed by herdr's outer
+pane and never reaches the nested session, breaking tmux window/pane navigation.
+
+`.muaddib/manifest.json`'s optional `tmuxPrefix` rebinds the *inner* tmux prefix
+(tmux key notation) to resolve the collision per-project:
+
+```json
+"tmuxPrefix": "C-a"
+```
+
+It defaults to `"C-a"` when the key is absent, so existing manifests get a
+non-colliding prefix with zero config. `read-config.sh` exports it as
+`MUADDIB_TMUX_PREFIX`; `worker-entrypoint.sh` materializes the actual binding into
+`~/.tmux-prefix.conf` (rewritten fresh on every boot) before the tmux server
+starts, and `~/.tmux.conf` sources that file. `validate-manifest.js` requires a
+present value to be a non-empty, whitespace-free token.
+
 ## Context source config
 
 Beyond the ticket backend, a project can declare the *other* sources of truth
@@ -540,7 +561,8 @@ npm run muaddib -- --raw "investigate QUO-123 regression"   # treat as task text
 
 The agent runs in a detached **tmux session inside the container**. `npm run
 muaddib` attaches you to it automatically once it's ready, so you can watch it work
-and answer `/grill-me`. **Ctrl-b then d** detaches and leaves the worker running.
+and answer `/grill-me`. **`C-a d`** detaches and leaves the worker running (the
+inner prefix defaults to `C-a` — see [Inner tmux prefix](#inner-tmux-prefix)).
 
 - Re-attach (or attach a different worker): `npm run muaddib:attach 1` (or `./muaddib/bin/attach.sh 1`)
 - Monitor all workers at a glance: `./muaddib/bin/attend.sh` — bells when one is `BLOCKED` or `FAILED`
@@ -548,8 +570,8 @@ and answer `/grill-me`. **Ctrl-b then d** detaches and leaves the worker running
 - Fire-and-forget (don't auto-attach): `MUADIB_NO_ATTACH=1 npm run muaddib <ticket>`
 
 `bin/attend.sh` is only a status board — the actual back-and-forth happens in the
-attached session. Typical fleet flow: spawn a worker (auto-attach, glance, Ctrl-b
-d), spawn the next, keep `bin/attend.sh` open in another pane, and `bin/attach.sh <n>`
+attached session. Typical fleet flow: spawn a worker (auto-attach, glance, `C-a
+d`), spawn the next, keep `bin/attend.sh` open in another pane, and `bin/attach.sh <n>`
 whichever it flags.
 
 Lower-level controls (run from `muaddib/`):

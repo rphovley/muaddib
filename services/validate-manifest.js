@@ -196,6 +196,18 @@ function validateManifest(config, opts = {}) {
     }
   }
 
+  // tmuxPrefix — optional inner-tmux prefix key (tmux key notation, e.g. "C-a").
+  // read-config.sh defaults it to "C-a" when absent, so omitting it is fine. When
+  // present it must be a non-empty string with no whitespace — tmux key notation is
+  // a single token (`C-a`, `M-x`), and worker-entrypoint.sh interpolates it straight
+  // into a `set -g prefix <value>` line, so a whitespace-bearing value would corrupt
+  // that binding. Fail loud on a bad shape, matching how ticketSource rejects a typo.
+  if (config.tmuxPrefix != null && !(isNonEmptyString(config.tmuxPrefix) && !/\s/.test(config.tmuxPrefix))) {
+    errors.push(
+      `"tmuxPrefix" must be a non-empty string with no whitespace (tmux key notation, e.g. "C-a"), got ${JSON.stringify(config.tmuxPrefix)}`
+    );
+  }
+
   // projects[] — start-servers.js and dispatch-daemon.js both need at least one.
   if (!Array.isArray(config.projects) || config.projects.length === 0) {
     errors.push('missing "projects" — needs at least one { name, path, checkCommand }');
