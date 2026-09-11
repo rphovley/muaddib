@@ -4,10 +4,21 @@
 #   docker build -f muaddib/Dockerfile.base -t muaddib-base:latest .
 FROM node:22-bookworm-slim
 
-# Toolchain: git (clone/push), tmux (attachable session), jq (orchestrate.sh),
+# Toolchain: git (clone/push), tmux (attachable session — installed from
+# bookworm-backports below for OSC-8 hyperlink passthrough), jq (orchestrate.sh),
 # psql client, ps (hooks/debug), wget (gh repo key), openssh-client (localhost.run fallback).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git tmux jq ca-certificates postgresql-client procps wget openssh-client \
+        git jq ca-certificates postgresql-client procps wget openssh-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# tmux from bookworm-backports (>=3.4). Bookworm's default tmux is 3.3a, which
+# silently drops OSC-8 hyperlink escapes instead of forwarding them; herdr needs
+# the >=3.4 `terminal-features ...:hyperlinks` passthrough to keep links clickable.
+# Scope the backports repo to tmux only so other packages resolve against stable.
+RUN echo "deb http://deb.debian.org/debian bookworm-backports main" \
+        > /etc/apt/sources.list.d/backports.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends -t bookworm-backports tmux \
     && rm -rf /var/lib/apt/lists/*
 
 # GitHub CLI — muaddib opens PRs via `gh` (auto-auths from GITHUB_TOKEN).
