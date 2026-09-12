@@ -98,6 +98,36 @@ MERGED_SKILLS="$FLEET_DIR/status/.skills-${WORKER}"
 rm -rf "$MERGED_SKILLS" && mkdir -p "$MERGED_SKILLS"
 [ -d "$CLAUDE_SKILLS_DIR" ] && cp -r "$CLAUDE_SKILLS_DIR/." "$MERGED_SKILLS/"
 cp -r "$FLEET_DIR/claude/skills/." "$MERGED_SKILLS/"
+
+# `cp -r SRC/. DST` exits 0 even when SRC is transiently empty (a concurrent
+# git/submodule op on this shared tree, a bind-mount consistency lag) — under
+# `set -e` that silent no-op never surfaces as a failure, so a worker can boot
+# fully "successfully" with zero skills and every "/skill" invocation for its
+# entire run then fails with "Unknown command" (QUO-543 postmortem: no error,
+# no daemon log, hours of work with none of the fleet skills ever loaded).
+# Verify the copy actually landed the expected skills before going any
+# further, and dump enough state to diagnose the source-side race if it
+# recurs — this check is the only thing that will have caught it.
+FLEET_SKILL_COUNT=$(find "$FLEET_DIR/claude/skills" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+MERGED_SKILL_COUNT=$(find "$MERGED_SKILLS" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+if [ "$MERGED_SKILL_COUNT" -eq 0 ] || [ "$MERGED_SKILL_COUNT" -lt "$FLEET_SKILL_COUNT" ]; then
+    {
+        echo "✗ Skill provisioning failed for worker ${WORKER}: expected ${FLEET_SKILL_COUNT} fleet skill(s)"
+        echo "  from ${FLEET_DIR}/claude/skills but only ${MERGED_SKILL_COUNT} landed in ${MERGED_SKILLS}."
+        echo "  cp -r did not error — its source read as empty or partial at copy time. Diagnostics:"
+        echo "  --- ls -la \$FLEET_DIR/claude/skills ---"
+        ls -la "$FLEET_DIR/claude/skills" 2>&1
+        echo "  --- ls -la \$MERGED_SKILLS ---"
+        ls -la "$MERGED_SKILLS" 2>&1
+        echo "  --- git -C \$FLEET_DIR status --short ---"
+        git -C "$FLEET_DIR" status --short 2>&1
+        echo "  --- git -C \$FLEET_DIR log -1 --format='%H %ci %s' ---"
+        git -C "$FLEET_DIR" log -1 --format='%H %ci %s' 2>&1
+        echo "  Aborting before docker compose up — no half-provisioned worker will be created."
+    } >&2
+    exit 1
+fi
+
 # Use the host-side path so docker compose mounts the right directory on the host.
 CLAUDE_SKILLS_DIR="$HOST_FLEET_DIR/status/.skills-${WORKER}"
 
