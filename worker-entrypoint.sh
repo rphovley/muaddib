@@ -110,6 +110,43 @@ unbind C-b
 bind ${MUADDIB_TMUX_PREFIX} send-prefix
 EOF
 
+# --- resolve lavish bind host (tested by scripts/test-lavish-bind.sh) ---------
+# lavish-axi (the sketch review loop) refuses to bind a wildcard address and
+# silently downgrades any 0.0.0.0 request to 127.0.0.1, which Docker's port
+# publish (${WORKER_SKETCH_PORT}:4387 in docker-compose.worker.yml) can't reach
+# through the container's network namespace — the operator gets ERR_CONNECTION_RESET.
+# Bind lavish to the container's own routable IPv4 (a specific, non-wildcard
+# address lavish accepts, and exactly what the port publish DNATs to) so the
+# published sketch port works. Exported before the task/interactive branch so
+# every descendant — orchestrator, job, `claude`, `npx lavish-axi` — inherits it
+# in both modes. The operator-facing URL still uses `localhost`; lavish's
+# Host-header allow list always includes localhost.
+#
+# Prefer `ip route get`: it reports the source IPv4 the kernel actually uses to
+# leave the container, i.e. the address the port publish forwards to. Avoid
+# `hostname -i` — it's unreliable in a container, often printing 127.0.1.1 (from
+# /etc/hosts) or an IPv6 address first, either of which silently reintroduces the
+# unreachable-bind bug. Fall back only to the IPv4-only `hostname -I`.
+LAVISH_AXI_HOST="$(ip -4 route get 1 2>/dev/null \
+    | awk '{for (i = 1; i <= NF; i++) if ($i == "src") { print $(i + 1); exit }}')"
+if [ -z "$LAVISH_AXI_HOST" ]; then
+    LAVISH_AXI_HOST="$(hostname -I 2>/dev/null | tr ' ' '\n' \
+        | grep -Ev '^(127\.|169\.254\.)' | grep -E '^[0-9]+(\.[0-9]+){3}$' | head -1)"
+fi
+# Fail loud (per commit 3c00882) rather than export an empty / loopback / IPv6
+# value that would silently downgrade lavish back to an unreachable bind. Note a
+# bare `export LAVISH_AXI_HOST="$(...)"` would let `set -e` mask a failed
+# resolution (the assignment's status is the substitution's, but export is a
+# special builtin), so resolve into the variable first, then validate explicitly.
+case "$LAVISH_AXI_HOST" in
+    ""|127.*|0.0.0.0|::1|*:*)
+        echo "✗ could not resolve a routable IPv4 for LAVISH_AXI_HOST (got '${LAVISH_AXI_HOST:-<empty>}')" >&2
+        exit 1 ;;
+esac
+export LAVISH_AXI_HOST
+echo "→ LAVISH_AXI_HOST=$LAVISH_AXI_HOST"
+# --- end resolve lavish bind host ---------------------------------------------
+
 if [ -n "${TASK:-}" ]; then
     # Task mode: hand off to the orchestrator. Create a bare tmux session for
     # job windows, then exec the orchestrator as the container's main process.

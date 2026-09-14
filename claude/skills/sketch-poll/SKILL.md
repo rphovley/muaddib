@@ -13,14 +13,20 @@ decide what happens next" looping.
 
 `$ARGUMENTS` is the ticket identifier (source-neutral — Linear, GitHub, or raw).
 
-## Step 0 — Print the review URL before blocking
+## Step 0 — Surface the review URL before blocking
 
 This step's window is the one the operator lands on — and the poll below
-blocks *silently*, so if we don't print the URL here it appears nowhere on
-screen (it only lives in the earlier `sketch` step's now-closed window, the
-ticket @mention, the macOS notify, and worker state). Echo the recorded
-`sketch_url` as a banner so it's always visible no matter when the operator
-attaches. This reprints every round since the orchestrator loops this skill.
+blocks *silently*, so if we don't surface the URL here it appears nowhere the
+operator can see it (it otherwise only lives in the earlier `sketch` step's
+now-closed window, the ticket @mention, the macOS notify, and worker state).
+
+**State the review URL in your assistant reply — the operator-visible channel.**
+Per the harness, a bash `echo` prints to the *agent*, not reliably to the
+operator attaching this window, so the echo banner alone is not enough. After
+reading `sketch_url` below, write it out in plain assistant text (e.g. "Prototype
+ready for review: <url> — submit feedback or end the session to continue"). The
+echo banner stays as a secondary aid. Do this every round, since the
+orchestrator loops this skill.
 
 ```bash
 MUADDIB_ROOT="${REPO_DIR:-/home/worker/repo}"

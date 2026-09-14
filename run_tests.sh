@@ -89,6 +89,9 @@ TEST_SCRIPT='
     echo "=== scripts/test-worker-alloc ==="
     bash "$MUADDIB/scripts/test-worker-alloc.sh"
 
+    echo "=== scripts/test-lavish-bind ==="
+    bash "$MUADDIB/scripts/test-lavish-bind.sh"
+
     echo "=== scripts/test-fetch-ticket ==="
     node "$MUADDIB/scripts/test-fetch-ticket.js"
 

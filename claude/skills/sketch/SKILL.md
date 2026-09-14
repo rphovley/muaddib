@@ -98,6 +98,13 @@ tmux": by the time anyone reads this, the orchestrator has already moved the
 tmux window on to `sketch-poll`, and the `sketch` step's own window (where
 this URL was printed) closes automatically once this step finishes.
 
+Also **state `$SKETCH_URL` in your assistant reply** where this step runs —
+that's the operator-visible channel (a bash `echo` goes to the agent, not
+reliably to an attached operator). The ticket comment and macOS notify are
+secondary channels. Now that lavish binds the container's routable IP (see
+`worker-entrypoint.sh`), this `localhost:${WORKER_SKETCH_PORT}` URL is actually
+reachable from the operator's browser.
+
 ```
 @<assignee> — a prototype is ready for your review on <ticket>:
 

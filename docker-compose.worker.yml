@@ -17,12 +17,12 @@ services:
       - ${WORKER_ENV_FILE:?set WORKER_ENV_FILE} # GCP non-prod secrets + worker vars
     environment:
       WORKER_INDEX: "${WORKER_INDEX:?set WORKER_INDEX}"
-      # sketch (UI/UX prototyping loop, powered by lavish-axi under the hood) binds
-      # loopback-only by default, which is unreachable from the host through
-      # Docker's network namespace. 0.0.0.0 is safe here: the published port below
-      # follows the same no-host-IP-prefix pattern as the other published ports
-      # (LAN-reachable, not internet-reachable).
-      LAVISH_AXI_HOST: "0.0.0.0"
+      # NOTE: LAVISH_AXI_HOST is deliberately NOT set here. lavish-axi (the sketch
+      # UI/UX prototyping loop) refuses to bind a wildcard like 0.0.0.0 and
+      # downgrades it to loopback, which the published port below can't reach.
+      # worker-entrypoint.sh instead binds lavish to the container's own routable
+      # IP (see the LAVISH_AXI_HOST export there) so ${WORKER_SKETCH_PORT}:4387
+      # actually reaches the listener.
       # The host-published sketch port for THIS worker — the sketch skill reads
       # this to build the operator-facing URL rather than recomputing it from a
       # port-base literal (the base is project config, not something the
