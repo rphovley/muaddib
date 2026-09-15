@@ -54,9 +54,42 @@ echo "→ Onboarding project at: $TARGET"
 echo "  (the wizard will inspect the repo, ask a few questions, and write its .muaddib/ config)"
 echo
 
+# After the wizard writes .muaddib/manifest.json, record this checkout in the
+# optional herdr dispatch plugin's project registry, so `herdr` can target it by
+# name without a re-link (see herdr-plugin/README.md, "Driving several projects
+# at once"). Best-effort and quiet: never fail onboarding over it, and don't
+# create registry config on a host that doesn't use herdr.
+register_with_herdr() {
+    local target="$1"
+    local manifest="$target/.muaddib/manifest.json"
+    local reg="${MUADDIB_HERDR_REGISTRY:-${XDG_CONFIG_HOME:-$HOME/.config}/muaddib/herdr-projects}"
+
+    # Only populate the registry for operators who actually use herdr (it's on
+    # PATH) or have already started one — don't litter config otherwise.
+    if ! command -v herdr >/dev/null 2>&1 && [ ! -f "$reg" ]; then
+        return 0
+    fi
+    [ -f "$manifest" ] || return 0
+    command -v jq >/dev/null 2>&1 || return 0
+    local name
+    name="$(jq -r '.projectName // empty' "$manifest" 2>/dev/null || true)"
+    [ -n "$name" ] || return 0
+
+    if "$MUADDIB_DIR/bin/herdr-register.sh" "$name" "$MUADDIB_DIR" >/dev/null 2>&1; then
+        echo
+        echo "→ Registered '$name' with the herdr dispatch plugin ($reg)."
+        echo "  Harmless if you don't use herdr; see muaddib/herdr-plugin/README.md."
+    fi
+}
+
 # Run the wizard interactively from inside the target repo so the skill's repo
 # inspection (git remote, existing config, ports) sees the right tree. The skill
 # reads $ARGUMENTS for the target path; pass it explicitly too so it never has to
 # guess. MUADDIB_DIR is exported so the skill can find the validator + templates.
+# Not `exec` — we regain control afterward to run the herdr registration above.
 cd "$TARGET"
-MUADDIB_DIR="$MUADDIB_DIR" exec claude "/onboard-project $TARGET"
+MUADDIB_DIR="$MUADDIB_DIR" claude "/onboard-project $TARGET"
+status=$?
+
+[ "$status" -eq 0 ] && register_with_herdr "$TARGET"
+exit "$status"

@@ -437,6 +437,7 @@ fi
 
 printf "Spawn a worker  : npm run muaddib QUO-<number>\n"
 printf "Monitor fleet   : ./muaddib/bin/attend.sh\n"
+printf "Dispatch in herdr (optional): see muaddib/herdr-plugin/README.md\n"
 printf "\n"
 printf "Dispatch daemon (requires LINEAR_API_KEY + LINEAR_TEAM_ID in shell):\n"
 printf "  Start : npm run muaddib:start\n"

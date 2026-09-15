@@ -1,0 +1,76 @@
+# muaddib dispatch — herdr local plugin
+#
+# Pure convenience layer over the existing dispatch entry points: every action
+# and pane entrypoint below only shells out to `dispatch-action.sh`, which in
+# turn calls muaddib's own `muaddib.sh` / `muaddib-plan.sh` / `muaddib-fast.sh`.
+# No dispatch logic lives here or in the wrapper — nothing in the core dispatch
+# path changes, and on a host without herdr these files just sit unused (zero
+# impact).
+#
+# Schema below is verified against a real herdr 0.9.0 install (`herdr plugin
+# link`, `herdr plugin action invoke`, `herdr plugin pane open`) — not guessed:
+#   - `platforms` values are "macos"/"linux"/"windows" (NOT "darwin").
+#   - the manifest requires a top-level `id`, distinct from `name`.
+#   - `[[actions]]` is the action table (plural — NOT `[[action]]`), and each
+#     `command` must be an argv array, not a shell string.
+#   - herdr does NOT substitute a `${PLUGIN_DIR}` token anywhere in `command`.
+#     It instead injects env vars into the launched process — $HERDR_PLUGIN_ROOT,
+#     $HERDR_PLUGIN_ID, $HERDR_BIN_PATH, $HERDR_PLUGIN_CONTEXT_JSON, and more —
+#     and already sets the process's CWD to the plugin root.
+#   - `herdr plugin action invoke` runs its command as a BACKGROUND,
+#     non-interactive job (stdout/stderr/exit_code captured to a log, no TTY).
+#     It can never satisfy dispatch-action.sh's interactive ticket prompt.
+#   - An interactive, promptable terminal instead requires a `[[panes]]`
+#     entrypoint (plural — NOT `[pane]`/`[[pane]]`/`[[entrypoints]]`), opened
+#     via `herdr plugin pane open --plugin <id> --entrypoint <id>` — there is
+#     no `--title` flag or trailing `-- <cmd> <args>` form on that command.
+#
+# So each dispatch mode is declared TWICE: as a `[[panes]]` entrypoint (the
+# real interactive pane dispatch-action.sh's prompt runs in) and as an
+# `[[actions]]` entry (so the mode is discoverable/invokable through herdr's
+# own action list) whose command's only job is to open the matching pane. For
+# genuine one-keystroke dispatch, bind a `[[keys.command]]` entry in your own
+# herdr config.toml directly to `herdr plugin pane open --plugin
+# muaddib-dispatch --entrypoint muaddib-dispatch` — see README.md ("Binding a
+# keystroke").
+
+id = "muaddib-dispatch"
+name = "muaddib-dispatch"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+
+# herdr is a native macOS binary; the plugin only makes sense there.
+platforms = ["macos"]
+
+# ─── discoverable actions (herdr's action list / action UI) — each just opens
+# the matching pane entrypoint below, since `action invoke` itself has no TTY.
+[[actions]]
+id = "muaddib-dispatch"
+title = "Dispatch muaddib worker"
+command = ["bash", "-c", "\"$HERDR_BIN_PATH\" plugin pane open --plugin \"$HERDR_PLUGIN_ID\" --entrypoint muaddib-dispatch"]
+
+[[actions]]
+id = "muaddib-dispatch-plan"
+title = "Dispatch muaddib worker (plan only)"
+command = ["bash", "-c", "\"$HERDR_BIN_PATH\" plugin pane open --plugin \"$HERDR_PLUGIN_ID\" --entrypoint muaddib-dispatch-plan"]
+
+[[actions]]
+id = "muaddib-dispatch-fast"
+title = "Dispatch muaddib worker (fast)"
+command = ["bash", "-c", "\"$HERDR_BIN_PATH\" plugin pane open --plugin \"$HERDR_PLUGIN_ID\" --entrypoint muaddib-dispatch-fast"]
+
+# ─── interactive pane entrypoints — dispatch-action.sh's actual prompt runs here
+[[panes]]
+id = "muaddib-dispatch"
+title = "muaddib dispatch"
+command = ["bash", "-c", "\"$HERDR_PLUGIN_ROOT/dispatch-action.sh\" default"]
+
+[[panes]]
+id = "muaddib-dispatch-plan"
+title = "muaddib dispatch (plan)"
+command = ["bash", "-c", "\"$HERDR_PLUGIN_ROOT/dispatch-action.sh\" plan"]
+
+[[panes]]
+id = "muaddib-dispatch-fast"
+title = "muaddib dispatch (fast)"
+command = ["bash", "-c", "\"$HERDR_PLUGIN_ROOT/dispatch-action.sh\" fast"]
