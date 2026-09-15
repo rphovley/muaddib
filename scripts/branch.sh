@@ -56,8 +56,15 @@ log "branch name: $BRANCH"
 
 # ── 3. Branch from main ──────────────────────────────────────────────────────
 
-git checkout main
-git pull --rebase origin main
+# Hard-sync rather than rebase: this worker's local `main` never carries real
+# commits of its own, and worker-entrypoint.sh's `git fetch --depth 1` leaves
+# origin/main shallow-grafted (no recorded parents). Rebasing a full-history
+# local `main` onto a shallow-grafted origin/main makes git think nearly all
+# of local history is "ahead" and tries to replay it, conflicting on the
+# repo's very first commit. A hard reset to origin/main's tip sidesteps the
+# ancestry computation entirely.
+git fetch origin main
+git checkout -B main origin/main
 git checkout -B "$BRANCH"
 
 # ── 4. Write state ───────────────────────────────────────────────────────────
