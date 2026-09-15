@@ -41,6 +41,10 @@ function fakeSource(name = 'linear', overrides = {}) {
       const h = String(handle == null ? '' : handle).trim().replace(/^@+/, '');
       return h ? `@${h}` : '';
     },
+    autoCloseReference(id) {
+      calls.push(['autoCloseReference', id]);
+      return ''; // linear/raw default; the github case overrides this
+    },
     async createSubIssue(parentId, title, description) {
       calls.push(['createSubIssue', parentId, title, description]);
       return { identifier: 'CHILD-1', url: 'https://example/CHILD-1' };
@@ -90,6 +94,40 @@ async function testMentionEmptyHandle() {
   const code = await run({ argv: ['mention', ''], source, stdout });
   assert.strictEqual(code, 0);
   assert.strictEqual(stdout.text, ''); // empty handle → empty prefix, still exit 0
+}
+
+// ─── close-ref ───────────────────────────────────────────────────────────────
+
+async function testCloseRefGithub() {
+  // github: prints the backend closing line verbatim (no trailing newline, like
+  // mention) so a caller can splice it straight into the PR body.
+  const source = fakeSource('github', {
+    autoCloseReference: (id) => `Closes rphovley/${id}`,
+  });
+  const stdout = capture();
+  const code = await run({ argv: ['close-ref', 'muaddib#158'], source, stdout });
+  assert.strictEqual(code, 0);
+  assert.strictEqual(stdout.text, 'Closes rphovley/muaddib#158');
+}
+
+async function testCloseRefLinearEmpty() {
+  // linear/raw: autoCloseReference is '' — the CLI prints nothing and exits 0, so
+  // the caller falls back to the ticket URL.
+  const source = fakeSource('linear');
+  const stdout = capture();
+  const code = await run({ argv: ['close-ref', 'QUO-158'], source, stdout });
+  assert.strictEqual(code, 0);
+  assert.deepStrictEqual(source.calls[0], ['autoCloseReference', 'QUO-158']);
+  assert.strictEqual(stdout.text, '');
+}
+
+async function testCloseRefEmptyId() {
+  // An empty id → empty output, still exit 0.
+  const source = fakeSource('github', { autoCloseReference: () => '' });
+  const stdout = capture();
+  const code = await run({ argv: ['close-ref', ''], source, stdout });
+  assert.strictEqual(code, 0);
+  assert.strictEqual(stdout.text, '');
 }
 
 // ─── post-comment (body from stdin) ──────────────────────────────────────────
@@ -225,6 +263,9 @@ async function main() {
     ['fetch not-found → stderr + exit 1 (no contextless proceed)', testFetchNotFound],
     ['mention → source.mentionUser, normalized, no newline', testMention],
     ['mention empty handle → empty output, exit 0', testMentionEmptyHandle],
+    ['close-ref github → prints closing line, no newline', testCloseRefGithub],
+    ['close-ref linear/raw → empty output, exit 0', testCloseRefLinearEmpty],
+    ['close-ref empty id → empty output, exit 0', testCloseRefEmptyId],
     ['post-comment → source.postComment with stdin body, prints commentId', testPostComment],
     ['create-sub-issue → source.createSubIssue with stdin desc, prints JSON', testCreateSubIssue],
     ['raw writes are silent no-op exit-0 (no method call, no stdin read)', testRawWritesAreNoOps],

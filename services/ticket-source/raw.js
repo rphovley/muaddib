@@ -63,6 +63,13 @@ const rawSource = {
     return h ? `@${h}` : '';
   },
 
+  // No external backend, so no GitHub issue for close-on-merge to act on — return
+  // '' (like the Linear backend) so the default PR body falls back to the plain
+  // ticket URL rather than a bogus closing keyword.
+  autoCloseReference() {
+    return '';
+  },
+
   async createSubIssue() {
     throw new Error('raw ticket source has no backend — createSubIssue() is not supported');
   },

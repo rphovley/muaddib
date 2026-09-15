@@ -244,6 +244,14 @@ function createLinearSource(opts = {}) {
       return h ? `@${h}` : '';
     },
 
+    // autoCloseReference() → '' — GitHub-native close-on-merge is inapplicable to
+    // a Linear-tracked ticket (there's no GitHub issue to close), and Linear's own
+    // git integration handles closing the issue when its branch/PR merges. Emitting
+    // a closing keyword here would only litter the PR body, so this is a no-op.
+    autoCloseReference() {
+      return '';
+    },
+
     // createSubIssue(parentId, title, description) → the created issue.
     // Linear's issueCreate needs a teamId; inherit it from the parent so the
     // interface signature stays backend-neutral.

@@ -582,6 +582,55 @@ async function testGithubAddBlockingRelationIdempotentOnDuplicate() {
   await assert.rejects(() => src2.addBlockingRelation('10', '20'), /404/);
 }
 
+// ─── GitHub backend (autoCloseReference) ────────────────────────────────────────
+
+async function testGithubAutoCloseReferenceBuildsClosingLine() {
+  // A same-repo `repo#number` id → `Closes owner/repo#number`, the closing
+  // keyword GitHub needs to auto-close the issue when the PR merges. Pure string
+  // helper — no request is issued.
+  const api = fakeApi({});
+  const src = createGithubSource({ api, owner: 'rphovley', repo: 'muaddib' });
+  assert.strictEqual(src.autoCloseReference('muaddib#158'), 'Closes rphovley/muaddib#158');
+  // A bare number (no prefix) resolves against the current repo.
+  assert.strictEqual(src.autoCloseReference('158'), 'Closes rphovley/muaddib#158');
+  // A leading '#' is tolerated like the sibling methods.
+  assert.strictEqual(src.autoCloseReference('#158'), 'Closes rphovley/muaddib#158');
+  assert.strictEqual(api.calls.length, 0); // pure string helper, no network
+}
+
+async function testGithubAutoCloseReferenceHonorsCrossRepoPrefix() {
+  // A cross-repo `other#number` id resolves against the repo its own prefix
+  // names — symmetric with getBlockingStatus/addBlockingRelation's cross-repo
+  // handling — not the current repo.
+  const src = createGithubSource({ api: fakeApi({}), owner: 'rphovley', repo: 'muaddib' });
+  assert.strictEqual(src.autoCloseReference('other#7'), 'Closes rphovley/other#7');
+}
+
+async function testGithubAutoCloseReferenceEmptyIdIsEmpty() {
+  // An empty/unresolvable id → '' (nothing to close), returned before resolveRepo
+  // so it never needs owner/repo.
+  const src = createGithubSource({ api: fakeApi({}) });
+  assert.strictEqual(src.autoCloseReference(''), '');
+  assert.strictEqual(src.autoCloseReference(null), '');
+  assert.strictEqual(src.autoCloseReference(undefined), '');
+}
+
+// ─── Linear / raw backend (autoCloseReference) ──────────────────────────────────
+
+async function testLinearAutoCloseReferenceEmpty() {
+  // GitHub-native close-on-merge is inapplicable to a Linear ticket — always ''.
+  const src = createLinearSource({ graphql: fakeGraphql({}) });
+  assert.strictEqual(src.autoCloseReference('QUO-158'), '');
+  assert.strictEqual(src.autoCloseReference(''), '');
+}
+
+async function testRawAutoCloseReferenceEmpty() {
+  // No external backend — no GitHub issue to close, always ''.
+  const src = getTicketSource('raw');
+  assert.strictEqual(src.autoCloseReference('anything'), '');
+  assert.strictEqual(src.autoCloseReference(''), '');
+}
+
 // ─── Linear backend (getBlockingStatus) ─────────────────────────────────────────
 
 async function testLinearGetBlockingStatusMapsRelations() {
@@ -926,6 +975,11 @@ async function main() {
     ['github: addBlockingRelation resolves each id against its own repo', testGithubAddBlockingRelationResolvesEachIdsRepo],
     ['github: addBlockingRelation is idempotent on a duplicate', testGithubAddBlockingRelationIdempotentOnDuplicate],
     ['github: addBlockingRelation round-trips through getBlockingStatus', testGithubAddBlockingRelationRoundTrip],
+    ['github: autoCloseReference builds the Closes closing line', testGithubAutoCloseReferenceBuildsClosingLine],
+    ['github: autoCloseReference honors a cross-repo prefix', testGithubAutoCloseReferenceHonorsCrossRepoPrefix],
+    ['github: autoCloseReference is empty for an empty id', testGithubAutoCloseReferenceEmptyIdIsEmpty],
+    ['linear: autoCloseReference is empty (native auto-close N/A)', testLinearAutoCloseReferenceEmpty],
+    ['raw: autoCloseReference is empty (no backend)', testRawAutoCloseReferenceEmpty],
     ['linear: getBlockingStatus maps blocks relations (ignores others)', testLinearGetBlockingStatusMapsRelations],
     ['linear: getBlockingStatus blocked=false when blocker terminal', testLinearGetBlockingStatusBlockedFalseWhenBlockerTerminal],
     ['linear: getBlockingStatus empty-supported on missing issue', testLinearGetBlockingStatusMissingIssue],

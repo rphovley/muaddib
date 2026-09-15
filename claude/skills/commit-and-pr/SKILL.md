@@ -10,6 +10,7 @@ Fleet-safe wrapup step. **Never calls `AskUserQuestion`.**
 `$ARGUMENTS` is the Linear ticket identifier. The runner injects these STATE\_\* env vars from worker state:
 
 - `STATE_BRANCH` — the feature branch name
+- `STATE_TICKET_IDENTIFIER` — the source-neutral ticket id (e.g. `QUO-274` for Linear, `muaddib#37` for GitHub)
 - `STATE_TICKET_URL` — the Linear ticket URL
 - `STATE_API_TUNNEL_URL`, `STATE_PORTAL_URL`, `STATE_HOMEOWNER_URL` — preview tunnel URLs
 
@@ -129,6 +130,16 @@ The narrative sections you author — the Summary bullets, Test plan, and Review
 REPO="${REPO_DIR:-/home/worker/repo}"
 PR_TEMPLATE="$REPO/.muaddib/pr-template.md"
 
+# Ticket reference for the ## Ticket section. Ask the source-neutral CLI for the
+# backend-correct closing line: on GitHub this is a `Closes owner/repo#N` keyword
+# so the merged PR auto-closes its issue; on Linear/raw it's empty. Fall back to
+# the plain ticket URL when there's no closing line (Linear/raw, or no ticket).
+MUADDIB_ROOT="$REPO"
+if [ -d "$MUADDIB_ROOT/muaddib" ]; then MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"; fi
+TICKET_CLI="$MUADDIB_ROOT/orchestrator/ticket-cli.js"
+PR_TICKET_REF=$(node "$TICKET_CLI" close-ref "$STATE_TICKET_IDENTIFIER" 2>/dev/null)
+[ -n "$PR_TICKET_REF" ] || PR_TICKET_REF="$STATE_TICKET_URL"
+
 # Agent-authored narrative — fill these with the real PR content.
 PR_SUMMARY="- <1–3 bullets>"
 PR_TEST_PLAN="- [ ] ..."
@@ -136,7 +147,7 @@ PR_REVIEW_NOTES='<any deferred findings from the quality loop, or "None">'
 
 export STATE_TICKET_URL STATE_API_TUNNEL_URL STATE_PORTAL_URL STATE_PORTAL_PREVIEW_URL \
        STATE_HOMEOWNER_URL PREVIEW_EMAIL PREVIEW_PASSWORD HO_MAGIC_LINK HO_CREDENTIAL \
-       PR_SUMMARY PR_TEST_PLAN PR_REVIEW_NOTES
+       PR_TICKET_REF PR_SUMMARY PR_TEST_PLAN PR_REVIEW_NOTES
 
 # Interpolate $VAR / ${VAR} from the environment — injection-safe, no shell eval.
 # A leading HTML comment is stripped; an unknown $VAR is left literal (prose like
@@ -154,7 +165,7 @@ else
 $PR_SUMMARY
 
 ## Ticket
-$STATE_TICKET_URL
+$PR_TICKET_REF
 
 ## Test plan
 $PR_TEST_PLAN
