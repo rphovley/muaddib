@@ -12,6 +12,7 @@
 //   node ticket-cli.js fetch <id>                       -> prints the ticket JSON
 //   node ticket-cli.js post-comment <id>                <  body.md   -> prints commentId
 //   node ticket-cli.js mention <handle>                 -> prints the @mention markup
+//   node ticket-cli.js close-ref <id>                   -> prints the PR-body closing line (or nothing)
 //   node ticket-cli.js create-sub-issue <parentId> <title>  <  desc.md  -> prints child JSON
 //
 // `id` / `parentId` is the source-neutral identifier the worker stores in state
@@ -29,7 +30,8 @@
 
 const USAGE =
   'usage: ticket-cli.js fetch <id> | post-comment <id> (body on stdin) | ' +
-  'mention <handle> | create-sub-issue <parentId> <title> (description on stdin)\n';
+  'mention <handle> | close-ref <id> | ' +
+  'create-sub-issue <parentId> <title> (description on stdin)\n';
 
 // Read all of stdin as a UTF-8 string. Resolves '' if stdin is empty/closed.
 //
@@ -89,6 +91,16 @@ async function run({ argv = [], source, readBody = readStdin, stdout = process.s
       const [handle] = args;
       // Pure string helper; empty handle → empty string (callers omit the prefix).
       stdout.write(source.mentionUser(handle));
+      return 0;
+    }
+
+    case 'close-ref': {
+      const [id] = args;
+      // Pure string helper (no stdin, like `mention`): the backend-correct PR-body
+      // closing line for GitHub, or '' for Linear/raw (no GitHub issue to close).
+      // Callers use a non-empty result as the ## Ticket section and fall back to
+      // the ticket URL otherwise.
+      stdout.write(source.autoCloseReference(id));
       return 0;
     }
 

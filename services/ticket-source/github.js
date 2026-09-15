@@ -245,6 +245,22 @@ function createGithubSource(opts = {}) {
       return h ? `@${h}` : '';
     },
 
+    // autoCloseReference(id) → the PR-body line that makes GitHub auto-close this
+    // issue when the PR merges: `Closes owner/repo#number`. GitHub only fires
+    // close-on-merge when the PR body carries a closing keyword
+    // (Closes/Fixes/Resolves) directly before an issue reference, so the default
+    // PR template interpolates this line. Tolerates a '#'/'repo#' prefix on `id`
+    // like the sibling methods, honoring a cross-repo prefix (issueRepo(id) ||
+    // repo) exactly as getBlockingStatus/addBlockingRelation do. Returns '' for
+    // an empty/unresolvable id — there's no issue to close.
+    autoCloseReference(id) {
+      const number = issueNumber(id);
+      if (!number) return '';
+      const { owner, repo } = resolveRepo();
+      const issueRepoName = issueRepo(id) || repo;
+      return `Closes ${owner}/${issueRepoName}#${number}`;
+    },
+
     // createSubIssue(parentId, title, description) → the created child, normalized
     // through normalizeIssue so callers get fetchTicket's shape.
     //

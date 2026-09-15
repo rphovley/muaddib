@@ -72,6 +72,7 @@ HTML comment is stripped (so the example file's usage note never ships):
 | Variable | Meaning |
 |----------|---------|
 | `$STATE_TICKET_URL` | Ticket URL — source-neutral (Linear, GitHub, or `(none)` for a raw/free-form task). |
+| `$PR_TICKET_REF` | Ticket reference for the `## Ticket` section — on GitHub a `Closes owner/repo#N` closing keyword so the merged PR auto-closes its issue; on Linear/raw (or when there's no ticket) it falls back to `$STATE_TICKET_URL`. |
 | `$STATE_API_TUNNEL_URL` | Preview API tunnel URL. |
 | `$STATE_PORTAL_URL` | Preview Portal URL. |
 | `$STATE_PORTAL_PREVIEW_URL` | Preview Portal URL with `?is_preview=true` appended — or `(unavailable)` (never a bare `(unavailable)?is_preview=true`). |

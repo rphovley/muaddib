@@ -19,6 +19,14 @@
 //   pollIssues()                             -> (poll mode) the open issues, normalized like fetchTicket
 //   postComment(id, body)                    -> { commentId }
 //   mentionUser(handle)                      -> comment-body markup that notifies handle
+//   autoCloseReference(id)                   -> PR-body closing line for `id`, or ''
+//                                               the backend-correct line that makes a merged PR
+//                                               auto-close the issue: GitHub returns
+//                                               `Closes owner/repo#number` (the closing keyword
+//                                               GitHub requires); Linear and raw return '' (no
+//                                               GitHub issue to close — Linear's own git
+//                                               integration handles it), so callers fall back to
+//                                               the plain ticket URL. Pure string, no network.
 //   createSubIssue(parentId, title, desc)    -> the created child ticket
 //   getBlockingStatus(id)                    -> { supported, blocked, blockedBy, blocking }
 //                                               the ticket's "Coordination status" (the Conductor's
