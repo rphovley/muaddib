@@ -3,7 +3,7 @@
 // Orchestrator integration test suite. Requires tmux.
 //
 // testBootSequence    — BOOTING → STARTING_SERVICES → RUNNING → FEEDBACK
-// testFeedbackCycle   — webhook:feedback → FEEDBACK_WORKING → FEEDBACK
+// testFeedbackCycle   — webhook:feedback → FEEDBACK_WORKING → RECONCILING → FEEDBACK
 // testMergedExitsDone — webhook:merged → DONE_FINAL + orchestrator exits 0
 
 const fs = require('fs');
@@ -134,12 +134,38 @@ async function testBootSequence() {
   }
 }
 
+// webhook:feedback → FEEDBACK_WORKING → RECONCILING → FEEDBACK.
+// After claude-feedback finishes, the orchestrator bounces/reconciles the live
+// `servers` job (restart-servers) and waits for `servers restart_ready` before
+// re-arming FEEDBACK — so a reviewer never sees a preview that silently doesn't
+// reflect the fix. Under MOCK_JOBS the restart is stubbed to emit restart_ready.
 async function testFeedbackCycle() {
   if (readState() !== 'FEEDBACK') throw new Error('precondition: must be in FEEDBACK');
-  emitEvent('webhook', 'feedback', { prNumber: 42 });
-  await waitForState('FEEDBACK_WORKING');
-  // Mock claude-feedback exits 0 after 0.3s → done event → back to FEEDBACK.
-  await waitForState('FEEDBACK', 10000);
+
+  const { subscribe } = require('../events');
+  const visited = [];
+  const sub = subscribe(WORKER, (ev) => {
+    if (ev.job === 'orchestrator' && ev.event === 'state_changed') visited.push(ev.payload.state);
+  }, { fromEnd: true });
+
+  try {
+    emitEvent('webhook', 'feedback', { prNumber: 42 });
+    await waitForState('FEEDBACK_WORKING');
+    await waitForState('RECONCILING', 10000);
+    // Mock restart-servers emits `servers restart_ready` → back to FEEDBACK.
+    await waitForState('FEEDBACK', 10000);
+  } finally {
+    sub.kill();
+  }
+
+  const EXPECTED = ['FEEDBACK_WORKING', 'RECONCILING', 'FEEDBACK'];
+  for (let i = 0; i < EXPECTED.length; i++) {
+    const idx = visited.indexOf(EXPECTED[i]);
+    if (idx === -1) throw new Error(`state ${EXPECTED[i]} never visited (visited: [${visited.join(', ')}])`);
+    if (i > 0 && visited.indexOf(EXPECTED[i - 1]) > idx) {
+      throw new Error(`${EXPECTED[i]} appeared before ${EXPECTED[i - 1]} (visited: [${visited.join(', ')}])`);
+    }
+  }
 }
 
 // webhook:merged in FEEDBACK → DONE_FINAL + orchestrator exits 0.
@@ -167,7 +193,7 @@ async function testMergedExitsDone() {
 async function main() {
   const tests = [
     ['boot sequence: BOOTING → STARTING_SERVICES → RUNNING → FEEDBACK', testBootSequence],
-    ['feedback cycle: webhook:feedback → FEEDBACK_WORKING → FEEDBACK',  testFeedbackCycle],
+    ['feedback cycle: webhook:feedback → FEEDBACK_WORKING → RECONCILING → FEEDBACK', testFeedbackCycle],
     ['webhook:merged → DONE_FINAL + orchestrator exits 0',               testMergedExitsDone],
   ];
 
