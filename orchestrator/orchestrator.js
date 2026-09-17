@@ -84,6 +84,17 @@ function serviceCmd(svc) {
   return `${runtime} '${scriptPath}'`;
 }
 
+// Command for the post-feedback reconcile (restart-servers.sh). The script emits
+// `servers restart_ready` / `servers restart_failed` itself; under MOCK_JOBS we
+// stub just the success signal, mirroring serviceCmd()'s `servers` stub so
+// test-orchestrator.js stays hermetic (no ports, migrations, or npm).
+function restartServersCmd() {
+  if (MOCK_JOBS) {
+    return `sleep 0.3 && node '${EMIT_CLI}' ${WORKER} servers restart_ready '{}'`;
+  }
+  return `bash '${path.join(MUADDIB_ROOT, 'services/restart-servers.sh')}'`;
+}
+
 // Start a background service. If svc.readyEvent is set, resolves only once
 // that event fires on the bus (e.g. servers waits for tunnel_ready).
 function startService(svc) {
@@ -185,6 +196,44 @@ async function main() {
         startJob(WORKER, 'claude-feedback', feedbackCmd);
       }
       if (ev.job === 'claude-feedback' && ev.event === 'done' && currentState === 'FEEDBACK_WORKING') {
+        // The feedback pass edited/committed/pushed code but never reconciled the
+        // live `servers` job — new migrations, dependency changes, and non-watched
+        // config go stale in the preview. Reconcile it deterministically (bounce
+        // the backend, rerun migrate:up/npm install, reuse the open tunnels) and
+        // wait for the backend to actually come back before re-arming FEEDBACK, so
+        // a reviewer never looks at a preview that silently doesn't reflect the fix.
+        note('RECONCILING');
+        startJob(WORKER, 'restart-servers', restartServersCmd());
+      }
+      if (ev.job === 'claude-feedback' && ev.event === 'failed' && currentState === 'FEEDBACK_WORKING') {
+        // The feedback pass itself crashed (non-zero exit). Without a transition
+        // the worker would wedge permanently in FEEDBACK_WORKING and ignore every
+        // further feedback event. Alert the human and re-arm FEEDBACK so a
+        // follow-up /feedback can retry the pass.
+        const exitCode = ev.payload && ev.payload.exitCode;
+        console.error(`[orchestrator w${WORKER}] claude-feedback failed (exitCode=${exitCode}) — re-arming FEEDBACK for retry`);
+        try {
+          await notifyHuman(WORKER, {
+            message: `Feedback pass failed for ${LINEAR_ISSUE || 'this ticket'} — send /feedback again to retry`,
+          });
+        } catch (_) {}
+        note('FEEDBACK');
+      }
+      if (ev.job === 'servers' && (ev.event === 'restart_ready' || ev.event === 'restart_failed')
+          && currentState === 'RECONCILING') {
+        if (ev.event === 'restart_failed') {
+          const ports = (ev.payload && ev.payload.ports) || [];
+          console.error(`[orchestrator w${WORKER}] preview reconcile failed (ports: ${JSON.stringify(ports)}) — preview may be stale`);
+          // restart-servers.sh already fired services/notify.sh; this is the
+          // orchestrator-side alert so the failure surfaces even if the script's
+          // own notify path was unavailable. Don't wedge the worker — still re-arm
+          // FEEDBACK so a follow-up /feedback can retry the reconcile.
+          try {
+            await notifyHuman(WORKER, {
+              message: `Preview reconcile failed for ${LINEAR_ISSUE || 'this ticket'} — backend may not reflect the latest fix`,
+            });
+          } catch (_) {}
+        }
         note('FEEDBACK');
       }
       if (ev.job === 'webhook' && ev.event === 'merged') {
