@@ -1,0 +1,24 @@
+version: 2
+updates:
+  # Docker base images: Dockerfile.base, Dockerfile.dispatch, Dockerfile.worker,
+  # docker-compose.dispatch.yml, docker-compose.worker.yml (all at repo root)
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  # Swift Package Manager (MuaddibApp/Package.swift)
+  - package-ecosystem: "swift"
+    directory: "/MuaddibApp"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  # GitHub Actions — no workflows exist yet, but this activates automatically
+  # if any are added under .github/workflows/
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
