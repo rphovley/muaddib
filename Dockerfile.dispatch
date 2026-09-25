@@ -5,7 +5,7 @@
 #
 # Does NOT bake source — the repo is bind-mounted at runtime (/repo).
 # Requires /var/run/docker.sock so it can call `docker compose` to spawn workers.
-FROM node:22-slim
+FROM node:26-slim
 
 # Toolchain: git (auto-detect REPO_URL from the mounted repo), bash + curl (scripts),
 # jq (spawn-worker.sh's read-config.sh hard-requires it to parse .muaddib/manifest.json —
