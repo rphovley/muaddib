@@ -352,6 +352,18 @@ async function testAssigneeFilterNotSet() {
 
 // ─── cleanupWorkerFiles ───────────────────────────────────────────────────────
 
+// cleanupWorkerFiles only reclaims a worker's files once they've sat untouched
+// longer than CLEANUP_GRACE_MS (see dispatch-daemon.js) — otherwise a worker
+// still mid-spawn looks indistinguishable from a genuine orphan. Back-date
+// every file this far past the grace window so these tests exercise the
+// actual "old enough to reclaim" path regardless of what the grace value is.
+const PAST_GRACE = Date.now() / 1000 - 60 * 60; // 1h ago, in seconds (utimes unit)
+function backdateAll(dir) {
+  for (const entry of fs.readdirSync(dir)) {
+    fs.utimesSync(path.join(dir, entry), PAST_GRACE, PAST_GRACE);
+  }
+}
+
 async function testCleanupDeletesDoneOrphan() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "muaddib-test-"));
   try {
@@ -359,6 +371,7 @@ async function testCleanupDeletesDoneOrphan() {
     fs.writeFileSync(path.join(tmpDir, "worker-1.events"), "{}");
     fs.writeFileSync(path.join(tmpDir, "worker-1-branch.log"), "branch");
     fs.mkdirSync(path.join(tmpDir, ".skills-1"));
+    backdateAll(tmpDir);
 
     cleanupWorkerFiles(tmpDir, new Set());
 
@@ -381,6 +394,7 @@ async function testCleanupMovesFailedOrphan() {
     fs.writeFileSync(path.join(tmpDir, "worker-2.state"), "FAILED");
     fs.writeFileSync(path.join(tmpDir, "worker-2.events"), "{}");
     fs.writeFileSync(path.join(tmpDir, "worker-2-branch.log"), "branch");
+    backdateAll(tmpDir);
 
     cleanupWorkerFiles(tmpDir, new Set());
 
@@ -423,11 +437,32 @@ async function testCleanupSkipsActiveWorker() {
   }
 }
 
+async function testCleanupSkipsRecentOrphan() {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "muaddib-test-"));
+  try {
+    fs.writeFileSync(path.join(tmpDir, "worker-5.state"), "DONE");
+    fs.mkdirSync(path.join(tmpDir, ".skills-5"));
+    // Freshly written — not in activeIndices yet (docker ps hasn't caught up),
+    // but well under the grace window. This is the QUO-543 race: deleting here
+    // would strip a worker's skills out from under it mid-spawn.
+
+    cleanupWorkerFiles(tmpDir, new Set());
+
+    if (!fs.existsSync(path.join(tmpDir, "worker-5.state")))
+      throw new Error("worker-5.state should have been preserved (within grace window)");
+    if (!fs.existsSync(path.join(tmpDir, ".skills-5")))
+      throw new Error(".skills-5 should have been preserved (within grace window)");
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 async function testCleanupNoStateFile() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "muaddib-test-"));
   try {
     fs.writeFileSync(path.join(tmpDir, "worker-4.events"), "{}");
     fs.writeFileSync(path.join(tmpDir, "worker-4-branch.log"), "branch");
+    backdateAll(tmpDir);
 
     cleanupWorkerFiles(tmpDir, new Set());
 
@@ -966,6 +1001,10 @@ async function main() {
     [
       "cleanupWorkerFiles: skips files for active worker",
       testCleanupSkipsActiveWorker,
+    ],
+    [
+      "cleanupWorkerFiles: skips a recent orphan still inside the grace window",
+      testCleanupSkipsRecentOrphan,
     ],
     [
       "cleanupWorkerFiles: deletes files when state file is missing",

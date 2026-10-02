@@ -351,7 +351,15 @@ function _getWorkerFiles(statusDir, n) {
 // Skip any index whose files were touched more recently than this, so a slow
 // spawn (host contention, concurrent worker launches) can never lose the
 // race against the 30s cleanup interval.
-const CLEANUP_GRACE_MS = 90_000;
+//
+// 90s was not enough: a batch of concurrent spawns (e.g. several /muaddib
+// workers launched back-to-back) can contend for the docker daemon long
+// enough that the last worker's `docker compose up -d` still hasn't shown up
+// in `docker ps` 90s in — QUO-543 recurred this way for worker 14. A worker
+// container is effectively never this old as a legitimate mid-spawn delay, so
+// 30 minutes gives a wide margin against host contention while still being
+// far short of a real workflow run (which takes much longer).
+const CLEANUP_GRACE_MS = 30 * 60 * 1000;
 
 function _newestMtimeMs(files) {
   let newest = 0;
