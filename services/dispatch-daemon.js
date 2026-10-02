@@ -341,10 +341,36 @@ function _getWorkerFiles(statusDir, n) {
     .map((e) => path.join(statusDir, e));
 }
 
+// spawn-worker.sh writes a worker's status files (.skills-N merge, logs) well
+// before its `docker compose up -d` call registers the project with the
+// docker daemon — loading secrets, writing the per-worker env file, etc. all
+// happen in between. getActiveWorkerProjects() only sees a project once
+// `docker ps` reports it, so a cleanup tick landing in that gap reads index N
+// as orphaned and deletes .skills-N out from under a worker that's still
+// mid-spawn, leaving it with zero fleet skills for its entire run (QUO-543).
+// Skip any index whose files were touched more recently than this, so a slow
+// spawn (host contention, concurrent worker launches) can never lose the
+// race against the 30s cleanup interval.
+const CLEANUP_GRACE_MS = 90_000;
+
+function _newestMtimeMs(files) {
+  let newest = 0;
+  for (const f of files) {
+    try {
+      const mtime = fs.statSync(f).mtimeMs;
+      if (mtime > newest) newest = mtime;
+    } catch (_) {}
+  }
+  return newest;
+}
+
 function cleanupWorkerFiles(statusDir, activeIndices) {
   const allIndices = _getWorkerIndicesInDir(statusDir);
   for (const n of allIndices) {
     if (activeIndices.has(n)) continue;
+    if (Date.now() - _newestMtimeMs(_getWorkerFiles(statusDir, n)) < CLEANUP_GRACE_MS) {
+      continue;
+    }
     const stateFile = path.join(statusDir, `worker-${n}.state`);
     let state = "";
     try {
