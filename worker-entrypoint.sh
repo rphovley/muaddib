@@ -73,6 +73,15 @@ if [ -x "$HOOK" ]; then
     bash "$HOOK"
 fi
 
+# The repo ships a project-scoped .mcp.json (linear via mcp-remote/OAuth) for
+# interactive host use. Each container is a fresh checkout with a pristine
+# trust store, so Claude Code treats it as a brand-new MCP server and blocks
+# on the "New MCP server found in this project" approval dialog on every
+# single worker start. The API-key server configured below is a full
+# replacement for container use — drop the project-scoped file so there's
+# nothing left for Claude Code to discover and prompt about.
+rm -f "$WORKDIR/.mcp.json"
+
 # Wire the Linear MCP via API key (Bearer header) — no OAuth/browser. Same
 # endpoint + tool names as the host's OAuth setup, so muaddib's mcp__linear__*
 # calls work unchanged. User scope keeps it out of the repo clone.
