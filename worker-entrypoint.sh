@@ -80,6 +80,11 @@ fi
 # single worker start. The API-key server configured below is a full
 # replacement for container use — drop the project-scoped file so there's
 # nothing left for Claude Code to discover and prompt about.
+# skip-worktree first: a plain `rm` leaves a tracked-file deletion showing up
+# as an uncommitted change, which fails the orchestrator's branch step (it
+# requires a clean tree) and would also show up in the ticket's eventual PR
+# diff. skip-worktree tells git to ignore local edits to this path entirely.
+git update-index --skip-worktree .mcp.json
 rm -f "$WORKDIR/.mcp.json"
 
 # Wire the Linear MCP via API key (Bearer header) — no OAuth/browser. Same
