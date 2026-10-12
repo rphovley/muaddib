@@ -64,6 +64,8 @@ fi
 
 The worker's seed script is optional — if it doesn't exist the baseline credentials are used. Workers write `seed-preview-w<N>.ts` only when their feature needs extra data beyond what the baseline provides.
 
+> Overriding is the exception, not the default: a worker seed should emit the baseline credentials (or empty `email`/`password`) unless the feature needs an isolated account, so the reviewer lands on the fully-seeded `preview@quotethat.com` login rather than a sparse per-worker company. See the implement skill's Step 4.
+
 ## Step 3 — Commit
 
 Stage specific files by name — never `git add -A` or `git add .`. Identify all changed files:

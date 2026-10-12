@@ -65,26 +65,28 @@ echo "WORKER_SUFFIX=${WORKER_INDEX:-0}"
 
 Write the seed file at exactly `projects/api/scripts/seed-preview-w<resolved-suffix>.ts` (e.g. `seed-preview-w1.ts` when WORKER_INDEX=1). Must be idempotent — safe to run on every preview startup.
 
+> **Augment the baseline — never fork a parallel account.** The worker-specific seed runs *on top of* the baseline (`seed-preview.ts`), which already seeds the standard preview contractor `preview@quotethat.com` and a rich dataset (dashboard leads, bids, and a full **My-leads** set across every status). Your script's job is to ADD the handful of feature-specific rows a reviewer needs **into that same baseline company**, so they see baseline data + your feature together on one login.
+>
+> Do **not** mint a new Firebase user + new company just to hang a few rows off of — that creates an isolated company the reviewer gets pointed at (because `commit-and-pr` advertises the worker seed's credentials over the baseline's), stranding all the baseline data on a login they never open. That is exactly the QUO-665 failure: a `preview-w10@quotethat.local` company with 4 leads was advertised while the baseline's 17-lead My-leads set sat unseen on `preview@quotethat.com`.
+
 The script must:
 
 1. Initialize firebase-admin using the dev service account. Check `projects/api/src/config/` for how the dev SA key file is loaded — match that pattern exactly.
 
-2. Create or update a preview contractor user in Firebase:
-   - Email: `preview-w${process.env.WORKER_INDEX || '0'}@quotethat.local`
-   - Password: generate once at the top with `require('crypto').randomBytes(6).toString('hex')` and reuse.
-   - On `auth/email-already-exists`: look up by email, then call `updateUser(uid, { password })`.
+2. **Resolve the baseline preview company** — look up the contractor whose email is `preview@quotethat.com` and use its `companyId`. Seed your feature-specific rows into THAT company. Only create a separate Firebase user + company when the feature itself is about a fresh/isolated account (e.g. new-company onboarding, multi-company isolation); if you do, say so in a comment at the top of the file.
 
-3. Upsert a matching contractor record in the DB (use the `db` instance; match existing contractor upsert patterns).
+3. Seed minimal fixture data to exercise the feature's acceptance criteria, into the baseline company resolved in step 2. Derive from the plan — seed only what a reviewer needs beyond what the baseline already provides. If the baseline already seeds equivalent data (e.g. My-leads rows), reuse it rather than duplicating; add only the specific scenario your feature introduces.
 
-4. Seed minimal fixture data to exercise the feature's acceptance criteria. Derive from the plan — seed only what a reviewer needs to observe the feature working.
+4. If the feature involves the homeowner app: seed a homeowner project and generate its magic-link token.
 
-5. If the feature involves the homeowner app: seed a homeowner project and generate its magic-link token.
-
-6. Print to stdout as the **last line**:
+5. Print to stdout as the **last line**:
    ```json
    {"email":"...","password":"...","homeowner_magic_link":"<url-or-null>"}
    ```
-   Write errors to stderr and exit 1 on failure.
+   - Default case (seeded into the baseline company): emit the **baseline** credentials (`preview@quotethat.com` / its password) or empty `email`/`password` — do NOT override them. `commit-and-pr` only overrides the advertised login when you emit a non-empty `email`/`password`, so leaving them keeps the reviewer on the fully-seeded baseline login.
+   - Isolated-account case only: emit the new user's `email`/`password`.
+   - Set `homeowner_magic_link` when the feature mints one; otherwise null.
+   - Write errors to stderr and exit 1 on failure.
 
 ## Step 5 — Signal done
 
