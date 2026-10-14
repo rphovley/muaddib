@@ -20,24 +20,29 @@ previous step — Bash tool invocations don't share shell state with each other.
 
 ## Step 1 — Force the API dev server down
 
+Don't hand-roll the port kill. `kill_port` from `services/lib/port-utils.sh`
+tries `fuser`, then `lsof`, then `ss` — and the worker image ships **only**
+`ss`, so a `fuser`/`lsof`-only version of this step silently kills nothing and
+`retunnel.sh` then finds a healthy port and skips the API bounce entirely.
+
 ```bash
 REPO="${REPO_DIR:-/home/worker/repo}"
+MUADDIB_ROOT="$REPO"; [ -d "$MUADDIB_ROOT/muaddib" ] && MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"
 CONFIG="$REPO/.muaddib/manifest.json"
+. "$MUADDIB_ROOT/services/lib/port-utils.sh"
+
 API_PORT=$(jq -r '.projects[] | select(.seedScript != null) | .port // empty' "$CONFIG" | head -1)
 
 if [ -n "$API_PORT" ]; then
-  if command -v fuser >/dev/null 2>&1; then
-    fuser -k "${API_PORT}/tcp" 2>/dev/null || true
-  elif command -v lsof >/dev/null 2>&1; then
-    pids=$(lsof -ti :"$API_PORT" 2>/dev/null || true)
-    [ -n "$pids" ] && kill $pids 2>/dev/null || true
-  fi
-  for i in $(seq 1 10); do
-    (echo > "/dev/tcp/127.0.0.1/$API_PORT") 2>/dev/null || break
-    sleep 1
-  done
+  kill_port "$API_PORT"
+  wait_port_free "$API_PORT" 10 \
+    && echo "API port :${API_PORT} is free" \
+    || echo "WARNING: :${API_PORT} still bound after 10s — retunnel.sh will skip the API bounce"
 fi
 ```
+
+Report that warning if it appears: it means the API was *not* restarted, which
+is the whole point of this skill over a bare `retunnel.sh`.
 
 ## Step 2 — Run the recovery script
 
@@ -45,9 +50,23 @@ fi
 REPO="${REPO_DIR:-/home/worker/repo}"
 WORKER="${WORKER_INDEX:-1}"
 MUADDIB_ROOT="$REPO"; [ -d "$MUADDIB_ROOT/muaddib" ] && MUADDIB_ROOT="$MUADDIB_ROOT/muaddib"
+LOG="/tmp/restart-preview-${WORKER}.log"
 
-bash "$MUADDIB_ROOT/services/retunnel.sh" 2>&1 | tee "/tmp/restart-preview-${WORKER}.log"
+bash "$MUADDIB_ROOT/services/retunnel.sh" > "$LOG" 2>&1; rc=$?; cat "$LOG"; echo "retunnel exit=$rc"; exit "$rc"
 ```
+
+Redirect to a file and `cat` it — do **not** pipe into `tee`. `retunnel.sh`
+leaves behind one immortal `while true` supervisor loop per dev server. Those
+loops redirect their own stdio now, but anything that later forgets to would
+hold the pipe's write end open after the script exits, so `tee` would never see
+EOF and the tool call would block until its 10-minute timeout with the work
+already finished. A redirect to a file can't wedge that way.
+
+Expect the script to take **2–5 minutes** even when everything works: a cold
+`tsx watch` API start (up to 90s), then one cloudflared handshake per service
+(API + each frontend, up to 30s each, longer if it falls back to
+localhost.run), then a readiness wait per frontend port (up to 60s each). It is
+not hung — check the elapsed time against that budget before assuming it is.
 
 With the API port now free, `retunnel.sh`'s own health check relaunches it.
 It then unconditionally recreates every managed tunnel (cloudflared →

@@ -32,6 +32,10 @@ EMIT_CLI="$REPO/muaddib/orchestrator/emit-cli.js"
 log()  { echo "[retunnel w${WORKER}] $*" >&2; }
 warn() { echo "[retunnel w${WORKER}] WARNING: $*" >&2; }
 
+# fuser/lsof are absent from the worker base image; kill_port() falls back to ss.
+# shellcheck source=lib/port-utils.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/port-utils.sh"
+
 CF_URL_RE='https://[a-zA-Z0-9-]+\.trycloudflare\.com'
 LR_URL_RE='https://[a-zA-Z0-9-]+\.lhr\.[a-z]+'
 
@@ -78,18 +82,17 @@ pkill -f "start-servers.js" 2>/dev/null && log "killed start-servers.js" || log 
 sleep 1
 
 # ── 3. Kill frontend dev servers on their ports ───────────────────────────────
-# fuser -k kills whatever is bound to the port. On Alpine/Debian containers
-# fuser comes from psmisc. Fallback: lsof.
+# kill_port() (services/lib/port-utils.sh) tries fuser, then lsof, then ss. The
+# base worker image ships only ss, so the fuser/lsof-only version of this step
+# silently killed nothing: the orphaned Vite kept the port, the relaunched one
+# fell through to the next free port, and the tunnel went on serving the old
+# server with its stale VITE_API_URL.
 
 for port in "${FRONTEND_PORTS[@]:-}"; do
   [ -z "$port" ] && continue
   log "killing process on port ${port}..."
-  if command -v fuser >/dev/null 2>&1; then
-    fuser -k "${port}/tcp" 2>/dev/null || true
-  else
-    local_pid=$(lsof -ti :"$port" 2>/dev/null || true)
-    [ -n "$local_pid" ] && kill "$local_pid" 2>/dev/null || true
-  fi
+  kill_port "$port"
+  wait_port_free "$port" 10 || warn ":${port} still bound after 10s — the new dev server will pick a different port and the tunnel will serve the stale one"
 done
 
 sleep 1
@@ -100,17 +103,20 @@ sleep 1
 # Restart it under a self-healing loop when it's not listening; leave a healthy
 # one alone (a cold `tsx watch` restart costs ~a minute of API downtime).
 
-port_up() { (echo > "/dev/tcp/localhost/$1") 2>/dev/null; }
-
 if port_up "$API_PORT"; then
   log "API already listening on :${API_PORT} — leaving it running"
 else
   log "API not listening on :${API_PORT} — starting: ${API_DEV_SCRIPT}"
+  # The redirections belong on the SUBSHELL, not just the inner commands: this
+  # loop outlives the script, and an inherited stdout keeps the caller's pipe
+  # write-end open forever. `retunnel.sh | tee log` then never terminates even
+  # though the script finished — which is exactly what made /restart-preview
+  # "hang" until the 10-minute Bash timeout.
   ( while true; do
-      sh -c "$API_DEV_SCRIPT" >> /tmp/preview-api.log 2>&1
-      echo "[api] exited, restarting in 2s..." >> /tmp/preview-api.log
+      sh -c "$API_DEV_SCRIPT"
+      echo "[api] exited, restarting in 2s..."
       sleep 2
-    done ) &
+    done ) < /dev/null >> /tmp/preview-api.log 2>&1 &
   for i in $(seq 1 90); do
     port_up "$API_PORT" && { log "API ready on :${API_PORT}"; break; }
     sleep 1
@@ -188,11 +194,13 @@ for i in "${!FRONTEND_NAMES[@]}"; do
   name="${FRONTEND_NAMES[$i]}"
   script="${FRONTEND_SCRIPTS[$i]}"
   logfile="/tmp/preview-${name}.log"
+  # Redirect the subshell itself — see the API loop above for why inheriting
+  # stdout here wedges any caller that pipes this script.
   (while true; do
-    VITE_API_URL="$API_TUNNEL_URL" sh -c "$script" >> "$logfile" 2>&1 || true
-    echo "[${name}] exited, restarting in 2s..." >> "$logfile"
+    VITE_API_URL="$API_TUNNEL_URL" sh -c "$script" || true
+    echo "[${name}] exited, restarting in 2s..."
     sleep 2
-  done) &
+  done) < /dev/null >> "$logfile" 2>&1 &
   log "started ${name} dev server (log: ${logfile})"
 done
 
@@ -200,11 +208,7 @@ done
 for port in "${FRONTEND_PORTS[@]:-}"; do
   [ -z "$port" ] && continue
   log "waiting for :${port}..."
-  for i in $(seq 1 60); do
-    (echo > /dev/tcp/localhost/"$port") 2>/dev/null && break
-    sleep 1
-  done
-  (echo > /dev/tcp/localhost/"$port") 2>/dev/null \
+  wait_port_up "$port" 60 \
     && log ":${port} ready" \
     || warn ":${port} not ready after 60s — continuing anyway"
 done

@@ -118,36 +118,13 @@ if [ -z "$API_PORT" ] && [ "${#FRONTEND_PORTS[@]}" -eq 0 ]; then
 fi
 
 # ── Port helpers ───────────────────────────────────────────────────────────────
+# port_up / kill_port / wait_port_free / wait_port_up now live in the shared lib
+# so retunnel.sh and the restart-preview skill get the same ss fallback (the
+# base worker image ships neither fuser nor lsof). Sourced relative to this
+# script so it resolves in both the nested and self-hosting layouts.
 
-# Listening check via bash's /dev/tcp — no external tooling required.
-port_up() { (echo > "/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
-
-# Kill whatever is bound to a port. fuser (psmisc) then lsof, as retunnel.sh; ss
-# is the last fallback since the base worker image ships neither fuser nor lsof.
-kill_port() {
-  local port="$1" pids=""
-  if command -v fuser >/dev/null 2>&1; then
-    fuser -k "${port}/tcp" 2>/dev/null || true
-    return 0
-  fi
-  if command -v lsof >/dev/null 2>&1; then
-    pids=$(lsof -ti :"$port" 2>/dev/null || true)
-  elif command -v ss >/dev/null 2>&1; then
-    pids=$(ss -ltnpH "sport = :${port}" 2>/dev/null | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u)
-  fi
-  [ -n "$pids" ] && kill $pids 2>/dev/null || true
-}
-
-wait_port_free() {  # $1 port, $2 max seconds (default 15)
-  local port="$1" max="${2:-15}" i
-  for i in $(seq 1 "$max"); do port_up "$port" || return 0; sleep 1; done
-  return 1
-}
-wait_port_up() {    # $1 port, $2 max seconds (default 90)
-  local port="$1" max="${2:-90}" i
-  for i in $(seq 1 "$max"); do port_up "$port" && return 0; sleep 1; done
-  return 1
-}
+# shellcheck source=lib/port-utils.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/port-utils.sh"
 
 # ── npm reconcile helper ───────────────────────────────────────────────────────
 
@@ -217,11 +194,14 @@ if [ -n "$API_PORT" ]; then
     # devScript is an npm script name (e.g. "api:dev"), not a shell command, so
     # it must run via `npm run` — matching start-servers.sh. `sh -c "api:dev"`
     # would fail with "api:dev: not found".
+    # Redirect the SUBSHELL, not just the inner commands. This loop outlives
+    # the script; an inherited stdout would keep a caller's pipe write-end open
+    # forever, so `restart-servers.sh | tee log` would never terminate.
     ( cd "$REPO" && while true; do
-        npm run "$API_DEV_SCRIPT" >> /tmp/preview-api.log 2>&1 || true
-        echo "[api] exited, restarting in 2s..." >> /tmp/preview-api.log
+        npm run "$API_DEV_SCRIPT" || true
+        echo "[api] exited, restarting in 2s..."
         sleep 2
-      done ) &
+      done ) < /dev/null >> /tmp/preview-api.log 2>&1 &
   else
     warn "no devScript for the API project — cannot relaunch"
   fi
@@ -258,11 +238,12 @@ for i in "${!FRONTEND_NAMES[@]}"; do
   if [ -n "$script" ]; then
     log "relaunching frontend ${name}: ${script}"
     # devScript is an npm script name, not a shell command — run via `npm run`.
+    # Redirect the subshell itself — see the API loop above.
     ( cd "$REPO" && while true; do
-        VITE_API_URL="$API_TUNNEL_URL" npm run "$script" >> "/tmp/preview-${name}.log" 2>&1 || true
-        echo "[${name}] exited, restarting in 2s..." >> "/tmp/preview-${name}.log"
+        VITE_API_URL="$API_TUNNEL_URL" npm run "$script" || true
+        echo "[${name}] exited, restarting in 2s..."
         sleep 2
-      done ) &
+      done ) < /dev/null >> "/tmp/preview-${name}.log" 2>&1 &
   else
     warn "no devScript for frontend ${name} — cannot relaunch"
   fi
