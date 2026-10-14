@@ -104,7 +104,7 @@ your proposals as the recommended options.
 
 Only things the repo can't answer. Batch into `AskUserQuestion` calls (≤4 options each):
 
-1. **`model`** — default `claude-opus-4-8`; confirm or override.
+1. **`model`** — default `claude-opus-5-5`; confirm or override.
 2. **`retryThreshold`** — default `3`; confirm.
 3. **`projects[]`** — for each buildable project in the repo: its `name`, `path`
    (relative to repo root), and `checkCommand` (lint/typecheck/test entry). Ask which
@@ -144,7 +144,7 @@ that don't apply, e.g. github fields for a Linear project):
 {
   "projectName": "...",
   "dispatchPort": 4999,
-  "model": "claude-opus-4-8",
+  "model": "claude-opus-5-5",
   "ticketSource": "github",
   "githubOwner": "...",
   "githubRepo": "...",

@@ -42,7 +42,7 @@ function validManifest() {
     githubOwner: 'octocat',
     githubRepo: 'demo',
     dispatchPort: 4999,
-    model: 'claude-opus-4-8',
+    model: 'claude-opus-5-5',
     retryThreshold: 3,
     workerPorts: { api: 9089, db: 6442, sketch: 5386 },
     projects: [{ name: 'demo', path: '.', checkCommand: './run_tests.sh' }],

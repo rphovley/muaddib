@@ -45,7 +45,7 @@ at the fix if one is missing.
 
 | Field | Default / notes |
 |-------|-----------------|
-| `model` | Default `claude-opus-4-8`. Empty → workers use the account default. |
+| `model` | Default `claude-opus-5-5`. Empty → workers use the account default. |
 | `retryThreshold` | Default `3` (`services/goals.js`). A non-integer silently falls back to 3, so the validator warns on a bad value. |
 | `projects[]` | Each entry: `name`, `path`, `checkCommand`. Any project that runs a preview server also needs `devScript` / `seedScript` / `port` — `start-servers.js` keys API vs frontend off `seedScript` vs `devScript`. |
 | `GITHUB_TOKEN` | A human mints the fine-grained PAT (scopes below); wizard writes it to `.muaddib/secrets.env`. |
