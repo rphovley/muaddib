@@ -507,9 +507,10 @@ is printed.
    compose regardless):
    - **No DB vars** (`PG_*`, `DATABASE_URL`, `TEST_DB_*`) — the compose pins those
      to the local sidecars and overrides anything in the file.
-   - **Firebase dev creds are a file, not an env var** — only needed for
-     `npm run dev`. Supply it base64'd as `FIREBASE_DEV_SA_JSON_B64` and the
-     entrypoint writes it into the clone. Tests skip Firebase entirely.
+   - **Google credentials are Application Default Credentials** — only needed
+     for `npm run dev`. Supply an impersonated-service-account ADC JSON base64'd
+     as `GOOGLE_ADC_JSON_B64` and the entrypoint writes it to the well-known ADC
+     path (see `.muaddib/secrets.env.example`). Tests skip Firebase entirely.
 
    Override the path with `WORKER_SHARED_ENV` if you keep it elsewhere.
 
