@@ -47,7 +47,7 @@ at the fix if one is missing.
 |-------|-----------------|
 | `model` | Default `claude-opus-5-5`. Empty → workers use the account default. |
 | `retryThreshold` | Default `3` (`services/goals.js`). A non-integer silently falls back to 3, so the validator warns on a bad value. |
-| `projects[]` | Each entry: `name`, `path`, `checkCommand`. Any project that runs a preview server also needs `devScript` / `seedScript` / `port` — `start-servers.js` keys API vs frontend off `seedScript` vs `devScript`. |
+| `projects[]` | Each entry: `name`, `path`, `checkCommand`. Any project that runs a preview server also needs `devScript` / `seedScript` / `port` — `start-servers.js` keys API vs frontend off `seedScript` vs `devScript`. `devScript` is a shell command (`"npm run api:dev"`), not an npm script name: every preview path runs it via `sh -c`, and the validator warns on a bare name. |
 | `GITHUB_TOKEN` | A human mints the fine-grained PAT (scopes below); wizard writes it to `.muaddib/secrets.env`. |
 | Linear creds | `LINEAR_API_KEY`, `LINEAR_TEAM_ID`, user handle — for a Linear-backed project. |
 | Goal Context (`goals.md`) | Never blocking — `goals.js` bootstraps a generic template on first read. Wizard offers a project-specific pass. |

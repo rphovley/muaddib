@@ -138,6 +138,27 @@ async function testCheckCommandWarns() {
   assert(hasWarn(res, 'checkCommand'), 'should warn about missing checkCommand');
 }
 
+async function testBareDevScriptNameWarns() {
+  // "api:dev" is an npm script name; every preview path runs devScript through
+  // `sh -c`, where that is a "not found" error on every supervisor iteration.
+  const m = validManifest();
+  m.projects = [{ name: 'api', path: 'projects/api', checkCommand: 'true', devScript: 'api:dev' }];
+  const res = validateManifest(m);
+  assert(res.ok, 'a bare devScript name is a warning, not an error');
+  assert(hasWarn(res, 'npm script name'), `should warn about the devScript shape, got: ${res.warnings.join('; ')}`);
+}
+
+async function testShellCommandDevScriptDoesNotWarn() {
+  const m = validManifest();
+  m.projects = [
+    { name: 'api', path: 'projects/api', checkCommand: 'true', devScript: 'npm run api:dev' },
+    // A single-word command with no colon is legitimate — don't warn on it.
+    { name: 'web', path: 'projects/web', checkCommand: 'true', devScript: './serve' },
+  ];
+  const res = validateManifest(m);
+  assert(!hasWarn(res, 'npm script name'), `should not warn, got: ${res.warnings.join('; ')}`);
+}
+
 async function testDispatchPortMissingWarns() {
   const m = validManifest();
   delete m.dispatchPort;
@@ -304,6 +325,8 @@ async function testFileMissing() {
   await run('empty projects fails', testMissingProjects);
   await run('project without path fails', testProjectMissingPath);
   await run('missing checkCommand warns', testCheckCommandWarns);
+  await run('bare npm-script-name devScript warns', testBareDevScriptNameWarns);
+  await run('shell-command devScript does not warn', testShellCommandDevScriptDoesNotWarn);
   await run('missing dispatchPort warns', testDispatchPortMissingWarns);
   await run('bad retryThreshold warns', testRetryThresholdWarns);
   await run('cross-project port collision warns', testPortCollisionAcrossProjects);

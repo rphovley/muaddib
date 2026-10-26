@@ -11,8 +11,9 @@
 # What it does:
 #   1. Kills cloudflared and localhost.run SSH tunnel processes
 #   2. Opens a new API tunnel (cloudflared → localhost.run fallback)
-#   3. Kills the existing Vite dev-server restart wrappers in start-servers.js
-#      so the old VITE_API_URL can't be re-injected
+#   3. Kills every stale dev-server supervisor — muaddib's servers job, the
+#      project's on-servers-start hook, and loops from an earlier run — so
+#      nothing relaunches a server with the old VITE_API_URL behind us
 #   4. Restarts frontend dev servers with the new VITE_API_URL
 #   5. Opens new frontend tunnels
 #   6. Updates /tmp/preview-urls-${WORKER_INDEX}.env and worker state
@@ -32,9 +33,15 @@ EMIT_CLI="$REPO/muaddib/orchestrator/emit-cli.js"
 log()  { echo "[retunnel w${WORKER}] $*" >&2; }
 warn() { echo "[retunnel w${WORKER}] WARNING: $*" >&2; }
 
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # fuser/lsof are absent from the worker base image; kill_port() falls back to ss.
 # shellcheck source=lib/port-utils.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib/port-utils.sh"
+. "$SELF_DIR/lib/port-utils.sh"
+# Sourced after log/warn so supervisor messages carry this script's prefix, and
+# after WORKER, which names the supervisor pidfile.
+# shellcheck source=lib/supervisors.sh
+. "$SELF_DIR/lib/supervisors.sh"
 
 CF_URL_RE='https://[a-zA-Z0-9-]+\.trycloudflare\.com'
 LR_URL_RE='https://[a-zA-Z0-9-]+\.lhr\.[a-z]+'
@@ -44,8 +51,11 @@ LR_URL_RE='https://[a-zA-Z0-9-]+\.lhr\.[a-z]+'
 API_PORT=$(jq -r '.projects[] | select(.seedScript != null) | .port' "$CONFIG" | head -1)
 API_DEV_SCRIPT=$(jq -r '.projects[] | select(.seedScript != null) | .devScript' "$CONFIG" | head -1)
 
+# `.port // ""`, not `// empty`: a frontend project declared without a port must
+# still occupy a slot, or FRONTEND_PORTS shifts out of step with FRONTEND_NAMES
+# and every later lookup by index reads a different project's port.
 readarray -t FRONTEND_NAMES  < <(jq -r '.projects[] | select(.seedScript == null and .devScript != null) | .name' "$CONFIG")
-readarray -t FRONTEND_PORTS  < <(jq -r '.projects[] | select(.seedScript == null and .devScript != null) | .port // empty' "$CONFIG")
+readarray -t FRONTEND_PORTS  < <(jq -r '.projects[] | select(.seedScript == null and .devScript != null) | .port // ""' "$CONFIG")
 readarray -t FRONTEND_SCRIPTS< <(jq -r '.projects[] | select(.seedScript == null and .devScript != null) | .devScript' "$CONFIG")
 
 log "API port: ${API_PORT}"
@@ -70,16 +80,18 @@ done
 
 sleep 1
 
-# ── 2. Kill start-servers.js restart wrappers ─────────────────────────────────
-# The wrappers have VITE_API_URL baked into their closure. Kill the node
-# process so it can't relaunch Vite with the stale URL. The API dev server
-# and Vite processes themselves become orphans and keep running briefly —
-# we'll kill the Vite ones next, and leave the API server running.
+# ── 2. Kill every stale dev-server supervisor ─────────────────────────────────
+# Each surviving supervisor has the old VITE_API_URL baked into its closure and
+# relaunches its server ~2s after we free a port, so it has to go before any
+# port kill below. Killing only start-servers.js (what this step used to do)
+# missed the project's own on-servers-start hook — the process that actually
+# holds the restart timers — which then fought us for the API port.
+#
+# The dev servers themselves are left running as orphans: we kill the Vite ones
+# by port next, and hand the live API process to supervise_port in step 3b.
 
-log "killing start-servers.js wrapper process..."
-pkill -f "start-servers.js" 2>/dev/null && log "killed start-servers.js" || log "no start-servers.js process found"
-
-sleep 1
+log "killing stale dev-server supervisors..."
+kill_stale_supervisors
 
 # ── 3. Kill frontend dev servers on their ports ───────────────────────────────
 # kill_port() (services/lib/port-utils.sh) tries fuser, then lsof, then ss. The
@@ -97,31 +109,28 @@ done
 
 sleep 1
 
-# ── 3b. Ensure the API dev server is running ──────────────────────────────────
-# Step 2 killed start-servers.js, which was supervising the API dev server.
-# If the API origin is down, a freshly opened tunnel just returns HTTP 502.
-# Restart it under a self-healing loop when it's not listening; leave a healthy
-# one alone (a cold `tsx watch` restart costs ~a minute of API downtime).
+# ── 3b. Ensure the API dev server is running and supervised ───────────────────
+# Step 2 killed whatever was supervising the API, so a healthy API still needs
+# adopting — an unsupervised one dies at the next crash with nothing to notice,
+# which is how the API stayed dead behind a perfectly good tunnel. If the API
+# origin is down, a freshly opened tunnel just returns HTTP 502.
+#
+# supervise_port only launches while the port is unbound, so a live API is
+# adopted with no restart (a cold `tsx watch` start costs ~a minute of API
+# downtime) and a dead one is started now.
 
 if port_up "$API_PORT"; then
-  log "API already listening on :${API_PORT} — leaving it running"
+  log "API already listening on :${API_PORT} — adopting it without a restart"
 else
   log "API not listening on :${API_PORT} — starting: ${API_DEV_SCRIPT}"
-  # The redirections belong on the SUBSHELL, not just the inner commands: this
-  # loop outlives the script, and an inherited stdout keeps the caller's pipe
-  # write-end open forever. `retunnel.sh | tee log` then never terminates even
-  # though the script finished — which is exactly what made /restart-preview
-  # "hang" until the 10-minute Bash timeout.
-  ( while true; do
-      sh -c "$API_DEV_SCRIPT"
-      echo "[api] exited, restarting in 2s..."
-      sleep 2
-    done ) < /dev/null >> /tmp/preview-api.log 2>&1 &
-  for i in $(seq 1 90); do
-    port_up "$API_PORT" && { log "API ready on :${API_PORT}"; break; }
-    sleep 1
-  done
-  port_up "$API_PORT" || warn "API still not listening on :${API_PORT} after 90s — tunnel will 502"
+fi
+
+supervise_port api "$API_PORT" "$API_DEV_SCRIPT" /tmp/preview-api.log
+
+if wait_port_up "$API_PORT" 90; then
+  log "API ready on :${API_PORT}"
+else
+  warn "API still not listening on :${API_PORT} after 90s — tunnel will 502"
 fi
 
 # ── 4. Open new API tunnel ────────────────────────────────────────────────────
@@ -192,16 +201,11 @@ log "API tunnel URL: ${API_TUNNEL_URL:-<empty>}"
 log "restarting frontend dev servers with VITE_API_URL=${API_TUNNEL_URL:-}..."
 for i in "${!FRONTEND_NAMES[@]}"; do
   name="${FRONTEND_NAMES[$i]}"
+  port="${FRONTEND_PORTS[$i]:-}"
   script="${FRONTEND_SCRIPTS[$i]}"
-  logfile="/tmp/preview-${name}.log"
-  # Redirect the subshell itself — see the API loop above for why inheriting
-  # stdout here wedges any caller that pipes this script.
-  (while true; do
-    VITE_API_URL="$API_TUNNEL_URL" sh -c "$script" || true
-    echo "[${name}] exited, restarting in 2s..."
-    sleep 2
-  done) < /dev/null >> "$logfile" 2>&1 &
-  log "started ${name} dev server (log: ${logfile})"
+  [ -z "$port" ] && { warn "frontend ${name} has no port in the manifest — not supervising it"; continue; }
+  supervise_port "$name" "$port" "$script" "/tmp/preview-${name}.log" \
+    "VITE_API_URL=${API_TUNNEL_URL:-}"
 done
 
 # Wait for frontend ports to be ready (up to 60 s each).
@@ -289,5 +293,11 @@ echo "  email:    ${PREVIEW_EMAIL:-}"
 echo "  password: ${PREVIEW_PASSWORD:-}"
 [ -n "${HO_MAGIC_LINK:-}" ] && echo "  HO link:  ${HO_MAGIC_LINK:-}"
 echo ""
-echo "NOTE: if the API dev server also needs to be restarted:"
-echo "  pkill -f 'npm run api:dev' && (nohup npm run api:dev > /tmp/preview-api.log 2>&1 &)"
+# Don't suggest a hand-rolled relaunch here: a bare `nohup npm run api:dev`
+# leaves the API unsupervised, and killing the dev server without killing this
+# script's supervisor loop just makes the loop relaunch it anyway. Freeing the
+# port and re-running this script is the supported path (that's what
+# /restart-preview does).
+echo "NOTE: to force the API to restart cold, free its port and re-run this script:"
+echo "  . ${SELF_DIR}/lib/port-utils.sh && kill_port ${API_PORT} && wait_port_free ${API_PORT} 10"
+echo "  bash ${SELF_DIR}/retunnel.sh"

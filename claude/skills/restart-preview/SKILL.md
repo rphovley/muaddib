@@ -56,8 +56,10 @@ bash "$MUADDIB_ROOT/services/retunnel.sh" > "$LOG" 2>&1; rc=$?; cat "$LOG"; echo
 ```
 
 Redirect to a file and `cat` it — do **not** pipe into `tee`. `retunnel.sh`
-leaves behind one immortal `while true` supervisor loop per dev server. Those
-loops redirect their own stdio now, but anything that later forgets to would
+leaves behind one `while true` supervisor loop per dev server, which outlives
+the script (the next restart run kills it by pid — `kill_stale_supervisors` in
+`services/lib/supervisors.sh`). Those loops redirect their own stdio now, but
+anything that later forgets to would
 hold the pipe's write end open after the script exits, so `tee` would never see
 EOF and the tool call would block until its 10-minute timeout with the work
 already finished. A redirect to a file can't wedge that way.
@@ -68,7 +70,10 @@ Expect the script to take **2–5 minutes** even when everything works: a cold
 localhost.run), then a readiness wait per frontend port (up to 60s each). It is
 not hung — check the elapsed time against that budget before assuming it is.
 
-With the API port now free, `retunnel.sh`'s own health check relaunches it.
+With the API port now free, `retunnel.sh` relaunches the API and supervises it.
+(If the project's `on-servers-start` hook wins the race and relaunches the API
+first, `retunnel.sh` kills that hook and adopts the fresh process instead — the
+API still ends up restarted, with exactly one supervisor on the port.)
 It then unconditionally recreates every managed tunnel (cloudflared →
 localhost.run fallback), bounces every frontend dev server with the fresh
 `VITE_API_URL`, opens new frontend tunnels, and writes

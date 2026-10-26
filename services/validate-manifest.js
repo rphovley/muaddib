@@ -220,6 +220,18 @@ function validateManifest(config, opts = {}) {
       }
       if (!isNonEmptyString(p.name)) errors.push(`${at} missing "name"`);
       if (!isNonEmptyString(p.path)) errors.push(`${at} missing "path"`);
+      // devScript is a SHELL COMMAND ("npm run api:dev"), not an npm script
+      // name: every preview path (start-servers, the on-servers-start hook,
+      // supervise_port) runs it through `sh -c`. A bare script name there dies
+      // as "api:dev: not found" on every 2s supervisor iteration, so the port
+      // never binds and the only visible symptom is a preview that 502s. A
+      // warning, not an error: a single-word command ("./serve") is legitimate,
+      // so only a colon-bearing one-word value gets flagged.
+      if (isNonEmptyString(p.devScript) && !/\s/.test(p.devScript) && p.devScript.includes(':')) {
+        warnings.push(
+          `${at} ("${p.name || '?'}") devScript ${JSON.stringify(p.devScript)} looks like an npm script name — it must be a shell command (e.g. "npm run ${p.devScript}")`
+        );
+      }
       // checkCommand isn't strictly required by any reader, but a project with
       // none can't be verified by the fleet's /check loop — worth flagging.
       if (!isNonEmptyString(p.checkCommand)) {

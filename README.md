@@ -269,6 +269,44 @@ as `<project-name>_url` (e.g. `portal_url`, `homeowner_url`) — skills that
 want a preview link read the state key matching the project's own name in
 `.muaddib/manifest.json`, not a separately-configured alias.
 
+### `devScript` is a shell command
+
+A project's `devScript` is a **shell command** — `"npm run api:dev"`, not the
+bare script name `"api:dev"`. Every path that starts a preview server runs it
+through `sh -c`: `start-servers.sh`, a project's `on-servers-start` hook, and
+`supervise_port` in `services/lib/supervisors.sh`. Running it as
+`npm run "$devScript"` instead means `npm run "npm run api:dev"`, a
+`Missing script` error on every 2s supervisor iteration — the port never binds
+and the only visible symptom is a preview that 502s. `validate-manifest.js`
+warns on a value that looks like a bare npm script name.
+
+### One supervisor per preview server
+
+A *supervisor* is anything that relaunches a dev server after it exits: the
+`servers` job (`start-servers.js` / `start-servers.sh`), a project's
+`.muaddib/hooks/on-servers-start` hook (where the `startWithRestart` timers
+live), and the `while true` loops `retunnel.sh` / `restart-servers.sh` leave
+behind.
+
+Two supervisors on one port is an outage, not a flap: both relaunch the server
+~2s after the port frees, one wins and the loser keeps dying with `EADDRINUSE`.
+So anything that bounces a preview server calls `kill_stale_supervisors` first
+(`services/lib/supervisors.sh`) and takes the port over with `supervise_port` —
+never a hand-rolled `pkill` + relaunch. Two details that each cost an outage:
+
+- `pkill -f "start-servers.js"` does **not** match `on-servers-start.js`, so a
+  cleanup that killed only the servers job left the project hook supervising
+  behind its back.
+- Relaunch loops are subshells and share their parent script's argv, so no
+  `pkill -f` pattern selects an earlier run's loops without also matching the
+  running script. They record their pids in
+  `/tmp/muaddib-supervisors-<worker>.pids` instead.
+
+`supervise_port` only launches while the port is unbound, so it **adopts** an
+already-running server instead of restarting it — a cold `tsx watch` start
+costs ~a minute of API downtime, and a healthy-but-unsupervised API is how the
+API silently stays dead behind a working tunnel after its next crash.
+
 ## Goal Context (`.muaddib/goals.md`)
 
 `.muaddib/goals.md` is durable, cross-ticket **fleet policy** — budget/retry/
