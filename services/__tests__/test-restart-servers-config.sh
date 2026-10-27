@@ -43,8 +43,8 @@ config_value() {
 test_api_selected_by_seedscript() {
   local tmp="$1"
   write_manifest "$tmp" '{"projectName":"qt","projects":[
-    {"name":"api","path":"projects/api","devScript":"api:dev","port":9000,"seedScript":"projects/api/seed.ts"},
-    {"name":"portal","path":"projects/portal","devScript":"portal:dev","port":3000}
+    {"name":"api","path":"projects/api","devScript":"npm run api:dev","port":9000,"seedScript":"projects/api/seed.ts"},
+    {"name":"portal","path":"projects/portal","devScript":"npm run portal:dev","port":3000}
   ]}'
   local port path dev
   port=$(config_value "$tmp" API_PORT)
@@ -52,16 +52,16 @@ test_api_selected_by_seedscript() {
   dev=$(config_value "$tmp" API_DEV_SCRIPT)
   [ "$port" = "9000" ]            || { echo "expected API_PORT=9000, got '$port'"; return 1; }
   [ "$path" = "projects/api" ]    || { echo "expected API_PATH=projects/api, got '$path'"; return 1; }
-  [ "$dev" = "api:dev" ]          || { echo "expected API_DEV_SCRIPT=api:dev, got '$dev'"; return 1; }
+  [ "$dev" = "npm run api:dev" ]          || { echo "expected API_DEV_SCRIPT=npm run api:dev, got '$dev'"; return 1; }
 }
 
 test_frontends_filtered() {
   # devScript + no seedScript = frontend; a static project (no devScript) is excluded.
   local tmp="$1"
   write_manifest "$tmp" '{"projectName":"qt","projects":[
-    {"name":"api","path":"projects/api","devScript":"api:dev","port":9000,"seedScript":"projects/api/seed.ts"},
-    {"name":"portal","path":"projects/portal","devScript":"portal:dev","port":3000},
-    {"name":"homeowner","path":"projects/ho","devScript":"ho:dev","port":3001},
+    {"name":"api","path":"projects/api","devScript":"npm run api:dev","port":9000,"seedScript":"projects/api/seed.ts"},
+    {"name":"portal","path":"projects/portal","devScript":"npm run portal:dev","port":3000},
+    {"name":"homeowner","path":"projects/ho","devScript":"npm run ho:dev","port":3001},
     {"name":"static","path":"static"}
   ]}'
   local names ports paths
@@ -71,6 +71,25 @@ test_frontends_filtered() {
   [ "$names" = "portal homeowner" ]           || { echo "expected FRONTEND_NAMES='portal homeowner', got '$names'"; return 1; }
   [ "$ports" = "3000 3001" ]                  || { echo "expected FRONTEND_PORTS='3000 3001', got '$ports'"; return 1; }
   [ "$paths" = "projects/portal projects/ho" ] || { echo "expected FRONTEND_PATHS='projects/portal projects/ho', got '$paths'"; return 1; }
+}
+
+test_portless_frontend_keeps_its_slot() {
+  # A frontend declared without a port must still occupy a slot in PORTS/PATHS,
+  # or those arrays shift relative to FRONTEND_NAMES and every lookup by index
+  # reads a different project's values — the middle project's port would be
+  # read as the last project's. The empty slot shows as a doubled separator.
+  local tmp="$1"
+  write_manifest "$tmp" '{"projectName":"qt","projects":[
+    {"name":"api","path":"projects/api","devScript":"npm run api:dev","port":9000,"seedScript":"projects/api/seed.ts"},
+    {"name":"portal","path":"projects/portal","devScript":"npm run portal:dev","port":3000},
+    {"name":"noport","path":"projects/noport","devScript":"npm run noport:dev"},
+    {"name":"homeowner","path":"projects/ho","devScript":"npm run ho:dev","port":3001}
+  ]}'
+  local names ports
+  names=$(config_value "$tmp" FRONTEND_NAMES)
+  ports=$(config_value "$tmp" FRONTEND_PORTS)
+  [ "$names" = "portal noport homeowner" ] || { echo "expected FRONTEND_NAMES='portal noport homeowner', got '$names'"; return 1; }
+  [ "$ports" = "3000  3001" ]              || { echo "expected FRONTEND_PORTS='3000  3001' (empty middle slot), got '$ports'"; return 1; }
 }
 
 test_no_previewable_projects() {
@@ -91,6 +110,7 @@ test_no_previewable_projects() {
 
 run_test "API project selected by non-null seedScript"      test_api_selected_by_seedscript
 run_test "frontends filtered by devScript/no-seedScript"     test_frontends_filtered
+run_test "a port-less frontend keeps its index slot"         test_portless_frontend_keeps_its_slot
 run_test "no previewable projects → empty API + frontends"   test_no_previewable_projects
 
 echo ""

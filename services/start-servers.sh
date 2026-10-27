@@ -40,9 +40,13 @@ PREVIEW_PASSWORD=$(printf '%s' "$SEED_JSON" | jq -r '.password // "(unknown)"')
 HO_MAGIC_LINK=$(printf '%s' "$SEED_JSON"   | jq -r '.homeowner_magic_link // ""')
 
 # --- 3. API dev server ---
+# devScript is a shell command ("npm run api:dev"), run via `sh -c` — the same
+# contract .muaddib/hooks/on-servers-start and the restart paths use. Running it
+# as `npm run "$API_DEV_SCRIPT"` means `npm run "npm run api:dev"`, a "Missing
+# script" error that leaves the port unbound.
 log "starting API dev server..."
 cd "$REPO"
-nohup npm run "$API_DEV_SCRIPT" > /tmp/preview-api.log 2>&1 &
+nohup sh -c "$API_DEV_SCRIPT" > /tmp/preview-api.log 2>&1 &
 
 for i in $(seq 1 60); do
     (echo > /dev/tcp/localhost/"$API_PORT") 2>/dev/null && break
@@ -71,7 +75,7 @@ while IFS= read -r project; do
     PORT=$(printf '%s' "$project" | jq -r '.port // empty')
     [ -n "$PORT" ] && FRONTEND_PORTS+=("$PORT")
     (while true; do
-        VITE_API_URL="$API_TUNNEL_URL" npm run "$DEV_SCRIPT" >> "/tmp/preview-${NAME}.log" 2>&1 || true
+        VITE_API_URL="$API_TUNNEL_URL" sh -c "$DEV_SCRIPT" >> "/tmp/preview-${NAME}.log" 2>&1 || true
         echo "[${NAME}] exited, restarting in 2s..." >> "/tmp/preview-${NAME}.log"
         sleep 2
     done) &

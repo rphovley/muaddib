@@ -122,6 +122,9 @@ TEST_SCRIPT='
     echo "=== services/test-restart-servers-config ==="
     bash "$MUADDIB/services/__tests__/test-restart-servers-config.sh"
 
+    echo "=== services/test-supervisors ==="
+    bash "$MUADDIB/services/__tests__/test-supervisors.sh"
+
     echo "=== services/test-muaddib-config ==="
     node "$MUADDIB/services/__tests__/test-muaddib-config.js"
 

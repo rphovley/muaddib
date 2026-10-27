@@ -87,9 +87,12 @@ API_PORT=$(jq -r '.projects[] | select(.seedScript != null) | .port // empty'   
 API_PATH=$(jq -r '.projects[] | select(.seedScript != null) | .path // empty'   "$CONFIG" | head -1)
 API_DEV_SCRIPT=$(jq -r '.projects[] | select(.seedScript != null) | .devScript // empty' "$CONFIG" | head -1)
 
+# `// ""`, not `// empty`: a frontend project missing a port or path must still
+# occupy a slot, or these arrays shift out of step with FRONTEND_NAMES and every
+# later lookup by index reads a different project's value.
 readarray -t FRONTEND_NAMES   < <(jq -r '.projects[] | select(.seedScript == null and .devScript != null) | .name'        "$CONFIG")
-readarray -t FRONTEND_PORTS   < <(jq -r '.projects[] | select(.seedScript == null and .devScript != null) | .port // empty' "$CONFIG")
-readarray -t FRONTEND_PATHS   < <(jq -r '.projects[] | select(.seedScript == null and .devScript != null) | .path // empty' "$CONFIG")
+readarray -t FRONTEND_PORTS   < <(jq -r '.projects[] | select(.seedScript == null and .devScript != null) | .port // ""' "$CONFIG")
+readarray -t FRONTEND_PATHS   < <(jq -r '.projects[] | select(.seedScript == null and .devScript != null) | .path // ""' "$CONFIG")
 readarray -t FRONTEND_SCRIPTS < <(jq -r '.projects[] | select(.seedScript == null and .devScript != null) | .devScript'   "$CONFIG")
 
 # Parse-only mode for the config unit test — print the selection and stop before
@@ -110,8 +113,13 @@ log "API: port=${API_PORT:-none} path=${API_PATH:-none}"
 log "frontends: ${FRONTEND_NAMES[*]:-none}"
 
 # A project with nothing to preview (e.g. muaddib self-hosting: no seedScript,
-# no frontends) has nothing to reconcile — signal ready and stop.
-if [ -z "$API_PORT" ] && [ "${#FRONTEND_PORTS[@]}" -eq 0 ]; then
+# no frontends) has nothing to reconcile — signal ready and stop. Count only
+# non-empty ports: FRONTEND_PORTS keeps a slot for a port-less frontend to stay
+# index-aligned with FRONTEND_NAMES, and such a slot is nothing to bounce.
+FRONTEND_PORT_COUNT=0
+for p in "${FRONTEND_PORTS[@]:-}"; do [ -n "$p" ] && FRONTEND_PORT_COUNT=$((FRONTEND_PORT_COUNT + 1)); done
+
+if [ -z "$API_PORT" ] && [ "$FRONTEND_PORT_COUNT" -eq 0 ]; then
   log "no managed servers — nothing to reconcile"
   emit_ready
   exit 0
@@ -125,6 +133,11 @@ fi
 
 # shellcheck source=lib/port-utils.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/port-utils.sh"
+# kill_stale_supervisors / supervise_port — shared with retunnel.sh so both
+# recovery paths agree on who may relaunch a dev server. Sourced after log/warn
+# (messages keep this script's prefix) and after WORKER (names the pidfile).
+# shellcheck source=lib/supervisors.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/supervisors.sh"
 
 # ── npm reconcile helper ───────────────────────────────────────────────────────
 
@@ -165,17 +178,18 @@ for i in "${!FRONTEND_PATHS[@]}"; do
   reconcile_project "$REPO/$fpath"
 done
 
-# ── 2. Kill the existing supervisor ────────────────────────────────────────────
-# start-servers.js supervises the API and frontend dev servers, relaunching each
-# 2s after it exits. If we kill a port and relaunch under our own loop without
-# first killing that supervisor, both loops fight over the same port — a 2s flap.
-# Kill it once (as retunnel.sh does) so this script becomes the sole supervisor
-# for every port it bounces below. The dev-server children are orphaned briefly;
-# we kill each port next and relaunch it ourselves.
+# ── 2. Kill every existing supervisor ──────────────────────────────────────────
+# Anything still supervising these servers relaunches one 2s after we free its
+# port, and then two processes fight over it indefinitely. Killing only
+# start-servers.js (what this step used to do) left the project's own
+# on-servers-start hook alive — that hook is where the restart timers actually
+# live, so the "sole supervisor" claim was false and the API port flapped.
+# kill_stale_supervisors() covers the hook, both servers jobs, and loops left by
+# an earlier run of this script or retunnel.sh. Dev-server children are orphaned
+# briefly; we kill each port next and relaunch it ourselves.
 
-log "killing start-servers.js supervisor..."
-pkill -f "start-servers.js" 2>/dev/null && log "killed start-servers.js" || log "no start-servers.js supervisor found"
-sleep 1
+log "killing stale dev-server supervisors..."
+kill_stale_supervisors
 
 # ── 3. API bounce ──────────────────────────────────────────────────────────────
 # An external kill+relaunch (unlike tsx watch's in-place restart) must wait for
@@ -186,22 +200,21 @@ if [ -n "$API_PORT" ]; then
   log "bouncing API on :${API_PORT}..."
   kill_port "$API_PORT"
   if ! wait_port_free "$API_PORT" 15; then
-    warn "API port :${API_PORT} still bound after 15s — relaunching anyway"
+    # supervise_port adopts whatever holds the port rather than fighting it, so
+    # the practical outcome is "not actually bounced": the API keeps running on
+    # pre-reconcile code. Say that, instead of the old "relaunching anyway" —
+    # which described a relaunch that could only ever lose with EADDRINUSE.
+    warn "API port :${API_PORT} still bound after 15s — adopting the existing process; migrations/deps from this pass may not be live"
   fi
 
   if [ -n "$API_DEV_SCRIPT" ]; then
     log "relaunching API: ${API_DEV_SCRIPT}"
-    # devScript is an npm script name (e.g. "api:dev"), not a shell command, so
-    # it must run via `npm run` — matching start-servers.sh. `sh -c "api:dev"`
-    # would fail with "api:dev: not found".
-    # Redirect the SUBSHELL, not just the inner commands. This loop outlives
-    # the script; an inherited stdout would keep a caller's pipe write-end open
-    # forever, so `restart-servers.sh | tee log` would never terminate.
-    ( cd "$REPO" && while true; do
-        npm run "$API_DEV_SCRIPT" || true
-        echo "[api] exited, restarting in 2s..."
-        sleep 2
-      done ) < /dev/null >> /tmp/preview-api.log 2>&1 &
+    # devScript is a SHELL COMMAND ("npm run api:dev"), which is how the
+    # project's on-servers-start hook runs it. This step used to run it as
+    # `npm run "$API_DEV_SCRIPT"`, i.e. `npm run "npm run api:dev"` — a
+    # "Missing script" error on every 2s iteration, so the port never came
+    # back and every reconcile ended in restart_failed.
+    supervise_port api "$API_PORT" "$API_DEV_SCRIPT" /tmp/preview-api.log
   else
     warn "no devScript for the API project — cannot relaunch"
   fi
@@ -237,13 +250,9 @@ for i in "${!FRONTEND_NAMES[@]}"; do
   kill_port "$port"
   if [ -n "$script" ]; then
     log "relaunching frontend ${name}: ${script}"
-    # devScript is an npm script name, not a shell command — run via `npm run`.
-    # Redirect the subshell itself — see the API loop above.
-    ( cd "$REPO" && while true; do
-        VITE_API_URL="$API_TUNNEL_URL" npm run "$script" || true
-        echo "[${name}] exited, restarting in 2s..."
-        sleep 2
-      done ) < /dev/null >> "/tmp/preview-${name}.log" 2>&1 &
+    # devScript is a shell command — see the API relaunch above.
+    supervise_port "$name" "$port" "$script" "/tmp/preview-${name}.log" \
+      "VITE_API_URL=${API_TUNNEL_URL}"
   else
     warn "no devScript for frontend ${name} — cannot relaunch"
   fi
