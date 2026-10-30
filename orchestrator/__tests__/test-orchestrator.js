@@ -66,6 +66,22 @@ async function waitForState(target, timeoutMs = 30000) {
   throw new Error(`timeout waiting for "${target}" (current: "${readState()}")`);
 }
 
+// Wait for a state to show up on the *event bus*, not in the state file.
+// waitForState() polls the file that note() writes synchronously, whereas the
+// `visited` array is filled by subscribe()'s separate 50 ms poll of the events
+// file. The file can therefore show a transition before that poller has read
+// the appended state_changed line — so a test that waits on the file and then
+// immediately asserts on `visited` (and kills the subscription) can drop the
+// last transition. Wait on the thing being asserted.
+async function waitForVisited(visited, target, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (visited.includes(target)) return;
+    await wait(50);
+  }
+  throw new Error(`timeout waiting for "${target}" on the event bus (visited: [${visited.join(', ')}])`);
+}
+
 function emitEvent(job, event, payload = {}) {
   spawnSync(process.execPath, [EMIT_CLI, String(WORKER), job, event, JSON.stringify(payload)], {
     stdio: 'inherit', env: process.env,
@@ -154,6 +170,7 @@ async function testFeedbackCycle() {
     await waitForState('RECONCILING', 10000);
     // Mock restart-servers emits `servers restart_ready` → back to FEEDBACK.
     await waitForState('FEEDBACK', 10000);
+    await waitForVisited(visited, 'FEEDBACK');
   } finally {
     sub.kill();
   }
@@ -188,6 +205,48 @@ async function testMergedExitsDone() {
   if (readState() !== 'DONE_FINAL') throw new Error(`expected DONE_FINAL, got ${readState()}`);
 }
 
+// A PR merged *before* FEEDBACK is armed must still exit cleanly.
+//
+// Regression: watch-feedback.js emits `webhook merged` and exits the moment it
+// sees a merged PR, which can be minutes before the workflow's last step
+// finishes. The FEEDBACK subscription starts `fromEnd`, so that event was
+// invisible to it and the webhook job was already gone — nothing could
+// re-emit. The orchestrator is PID 1, so it sat forever and the container
+// (plus its DB pair and ports) stayed up on an already-merged ticket.
+//
+// Runs its own orchestrator, after the shared one has exited. Note the events
+// file still holds test 3's `merged` from an earlier timestamp: this also
+// covers the scoping, since an unscoped history scan would make the *boot*
+// FEEDBACK entry match and exit before this test's own merge is even emitted.
+async function testMergedBeforeFeedbackArmed() {
+  const proc = spawn(process.execPath, [path.join(__dirname, '../orchestrator.js')], {
+    env: { ...process.env, ...ORCH_ENV },
+    stdio: 'inherit',
+  });
+
+  try {
+    // Emit during RUNNING — before the workflow finishes and FEEDBACK is armed.
+    await waitForState('RUNNING');
+    emitEvent('webhook', 'merged', {});
+
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error(`orchestrator did not exit within 30s (state: "${readState()}")`)), 30000,
+      );
+      timer.unref();
+      proc.once('exit', (code) => {
+        clearTimeout(timer);
+        if (code !== 0) reject(new Error(`expected exit 0, got ${code}`));
+        else resolve();
+      });
+    });
+  } finally {
+    try { proc.kill(); } catch (_) {}
+  }
+
+  if (readState() !== 'DONE_FINAL') throw new Error(`expected DONE_FINAL, got ${readState()}`);
+}
+
 // ─── runner ──────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -195,6 +254,7 @@ async function main() {
     ['boot sequence: BOOTING → STARTING_SERVICES → RUNNING → FEEDBACK', testBootSequence],
     ['feedback cycle: webhook:feedback → FEEDBACK_WORKING → RECONCILING → FEEDBACK', testFeedbackCycle],
     ['webhook:merged → DONE_FINAL + orchestrator exits 0',               testMergedExitsDone],
+    ['webhook:merged before FEEDBACK armed → still exits DONE_FINAL',    testMergedBeforeFeedbackArmed],
   ];
 
   let passed = 0;

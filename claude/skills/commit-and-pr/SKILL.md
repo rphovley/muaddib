@@ -200,7 +200,7 @@ node "$STATE_CLI" "$WORKER" set pr_number "$PR_NUMBER"
 printf '%s\n' "$PR_NUMBER" > "/tmp/pr-number-${WORKER}"
 ```
 
-The webhook job (`watch-feedback.sh`) polls `/tmp/pr-number-${WORKER}` and registers the GitHub webhook once this file appears. Write it immediately after the PR is created.
+The webhook job (`services/watch-feedback.js`, already running since container boot) polls `/tmp/pr-number-${WORKER}` and registers the GitHub webhook once this file appears. Write it immediately after the PR is created — it is the watcher's only input, and without it neither the feedback loop nor merge-detected teardown can arm.
 
 ## Step 7 — Post Linear comment
 

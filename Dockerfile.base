@@ -13,7 +13,7 @@ FROM node:26-bookworm-slim
 # services/lib/port-utils.sh; without them every preview-restart port kill
 # silently did nothing).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git jq ca-certificates postgresql-client procps wget openssh-client iproute2 psmisc lsof \
+        git jq ca-certificates postgresql-client procps wget curl unzip openssh-client iproute2 psmisc lsof \
     && rm -rf /var/lib/apt/lists/*
 
 # tmux from bookworm-backports (>=3.4). Bookworm's default tmux is 3.3a, which

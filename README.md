@@ -709,10 +709,12 @@ are preserved, so local `npm test` on your Mac is unchanged.
 
 After opening the PR, each worker enters **FEEDBACK** mode:
 
-1. `watch-feedback.sh` starts a tiny Node.js webhook receiver (`webhook-receiver.js`) on port 9090 and opens a cloudflared tunnel to it.
-2. A Linear team webhook is registered pointing at the tunnel URL — fires on `Comment` events.
-3. When you post a comment on the Linear ticket, the receiver drops a flag file. The watcher spawns a `/muaddib-feedback` Claude session in a new tmux window to address it, then returns to FEEDBACK.
-4. The worker also polls the GitHub PR state every 30 s. When the PR is merged/closed, the webhook is deleted and the container is torn down.
+1. `services/watch-feedback.js` — started by the orchestrator as the `webhook` job at container boot, not by the agent — starts a tiny Node.js webhook receiver (`webhook-receiver.js`) on port 9090 and opens a cloudflared tunnel to it. It waits for the Claude job to write `/tmp/pr-number-<N>`, then restarts the receiver with that PR number.
+2. A GitHub repo webhook is registered pointing at the tunnel URL, scoped to the PR.
+3. When you post a `/feedback` comment on the PR, the receiver drops a flag file and the watcher emits `webhook:feedback`; the orchestrator runs a `/muaddib-feedback` Claude session, reconciles the preview, then returns to FEEDBACK.
+4. The watcher also polls the GitHub PR state every 30 s. When the PR is merged/closed it deletes the webhook, emits `webhook:merged` and exits; the orchestrator (PID 1) exits on that event, which is what tears the container down.
+
+   A merge can land *before* the workflow finishes and FEEDBACK is armed. The FEEDBACK subscription starts `fromEnd`, so the orchestrator also scans the event history for an already-emitted `webhook:merged` before arming it — otherwise an early merge would be invisible, nothing could re-emit it, and the container would stay up forever on a merged ticket.
 
 `bin/attend.sh` shows **🔭 FEEDBACK** and **🔧 FEEDBACK_WORKING** states.
 

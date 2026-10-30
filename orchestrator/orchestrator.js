@@ -9,7 +9,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { subscribe } = require('./events');
+const { subscribe, readEvents } = require('./events');
 const { getTicketSource } = require('../services/ticket-source');
 const { startJob } = require('./job');
 const { run, notifyHuman } = require('./runner');
@@ -93,6 +93,21 @@ function restartServersCmd() {
     return `sleep 0.3 && node '${EMIT_CLI}' ${WORKER} servers restart_ready '{}'`;
   }
   return `bash '${path.join(MUADDIB_ROOT, 'services/restart-servers.sh')}'`;
+}
+
+// Quiet, informational tier (no alert sound) — proves the info path end-to-end
+// through the same shared formatter/Slack sender the attention-needed alerts
+// use. Awaited so the fire-and-forget Slack send actually flushes before the
+// DONE_FINAL process.exit(0) that follows tears the process down. Shared by
+// both merge paths: the live `webhook merged` event, and the pre-armed merge
+// detected from the event history.
+async function notifyMerged() {
+  try {
+    await notifyHuman(WORKER, {
+      kind: 'info',
+      message: `PR merged for ${LINEAR_ISSUE || 'this ticket'} — preview torn down`,
+    });
+  } catch (_) {}
 }
 
 // Start a background service. If svc.readyEvent is set, resolves only once
@@ -185,7 +200,45 @@ async function main() {
     process.exit(0);
   }
 
+  // The PR can be merged while the workflow is still running: the webhook job
+  // emits `merged` and exits the moment it sees a merged PR, which may be
+  // minutes before `wrapup` finishes and we arm the subscription below. That
+  // subscription starts `fromEnd`, so an already-emitted `merged` is invisible
+  // to it — and the webhook job is gone, so nothing can ever re-emit it. The
+  // orchestrator is PID 1, so waiting forever leaves the container (and its DB
+  // pair and ports) up on a merged ticket. Check the history once first.
+  //
+  // Scoped to this run: the events file is append-only and never cleared, so a
+  // `merged` from a previous ticket on this worker slot is still sitting in it.
+  // Matching that would exit a fresh run the instant it reached FEEDBACK.
+  const thisRun = readEvents(WORKER).filter((ev) => Date.parse(ev.ts) >= runStartTime);
+  const mergedAlready = thisRun.some((ev) => ev.job === 'webhook' && ev.event === 'merged');
+
   note('FEEDBACK');
+  if (mergedAlready) {
+    console.error(`[orchestrator w${WORKER}] PR already merged before FEEDBACK armed — finishing`);
+    await notifyMerged();
+    await recordAndPrintTokens(workType, runStartTime);
+    note('DONE_FINAL');
+    process.exit(0);
+  }
+
+  // FEEDBACK is only meaningful while the webhook job is alive: it is the sole
+  // source of both `webhook feedback` and `webhook merged`. If it already
+  // exited this run without a merge — a failed tunnel, a dead receiver, a
+  // missing /tmp/pr-number-<N> — then nothing can ever wake the subscription
+  // below, and the worker would look like it was patiently waiting for review
+  // when in fact it can no longer hear anything. Keep FEEDBACK armed so the
+  // preview stays usable, but say so loudly instead of presenting as a hang.
+  if (thisRun.some((ev) => ev.job === 'webhook' && (ev.event === 'done' || ev.event === 'failed'))) {
+    console.error(`[orchestrator w${WORKER}] webhook job is gone but no merge was seen — /feedback and merge-teardown are both dead for this worker; tear it down manually when done reviewing`);
+    try {
+      await notifyHuman(WORKER, {
+        message: `Feedback watcher died for ${LINEAR_ISSUE || 'this ticket'} — /feedback and auto-teardown won't work; tear the worker down manually`,
+      });
+    } catch (_) {}
+  }
+
   await new Promise((resolve) => {
     const sub = subscribe(WORKER, async (ev) => {
       if (ev.job === 'webhook' && ev.event === 'feedback' && currentState === 'FEEDBACK') {
@@ -237,17 +290,7 @@ async function main() {
         note('FEEDBACK');
       }
       if (ev.job === 'webhook' && ev.event === 'merged') {
-        // Quiet, informational tier (no alert sound) — proves the info path
-        // end-to-end through the same shared formatter/Slack sender the
-        // attention-needed alerts use.
-        try {
-          // Await so the fire-and-forget Slack send actually flushes before
-          // the DONE_FINAL process.exit(0) below tears the process down.
-          await notifyHuman(WORKER, {
-            kind: 'info',
-            message: `PR merged for ${LINEAR_ISSUE || 'this ticket'} — preview torn down`,
-          });
-        } catch (_) {}
+        await notifyMerged();
         sub.kill();
         resolve();
       }

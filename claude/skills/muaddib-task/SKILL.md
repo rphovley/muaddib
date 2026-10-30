@@ -283,13 +283,18 @@ Print the PR URL as the final line of output.
 
 ## Step 11 — Enter FEEDBACK mode (fleet only)
 
-Skip if `WORKER_INDEX` is not set. Skip if `WORKER_INDEX` is set but the task has no ticket in Linear (the platform) specifically — not just "a tracked ticket" of any kind (a GitHub issue does not count here). Note: `watch-feedback.sh` itself is GitHub-native, not Linear-dependent — it watches PR comments via a GitHub webhook, nothing about the watcher mechanism requires Linear. This condition isn't gating on a technical requirement of the watcher; the actual reasoning for restricting it to Linear tickets specifically is unresolved. If skipping, leave a note in the PR body that feedback should be left as PR comments and the reviewer should re-run `/muaddib-task` manually.
+**Nothing to do here — do not start a watcher.** The orchestrator owns both
+halves of FEEDBACK mode and has since container boot:
 
-```bash
-printf 'FEEDBACK %s\n' "$(date -u +%FT%TZ)" \
-    > "/var/run/agent-status/worker-${WORKER_INDEX}.state" 2>/dev/null || true
+- `services/watch-feedback.js` is started by `startService()` as the `webhook`
+  job at boot, logging to `/var/run/agent-status/worker-${WORKER_INDEX}-webhook.log`.
+  It polls `/tmp/pr-number-${WORKER_INDEX}` on its own, so it picks up the PR
+  from Step 6 with no hand-off.
+- The orchestrator writes the `FEEDBACK` state itself via `note('FEEDBACK')`
+  once the workflow finishes.
 
-PR_NUMBER="$PR_NUMBER" \
-nohup /home/worker/repo/muaddib/watch-feedback.sh \
-    > /tmp/feedback-watcher.log 2>&1 &
-```
+Earlier revisions of this step told the agent to `nohup` a
+`muaddib/watch-feedback.sh` wrapper. That file no longer exists, and running a
+second watcher would fight the live one for port 9090 and double-register the
+GitHub webhook. There is no agent-side action: just make sure Step 6 wrote
+`/tmp/pr-number-${WORKER_INDEX}`, which is the watcher's only input.
